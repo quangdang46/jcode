@@ -21,9 +21,19 @@ pub fn get_current_session() -> Option<String> {
 pub fn install_panic_hook() {
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
-        default_hook(info);
+        // Issue #105: the std default panic hook calls eprintln!, which
+        // panics if stderr writes fail (broken pipe, EBADF, closed fd).
+        // A panic inside a panic hook aborts the process before our
+        // session-recovery cleanup runs, leaving sessions in 'Active'
+        // state forever. Run the default hook inside catch_unwind so
+        // a stderr write failure is degraded to a silent skip rather
+        // than a process abort.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            default_hook(info);
+        }));
 
         if let Some(session_id) = get_current_session() {
+            // print_session_resume_hint is already write-tolerant.
             print_session_resume_hint(&session_id);
 
             if let Some((provider, model)) = telemetry::current_provider_model() {
@@ -63,29 +73,44 @@ pub fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
 }
 
 pub fn show_crash_resume_hint() {
+    // Issue #105: write through write_crash_resume_hint so any stderr write
+    // failure (broken pipe, EBADF) is silently dropped rather than panicking
+    // before jcode has finished initializing. This is called at startup, so a
+    // panic here would abort the process before set_hook even runs.
+    let _ = write_crash_resume_hint(io::stderr().lock());
+}
+
+fn write_crash_resume_hint(mut writer: impl Write) -> io::Result<()> {
     let crashed = session::find_recent_crashed_sessions();
     if crashed.is_empty() {
-        return;
+        return Ok(());
     }
 
     let (id, name) = &crashed[0];
     let session_label = id::extract_session_name(id).unwrap_or(name.as_str());
 
     if crashed.len() == 1 {
-        eprintln!(
+        writeln!(
+            writer,
             "\x1b[33m💥 Session \x1b[1m{}\x1b[0m\x1b[33m crashed. Resume with:\x1b[0m  jcode --resume {}",
             session_label, id
-        );
+        )?;
     } else {
-        eprintln!(
+        writeln!(
+            writer,
             "\x1b[33m💥 {} sessions crashed recently. Most recent: \x1b[1m{}\x1b[0m",
             crashed.len(),
             session_label
-        );
-        eprintln!("\x1b[33m   Resume with:\x1b[0m  jcode --resume {}", id);
-        eprintln!("\x1b[33m   List all:\x1b[0m     jcode --resume");
+        )?;
+        writeln!(
+            writer,
+            "\x1b[33m   Resume with:\x1b[0m  jcode --resume {}",
+            id
+        )?;
+        writeln!(writer, "\x1b[33m   List all:\x1b[0m     jcode --resume")?;
     }
-    eprintln!();
+    writeln!(writer)?;
+    Ok(())
 }
 
 fn init_tui_terminal() -> Result<ratatui::DefaultTerminal> {
@@ -338,5 +363,29 @@ mod tests {
         let error = write_session_resume_hint(ClosedWriter, "session_closed_pipe")
             .expect_err("closed stderr should be reported as an I/O error");
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn crash_resume_hint_writer_reports_closed_stderr_without_panicking() {
+        // Regression test for #105: show_crash_resume_hint() used to call
+        // eprintln! directly, which panics on a broken pipe / closed stderr.
+        // The new helper returns Result so callers can swallow the error
+        // and the panic-hook path is no longer at risk of double-panicking.
+        struct ClosedWriter;
+
+        impl Write for ClosedWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "stderr closed"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        // The function may write or short-circuit (no crashed sessions).
+        // Either Ok or BrokenPipe is acceptable; what matters is it doesn't
+        // panic.
+        let _ = write_crash_resume_hint(ClosedWriter);
     }
 }
