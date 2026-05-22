@@ -82,6 +82,21 @@ fn parse_and_prepare_args() -> Result<Args> {
         crate::env::set_var("JCODE_APPEND_SYSTEM_PROMPT", text);
     }
 
+    // --models <patterns>: translate to JCODE_SCOPED_MODELS env so cycle_model
+    // and the `/scoped-models` slash command can see it. Issue #26.
+    if !args.scoped_models.is_empty() {
+        let joined = args
+            .scoped_models
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(",");
+        if !joined.is_empty() {
+            crate::env::set_var("JCODE_SCOPED_MODELS", &joined);
+        }
+    }
+
     // --name <title>: translate to env so the next freshly-created top-level
     // session picks it up as `Session::title`. Issue #99.
     if let Some(ref text) = args.session_name {

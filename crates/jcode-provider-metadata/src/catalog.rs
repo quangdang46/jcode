@@ -91,6 +91,21 @@ pub const DEEPSEEK_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
     requires_api_key: true,
 };
 
+pub const COHERE_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
+    id: "cohere",
+    display_name: "Cohere",
+    // Cohere ships an OpenAI-compatible endpoint under /compatibility/v1.
+    // It accepts the OpenAI Chat Completions request shape and returns the
+    // OpenAI streaming chunk schema; see
+    // https://docs.cohere.com/v2/docs/compatibility-api
+    api_base: "https://api.cohere.com/compatibility/v1",
+    api_key_env: "COHERE_API_KEY",
+    env_file: "cohere.env",
+    setup_url: "https://docs.cohere.com/v2/docs/compatibility-api",
+    default_model: Some("command-a-03-2025"),
+    requires_api_key: true,
+};
+
 pub const COMTEGRA_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfile {
     id: "comtegra",
     display_name: "Comtegra GPU Cloud",
@@ -359,7 +374,7 @@ pub const OPENAI_COMPAT_PROFILE: OpenAiCompatibleProfile = OpenAiCompatibleProfi
     requires_api_key: true,
 };
 
-pub(crate) const OPENAI_COMPAT_PROFILES: [OpenAiCompatibleProfile; 32] = [
+pub(crate) const OPENAI_COMPAT_PROFILES: [OpenAiCompatibleProfile; 33] = [
     OPENCODE_PROFILE,
     OPENCODE_GO_PROFILE,
     ZAI_PROFILE,
@@ -371,6 +386,7 @@ pub(crate) const OPENAI_COMPAT_PROFILES: [OpenAiCompatibleProfile; 32] = [
     BASETEN_PROFILE,
     CORTECS_PROFILE,
     DEEPSEEK_PROFILE,
+    COHERE_PROFILE,
     COMTEGRA_PROFILE,
     FPT_PROFILE,
     FIRMWARE_PROFILE,
@@ -650,6 +666,20 @@ pub const DEEPSEEK_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescri
     recommended: false,
     target: LoginProviderTarget::OpenAiCompatible(DEEPSEEK_PROFILE),
     order: LoginProviderSurfaceOrder::new(Some(21), Some(21), Some(21), Some(21), Some(21)),
+};
+
+pub const COHERE_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
+    id: "cohere",
+    display_name: "Cohere",
+    auth_kind: LoginProviderAuthKind::ApiKey,
+    auth_state_key: LoginProviderAuthStateKey::OpenRouterLike,
+    auth_status_method: "API key",
+    aliases: &["command-r", "command-a"],
+    menu_detail: "OpenAI-compatible Cohere API",
+    recommended: false,
+    target: LoginProviderTarget::OpenAiCompatible(COHERE_PROFILE),
+    // Slot in next to DeepSeek (21) since both are RAG/tool-leaning vendors.
+    order: LoginProviderSurfaceOrder::new(Some(22), Some(22), Some(22), Some(22), Some(22)),
 };
 
 pub const COMTEGRA_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor {
@@ -990,7 +1020,7 @@ pub const GOOGLE_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescript
     order: LoginProviderSurfaceOrder::new(Some(13), None, None, None, None),
 };
 
-pub(crate) const LOGIN_PROVIDERS: [LoginProviderDescriptor; 45] = [
+pub(crate) const LOGIN_PROVIDERS: [LoginProviderDescriptor; 46] = [
     AUTO_IMPORT_LOGIN_PROVIDER,
     CLAUDE_LOGIN_PROVIDER,
     OPENAI_LOGIN_PROVIDER,
@@ -1010,6 +1040,7 @@ pub(crate) const LOGIN_PROVIDERS: [LoginProviderDescriptor; 45] = [
     BASETEN_LOGIN_PROVIDER,
     CORTECS_LOGIN_PROVIDER,
     DEEPSEEK_LOGIN_PROVIDER,
+    COHERE_LOGIN_PROVIDER,
     COMTEGRA_LOGIN_PROVIDER,
     FPT_LOGIN_PROVIDER,
     FIRMWARE_LOGIN_PROVIDER,
