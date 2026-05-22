@@ -450,6 +450,20 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Delete a saved session and its journal/sidecar files
+    Delete {
+        /// Session ID or memorable short name (e.g. `fox`).
+        session: String,
+
+        /// Skip the interactive confirmation prompt.
+        #[arg(long, short = 'f')]
+        force: bool,
+
+        /// Emit JSON instead of human-readable output.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
