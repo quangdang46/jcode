@@ -1634,6 +1634,129 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
         }
         return true;
     }
+
+    if trimmed == "/share" || trimmed.starts_with("/share ") {
+        // Issue #25: upload the session as a private GitHub gist via the
+        // installed `gh` CLI, copy the URL to clipboard, print it in chat.
+        //
+        // Usage:
+        //   /share              → private gist, redacted, copied to clipboard
+        //   /share --public     → public gist (still redacted)
+        //   /share --no-redact  → keep raw secrets (off by default)
+        let rest = trimmed.strip_prefix("/share").unwrap_or_default().trim();
+        let mut public = false;
+        let mut redact = true; // default: redact for safety
+        for tok in rest.split_whitespace() {
+            match tok {
+                "--public" => public = true,
+                "--private" => public = false,
+                "--no-redact" => redact = false,
+                "--redact" => redact = true,
+                _ => {
+                    app.push_display_message(DisplayMessage::error(format!(
+                        "Unknown /share flag: `{tok}`. Supported: `--public`, `--private`, `--redact`, `--no-redact`."
+                    )));
+                    return true;
+                }
+            }
+        }
+
+        // Pre-flight: gh CLI must be installed.
+        let gh_check = std::process::Command::new("gh")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if !gh_check.map(|s| s.success()).unwrap_or(false) {
+            app.push_display_message(DisplayMessage::error(
+                "/share requires the GitHub CLI. Install from https://cli.github.com/ then run `gh auth login`.".to_string(),
+            ));
+            return true;
+        }
+
+        if let Err(e) = app.session.save() {
+            app.push_display_message(DisplayMessage::error(format!(
+                "Failed to persist session: {e}"
+            )));
+            return true;
+        }
+        let title = app
+            .session
+            .display_title()
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| app.session.display_name().to_string());
+        let body = crate::export::render_markdown(&app.session);
+        let body = if redact {
+            crate::export::redact_secrets(&body)
+        } else {
+            body
+        };
+        let tmp_path = std::env::temp_dir().join(format!(
+            "jcode-share-{}.md",
+            app.session.id.replace('/', "_")
+        ));
+        if let Err(e) = std::fs::write(&tmp_path, body.as_bytes()) {
+            app.push_display_message(DisplayMessage::error(format!(
+                "Failed to write temp file {}: {e}",
+                tmp_path.display()
+            )));
+            return true;
+        }
+
+        let mut gh = std::process::Command::new("gh");
+        gh.arg("gist").arg("create").arg(&tmp_path);
+        if public {
+            gh.arg("--public");
+        }
+        gh.arg("--desc").arg(format!("jcode session: {title}"));
+
+        match gh.output() {
+            Ok(out) if out.status.success() => {
+                let _ = std::fs::remove_file(&tmp_path);
+                let url = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter(|l| l.starts_with("https://"))
+                    .next_back()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if url.is_empty() {
+                    app.push_display_message(DisplayMessage::system(
+                        "Shared via `gh gist create` — no URL printed by gh. Run `gh gist list` to find it.".to_string(),
+                    ));
+                } else {
+                    let copied = super::helpers::copy_to_clipboard(&url);
+                    let visibility = if public { "public" } else { "private" };
+                    let redact_note = if redact { " (redacted)" } else { "" };
+                    let clip_note = if copied {
+                        " — copied to clipboard"
+                    } else {
+                        ""
+                    };
+                    app.push_display_message(DisplayMessage::system(format!(
+                        "Shared session as {visibility} gist{redact_note}{clip_note}:\n\n{url}"
+                    )));
+                    app.set_status_notice(format!("Shared → {url}"));
+                }
+            }
+            Ok(out) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                app.push_display_message(DisplayMessage::error(format!(
+                    "gh gist create failed:\n{stderr}\n\nIf you haven't authenticated yet: `gh auth login`."
+                )));
+                app.set_status_notice("Share failed");
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                app.push_display_message(DisplayMessage::error(format!(
+                    "Failed to invoke gh: {e}"
+                )));
+                app.set_status_notice("Share failed");
+            }
+        }
+        return true;
+    }
     if trimmed == "/memory status" {
         let default_enabled = crate::config::config().features.memory;
         app.push_display_message(DisplayMessage::system(format!(
