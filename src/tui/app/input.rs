@@ -682,7 +682,180 @@ pub(super) fn expand_paste_placeholders(app: &mut App, input: &str) -> String {
             result.replace_range(pos..pos + placeholder.len(), content);
         }
     }
-    result
+    expand_at_path_references(&result, app.session.working_dir.as_deref())
+}
+
+/// Maximum size (in bytes) of a single `@path` reference jcode is willing to
+/// inline before sending to the model. Larger files are kept as a literal
+/// `@path` token plus a one-line note so the agent can still ask for them
+/// via the `read` tool — better than blowing the context window silently.
+const AT_PATH_MAX_BYTES: u64 = 200 * 1024;
+
+/// Expand `@<path>` references in user input to inlined file contents.
+///
+/// MVP scope per issue #11:
+///   - Trigger on `@` followed by a non-whitespace path-like token.
+///   - Resolve relative to the session's working directory; absolute paths
+///     pass through.
+///   - Skip files larger than `AT_PATH_MAX_BYTES` and leave a marker.
+///   - Skip non-existent files (leave the literal `@token` so the user can
+///     fix typos or fall back to the `read` tool).
+///   - Wrap inlined content in a labeled block so the model sees the
+///     boundary clearly.
+///
+/// Out of scope (separate PRs):
+///   - Editor-side autocomplete dropdown.
+///   - .gitignore-aware indexing.
+///   - Multi-token expansion semantics (last-token-only completion).
+pub fn expand_at_path_references(input: &str, working_dir: Option<&str>) -> String {
+    if !input.contains('@') {
+        return input.to_string();
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.char_indices().peekable();
+    while let Some((_, ch)) = chars.next() {
+        if ch != '@' {
+            out.push(ch);
+            continue;
+        }
+        // Don't trigger on email-like tokens: alphanumeric just before '@'.
+        if let Some(prev) = out.chars().last()
+            && (prev.is_ascii_alphanumeric() || prev == '_' || prev == '-')
+        {
+            out.push('@');
+            continue;
+        }
+        // Read the token after '@'. Stop at whitespace or trailing punctuation.
+        let mut token = String::new();
+        while let Some(&(_, next)) = chars.peek() {
+            if next.is_whitespace() {
+                break;
+            }
+            chars.next();
+            token.push(next);
+        }
+        // Strip trailing punctuation that's clearly not part of a path.
+        let trimmed = token
+            .trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | '!' | '?' | ':' | ';'));
+        let trail = &token[trimmed.len()..];
+        if trimmed.is_empty() {
+            out.push('@');
+            out.push_str(&token);
+            continue;
+        }
+        match try_read_at_path(trimmed, working_dir) {
+            ResolveOutcome::Ok { display_path, body } => {
+                out.push_str(&format!(
+                    "\n\n--- @{display_path} ---\n{body}\n--- end @{display_path} ---\n\n"
+                ));
+                out.push_str(trail);
+            }
+            ResolveOutcome::TooLarge { display_path, size } => {
+                out.push_str(&format!(
+                    "@{display_path} _(skipped — {size} bytes > {AT_PATH_MAX_BYTES} byte cap; use the read tool)_"
+                ));
+                out.push_str(trail);
+            }
+            ResolveOutcome::Missing => {
+                out.push('@');
+                out.push_str(&token);
+            }
+        }
+    }
+    out
+}
+
+enum ResolveOutcome {
+    Ok { display_path: String, body: String },
+    TooLarge { display_path: String, size: u64 },
+    Missing,
+}
+
+fn try_read_at_path(token: &str, working_dir: Option<&str>) -> ResolveOutcome {
+    let path = std::path::Path::new(token);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Some(cwd) = working_dir {
+        std::path::Path::new(cwd).join(path)
+    } else {
+        path.to_path_buf()
+    };
+    let Ok(meta) = std::fs::metadata(&resolved) else {
+        return ResolveOutcome::Missing;
+    };
+    if !meta.is_file() {
+        return ResolveOutcome::Missing;
+    }
+    let size = meta.len();
+    if size > AT_PATH_MAX_BYTES {
+        return ResolveOutcome::TooLarge {
+            display_path: token.to_string(),
+            size,
+        };
+    }
+    match std::fs::read_to_string(&resolved) {
+        Ok(body) => ResolveOutcome::Ok {
+            display_path: token.to_string(),
+            body,
+        },
+        Err(_) => ResolveOutcome::Missing,
+    }
+}
+
+#[cfg(test)]
+mod at_path_tests {
+    use super::*;
+
+    #[test]
+    fn passes_through_input_with_no_at() {
+        assert_eq!(
+            expand_at_path_references("hello world", None),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn does_not_expand_email_like_tokens() {
+        let out = expand_at_path_references("ping me at user@example.com please", None);
+        assert!(out.contains("user@example.com"));
+        assert!(!out.contains("--- @example.com"));
+    }
+
+    #[test]
+    fn expands_real_file_relative_to_working_dir() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let file = temp.path().join("hello.txt");
+        std::fs::write(&file, "FILE_BODY\nLINE 2").unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+
+        let out = expand_at_path_references("review @hello.txt for issues", Some(&cwd));
+        assert!(out.contains("--- @hello.txt ---"));
+        assert!(out.contains("FILE_BODY"));
+        assert!(out.contains("LINE 2"));
+        assert!(out.contains("--- end @hello.txt ---"));
+        // Trailing words are preserved.
+        assert!(out.contains(" for issues"));
+    }
+
+    #[test]
+    fn missing_file_leaves_at_token_literal() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let cwd = temp.path().to_string_lossy().to_string();
+        let out = expand_at_path_references("look at @nope.txt", Some(&cwd));
+        assert_eq!(out, "look at @nope.txt");
+    }
+
+    #[test]
+    fn trailing_punctuation_after_path_is_preserved() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let file = temp.path().join("a.rs");
+        std::fs::write(&file, "fn main() {}").unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+        // "@a.rs." => path is "a.rs", trailing "." preserved.
+        let out = expand_at_path_references("see @a.rs.", Some(&cwd));
+        assert!(out.contains("--- @a.rs ---"));
+        assert!(out.trim_end().ends_with("."));
+    }
 }
 
 pub(super) fn queue_message(app: &mut App) {
