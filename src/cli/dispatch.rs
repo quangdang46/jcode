@@ -5,8 +5,9 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Instant;
 
 use super::args::{
-    AmbientCommand, Args, AuthCommand, Command, McpCommand, MemoryCommand, ModelCommand,
-    PromptsCommand, ProviderCommand, RestartCommand, SessionCommand, TranscriptModeArg,
+    AmbientCommand, Args, AuthCommand, Command, ExportFormatArg, McpCommand, MemoryCommand,
+    ModelCommand, PromptsCommand, ProviderCommand, RestartCommand, SessionCommand,
+    TranscriptModeArg,
 };
 use crate::{
     agent, auth, build, provider, provider_catalog, server, session, setup_hints, startup_profile,
@@ -235,6 +236,17 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 crate::doctor::DoctorFormat::Text
             };
             crate::doctor::run(format)?;
+        }
+        Some(Command::Export {
+            session,
+            output,
+            format,
+        }) => {
+            let fmt = match format {
+                ExportFormatArg::Markdown => crate::export::ExportFormat::Markdown,
+                ExportFormatArg::Json => crate::export::ExportFormat::Json,
+            };
+            crate::export::run(&session, output, fmt)?;
         }
         Some(Command::Ambient(subcmd)) => {
             commands::run_ambient_command(map_ambient_subcommand(subcmd)).await?;

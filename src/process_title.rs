@@ -135,6 +135,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Prompts(_)) => "jcode prompts".to_string(),
         Some(Command::Mcp(_)) => "jcode mcp".to_string(),
         Some(Command::Doctor { .. }) => "jcode doctor".to_string(),
+        Some(Command::Export { .. }) => "jcode export".to_string(),
         Some(Command::Ambient(subcommand)) => match subcommand {
             AmbientCommand::RunVisible => "jcode ambient visible".to_string(),
             _ => "jcode ambient".to_string(),

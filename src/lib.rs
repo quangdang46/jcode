@@ -31,6 +31,7 @@ pub mod embedding_stub;
 #[cfg(not(feature = "embeddings"))]
 pub use embedding_stub as embedding;
 pub mod env;
+pub mod export;
 pub mod gateway;
 pub mod gmail;
 pub mod goal;

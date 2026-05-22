@@ -11,6 +11,12 @@ pub(crate) enum TranscriptModeArg {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum ExportFormatArg {
+    Markdown,
+    Json,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum GoogleAccessTierArg {
     Full,
     Readonly,
@@ -298,6 +304,19 @@ pub(crate) enum Command {
         /// Emit JSON instead of human-readable output.
         #[arg(long)]
         json: bool,
+    },
+
+    /// Export a session to a self-contained Markdown or JSON file.
+    Export {
+        /// Session ID or memorable short name (e.g. `fox`).
+        session: String,
+
+        /// Output file. Defaults to `<slug-or-id>-<timestamp>.<ext>` in cwd.
+        output: Option<std::path::PathBuf>,
+
+        /// Output format (default: markdown).
+        #[arg(long, value_enum, default_value_t = ExportFormatArg::Markdown)]
+        format: ExportFormatArg,
     },
 
     /// Ambient mode management
