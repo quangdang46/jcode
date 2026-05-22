@@ -254,6 +254,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             let fmt = match format {
                 ExportFormatArg::Markdown => crate::export::ExportFormat::Markdown,
                 ExportFormatArg::Json => crate::export::ExportFormat::Json,
+                ExportFormatArg::Html => crate::export::ExportFormat::Html,
             };
             crate::export::run(&session, output, fmt, redact)?;
         }
