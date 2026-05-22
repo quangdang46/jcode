@@ -273,6 +273,10 @@ pub(crate) enum Command {
     #[command(subcommand)]
     Session(SessionCommand),
 
+    /// Inspect prompt templates discovered from `.jcode/prompts/` and `~/.jcode/prompts/`
+    #[command(subcommand)]
+    Prompts(PromptsCommand),
+
     /// Ambient mode management
     #[command(subcommand)]
     Ambient(AmbientCommand),
@@ -495,6 +499,22 @@ pub(crate) enum SessionCommand {
         /// Emit JSON instead of human-readable output.
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum PromptsCommand {
+    /// List all prompt templates discovered from project + user dirs.
+    List {
+        /// Emit JSON instead of human-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show the body of one prompt template by name.
+    Show {
+        /// Template name (filename without `.md`). Use `jcode prompts list` to discover names.
+        name: String,
     },
 }
 
