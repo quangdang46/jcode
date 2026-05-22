@@ -1593,10 +1593,11 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
             match tok {
                 "--json" => format = crate::export::ExportFormat::Json,
                 "--md" | "--markdown" => format = crate::export::ExportFormat::Markdown,
+                "--html" => format = crate::export::ExportFormat::Html,
                 "--redact" => redact = true,
                 _ if tok.starts_with("--") => {
                     app.push_display_message(DisplayMessage::error(format!(
-                        "Unknown /export flag: `{tok}`. Supported: `--json`, `--markdown`, `--redact`."
+                        "Unknown /export flag: `{tok}`. Supported: `--json`, `--markdown`, `--html`, `--redact`."
                     )));
                     return true;
                 }
@@ -1619,6 +1620,7 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
                 let label = match format {
                     crate::export::ExportFormat::Markdown => "Markdown",
                     crate::export::ExportFormat::Json => "JSON",
+                    crate::export::ExportFormat::Html => "HTML",
                 };
                 let suffix = if redact { " (redacted)" } else { "" };
                 app.push_display_message(DisplayMessage::system(format!(
