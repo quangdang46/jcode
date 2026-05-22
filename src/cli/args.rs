@@ -72,6 +72,13 @@ pub(crate) struct Args {
     #[arg(long = "models", global = true, value_delimiter = ',')]
     pub(crate) scoped_models: Vec<String>,
 
+    /// Set the human-readable title (display name) of the new session. Visible
+    /// in `jcode --resume` and the session picker. Equivalent to setting
+    /// `JCODE_SESSION_NAME`. Existing sessions are unaffected — use
+    /// `jcode session rename <id> <name>` for those.
+    #[arg(long = "name", alias = "session-name", global = true)]
+    pub(crate) session_name: Option<String>,
+
     /// Log tool inputs/outputs and token usage to stderr
     #[arg(long, global = true)]
     pub(crate) trace: bool,
