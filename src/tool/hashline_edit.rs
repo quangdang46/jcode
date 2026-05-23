@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub struct HashlineEditTool;
@@ -57,7 +57,12 @@ fn hash_window(content: &str, start_line: usize, end_line: usize) -> String {
 }
 
 /// Verify the anchor hash matches the content at the given line.
-fn verify_anchor(content: &str, anchor_line: usize, expected_hash: &str, context_window: usize) -> Result<()> {
+fn verify_anchor(
+    content: &str,
+    anchor_line: usize,
+    expected_hash: &str,
+    context_window: usize,
+) -> Result<()> {
     let total_lines = content.lines().count();
     if anchor_line == 0 || anchor_line > total_lines {
         return Err(anyhow::anyhow!(
@@ -92,10 +97,12 @@ fn apply_edit_within_window(
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
 
+    // 0-indexed window bounds. `verify_anchor` already enforced
+    // 1 <= anchor_line <= total_lines, so total_lines >= 1 here.
     let window_start = anchor_line.saturating_sub(context_window + 1);
-    let window_end = (anchor_line + context_window).min(total_lines);
+    let window_end = (anchor_line - 1 + context_window).min(total_lines - 1);
 
-    if window_start > window_end || window_end >= total_lines {
+    if window_start > window_end {
         return Err(anyhow::anyhow!(
             "anchor window out of range: lines {} to {} but file has {} lines",
             window_start + 1,
@@ -132,7 +139,11 @@ fn apply_edit_within_window(
 
     // Find the global position of the first character of old_string within the window
     let window_offset = window_text.find(old_string).unwrap();
-    let global_offset = lines[..window_start].iter().map(|l| l.len() + 1).sum::<usize>() + window_offset;
+    let global_offset = lines[..window_start]
+        .iter()
+        .map(|l| l.len() + 1)
+        .sum::<usize>()
+        + window_offset;
 
     // Find start line in original content
     let prefix = &content[..global_offset];
@@ -147,7 +158,11 @@ fn apply_edit_within_window(
     let old_end = global_offset + old_string.len();
     result.push_str(&content[old_end..]);
 
-    Ok((result, start_line, start_line + new_string.lines().count().saturating_sub(1)))
+    Ok((
+        result,
+        start_line,
+        start_line + new_string.lines().count().saturating_sub(1),
+    ))
 }
 
 #[async_trait]
@@ -235,10 +250,35 @@ impl Tool for HashlineEditTool {
             params.anchor.context_window,
         )?;
 
-        // Step 3: Write back atomically via std::fs then tokio rename
-        let temp_path = path.with_extension("tmp");
-        tokio::fs::write(&temp_path, &new_content).await?;
-        tokio::fs::rename(&temp_path, &path).await?;
+        // Step 3: Write back atomically via temp file + rename. Preserve
+        // the original extension in the temp name (e.g. `foo.rs` →
+        // `foo.rs.jcode-tmp`) so file watchers / build systems that filter
+        // by extension don't trip on the temp file. Append a process-id
+        // suffix so concurrent edits to different files don't collide.
+        let pid = std::process::id();
+        let temp_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => format!("{name}.jcode-tmp.{pid}"),
+            None => format!("jcode-tmp.{pid}"),
+        };
+        let temp_path = path.with_file_name(temp_name);
+        if let Err(e) = tokio::fs::write(&temp_path, &new_content).await {
+            // Best-effort cleanup if write partially succeeded.
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(anyhow::anyhow!(
+                "failed to write temp file {}: {}",
+                temp_path.display(),
+                e
+            ));
+        }
+        if let Err(e) = tokio::fs::rename(&temp_path, &path).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(anyhow::anyhow!(
+                "failed to atomically rename {} → {}: {}",
+                temp_path.display(),
+                path.display(),
+                e
+            ));
+        }
 
         // Publish file touch event for swarm coordination
         let detail = Some(format!(
@@ -356,7 +396,14 @@ mod tests {
     #[test]
     fn test_apply_edit_success() {
         let content = test_content();
-        let (new, start, end) = apply_edit_within_window(content, 2, "    println!(\"hello\");", "    println!(\"world\");", 0).unwrap();
+        let (new, start, end) = apply_edit_within_window(
+            content,
+            2,
+            "    println!(\"hello\");",
+            "    println!(\"world\");",
+            0,
+        )
+        .unwrap();
         assert!(new.contains("world"));
         assert!(!new.contains("hello"));
         assert_eq!(start, 2);
@@ -367,20 +414,47 @@ mod tests {
         let content = test_content();
         // Anchor at line 5, but content has only 5 lines total (line 5 = last line)
         // The edit targets "println" which is at line 2 - should fail with "anchor window out of range"
-        let result = apply_edit_within_window(content, 5, "    println!(\"hello\");", "    println!(\"world\");", 0);
+        let result = apply_edit_within_window(
+            content,
+            5,
+            "    println!(\"hello\");",
+            "    println!(\"world\");",
+            0,
+        );
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("anchor window out of range") || err.to_string().contains("old_string not found"));
+        assert!(
+            err.to_string().contains("anchor window out of range")
+                || err.to_string().contains("old_string not found")
+        );
     }
 
     #[test]
     fn test_apply_edit_ambiguous() {
         let content = "    x = 1;\n    x = 2;\n";
-        // Both lines contain "    x = "
-        let result = apply_edit_within_window(content, 1, "    x = ", "    y = ", 0);
+        // With context_window=1, anchor=1 covers both lines.
+        // Both lines contain "    x = " — must reject as ambiguous.
+        let result = apply_edit_within_window(content, 1, "    x = ", "    y = ", 1);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("found 2 times"));
+    }
+
+    // Sanity: ctx=0 means "this line only" — even if the same string appears
+    // on a sibling line, ctx=0 must not consider it.
+    #[test]
+    fn test_apply_edit_ctx_zero_isolates_to_anchor_line() {
+        let content = "    x = 1;\n    x = 2;\n";
+        let (new_content, start, end) = apply_edit_within_window(
+            content, 1, "    x = ", "    y = ", 0,
+        )
+        .expect("ctx=0 must operate only on the anchor line");
+        assert_eq!(start, 1);
+        assert_eq!(end, 1);
+        // Only line 1 changed.
+        let lines: Vec<&str> = new_content.lines().collect();
+        assert!(lines[0].contains("y = 1"));
+        assert!(lines[1].contains("x = 2"));
     }
 
     #[test]
@@ -401,8 +475,80 @@ mod tests {
 
         // Edit within that window should work
         let (_, start, end) = apply_edit_within_window(
-            content, 2, "    println!(\"你好\");", "    println!(\"hola\");", 0
-        ).unwrap();
+            content,
+            2,
+            "    println!(\"你好\");",
+            "    println!(\"hola\");",
+            0,
+        )
+        .unwrap();
         assert_eq!(start, 2);
+    }
+
+    // Regression: edits to the last line of a file used to fail with
+    // "anchor window out of range" because the 0-indexed slice end was
+    // confused with the 1-indexed line number, rejecting any anchor at
+    // total_lines.
+    #[test]
+    fn test_apply_edit_on_last_line() {
+        let content = "first\nsecond\nlast\n";
+        let total_lines = content.lines().count();
+        assert_eq!(total_lines, 3);
+
+        let (new_content, start, end) = apply_edit_within_window(
+            content, 3, // anchor on the last line
+            "last", "final", 0,
+        )
+        .expect("editing the last line must work");
+
+        assert!(new_content.contains("final"));
+        assert!(!new_content.contains("last"));
+        assert_eq!(start, 3);
+        assert_eq!(end, 3);
+    }
+
+    #[test]
+    fn test_apply_edit_on_last_line_with_context() {
+        // Anchor at last line with context_window=1 — window covers lines 2-3.
+        let content = "first\nsecond\nthird\n";
+        let (new_content, _, _) = apply_edit_within_window(content, 3, "third", "fourth", 1)
+            .expect("last line + context window must still resolve");
+        assert!(new_content.contains("fourth"));
+    }
+
+    #[test]
+    fn test_apply_edit_on_only_line() {
+        // Single-line file.
+        let content = "only\n";
+        let (new_content, start, end) = apply_edit_within_window(content, 1, "only", "changed", 0)
+            .expect("single-line file must be editable");
+        assert!(new_content.starts_with("changed"));
+        assert_eq!(start, 1);
+        assert_eq!(end, 1);
+    }
+
+    #[test]
+    fn test_verify_anchor_and_apply_edit_use_consistent_window() {
+        // Hash computed for verify_anchor must match the window apply_edit
+        // operates on, otherwise the verified region differs from the edited
+        // region. This is the fundamental correctness invariant of the tool.
+        let content =
+            "fn main() {\n    println!(\"a\");\n    println!(\"b\");\n    println!(\"c\");\n}\n";
+        for anchor in 1usize..=5 {
+            for ctx in 0usize..=2 {
+                let h = {
+                    let total = content.lines().count();
+                    let start = anchor.saturating_sub(ctx + 1);
+                    let end = (anchor + ctx).min(total);
+                    hash_window(content, start + 1, end)
+                };
+                let v = verify_anchor(content, anchor, &h, ctx);
+                assert!(
+                    v.is_ok(),
+                    "verify failed for anchor={anchor}, ctx={ctx}, hash={h}: {:?}",
+                    v.err()
+                );
+            }
+        }
     }
 }
