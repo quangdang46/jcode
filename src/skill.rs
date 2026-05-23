@@ -438,14 +438,23 @@ impl SkillRegistry {
         Ok(count)
     }
 
-    /// Check if a message is a skill invocation (starts with /)
+    /// Check if a message is a skill invocation.
+    ///
+    /// Skills use the `$<name>` namespace exclusively — `/` is reserved
+    /// for built-in slash commands. Returns the bare skill name without
+    /// the prefix, or `None` if the input is not a single-word `$`
+    /// invocation.
+    ///
+    /// Note: the historical `/<skill>` form was retired to keep the `/`
+    /// autocomplete dropdown navigable when the user has dozens of
+    /// skills installed.
     pub fn parse_invocation(input: &str) -> Option<&str> {
         let trimmed = input.trim();
-        if trimmed.starts_with('/') && !trimmed.contains(' ') {
-            Some(&trimmed[1..])
-        } else {
-            None
+        if trimmed.contains(' ') {
+            return None;
         }
+        let rest = trimmed.strip_prefix('$')?;
+        (!rest.is_empty()).then_some(rest)
     }
 }
 
@@ -647,5 +656,51 @@ mod tests {
             count, 1,
             "skill must not be loaded twice when cwd == repo root"
         );
+    }
+}
+
+#[cfg(test)]
+mod invocation_parse_tests {
+    use super::*;
+
+    #[test]
+    fn parse_invocation_accepts_dollar_prefix() {
+        assert_eq!(
+            SkillRegistry::parse_invocation("$grill-me"),
+            Some("grill-me")
+        );
+        assert_eq!(
+            SkillRegistry::parse_invocation("  $grill-me  "),
+            Some("grill-me")
+        );
+    }
+
+    #[test]
+    fn parse_invocation_rejects_slash_prefix() {
+        // The historical `/<skill>` form is intentionally rejected so the
+        // `/` autocomplete dropdown can stay focused on built-in commands.
+        // Slash-prefixed input falls through to the slash-command chain.
+        assert!(SkillRegistry::parse_invocation("/grill-me").is_none());
+        assert!(SkillRegistry::parse_invocation("/help").is_none());
+    }
+
+    #[test]
+    fn parse_invocation_rejects_invocation_with_args() {
+        // $<name> requires single-word form; whitespace returns None so
+        // the input is treated as a literal user message.
+        assert!(SkillRegistry::parse_invocation("$grill-me with args").is_none());
+    }
+
+    #[test]
+    fn parse_invocation_rejects_bare_dollar() {
+        assert!(SkillRegistry::parse_invocation("$").is_none());
+        assert!(SkillRegistry::parse_invocation("  $  ").is_none());
+    }
+
+    #[test]
+    fn parse_invocation_rejects_other_prefixes() {
+        assert!(SkillRegistry::parse_invocation("@grill-me").is_none());
+        assert!(SkillRegistry::parse_invocation("!grill-me").is_none());
+        assert!(SkillRegistry::parse_invocation("grill-me").is_none());
     }
 }

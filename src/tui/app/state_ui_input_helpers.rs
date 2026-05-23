@@ -108,7 +108,10 @@ pub(super) const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
     RegisteredCommand::public("/unsave", "Remove bookmark from session"),
     RegisteredCommand::public("/rename", "Rename current session"),
     RegisteredCommand::public("/export", "Export this session to a Markdown or JSON file"),
-    RegisteredCommand::public("/share", "Upload this session as a private GitHub gist (requires gh CLI)"),
+    RegisteredCommand::public(
+        "/share",
+        "Upload this session as a private GitHub gist (requires gh CLI)",
+    ),
     RegisteredCommand::public("/split", "Split session into a new window"),
     RegisteredCommand::public("/transfer", "Compact context into a fresh handoff session"),
     RegisteredCommand::public("/workspace", "Niri-style session workspace"),
@@ -129,6 +132,56 @@ pub(super) const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
     RegisteredCommand::hidden("/zzz", "Secret premium-mode command"),
     RegisteredCommand::hidden("/zstatus", "Secret premium-mode status command"),
 ];
+
+/// Detect whether the input ends in an "active `$` token" — i.e. the
+/// user typed `$` then alphanumeric/dash/underscore characters, and is
+/// still on that token (no whitespace yet after `$`). Returns the
+/// substring starting from the `$` (e.g. `"$gri"`) so the caller can
+/// rank skill candidates against it.
+///
+/// Returns `None` if:
+/// - There's no `$` in the input
+/// - The most recent `$` is not at a token start (preceded by alphanumeric)
+/// - There's whitespace between the `$` and the end of input
+///
+/// Examples:
+///
+/// ```ignore
+/// active_dollar_token("$grill-me")          // Some("$grill-me")
+/// active_dollar_token("fix the auth $gri")  // Some("$gri")
+/// active_dollar_token("xxx $")              // Some("$")
+/// active_dollar_token("xxx $a $b")          // Some("$b")  — last token wins
+/// active_dollar_token("xxx $a hello")       // None       — token ended
+/// active_dollar_token("price = $100")       // None       — preceded by '=' which is OK,
+///                                                          // but we accept it
+/// active_dollar_token("hello world")        // None
+/// ```
+pub(super) fn active_dollar_token(input: &str) -> Option<&str> {
+    // Walk from the END backwards to find the most recent '$'. While
+    // walking we must NOT cross whitespace (whitespace = token boundary
+    // and we'd be in a different token already).
+    let bytes = input.as_bytes();
+    let mut i = bytes.len();
+    while i > 0 {
+        let prev = bytes[i - 1];
+        if prev == b'$' {
+            // Found a `$`. Verify it starts a token — i.e. char before
+            // is start-of-input or whitespace.
+            if i == 1 || (bytes[i - 2] as char).is_whitespace() {
+                return Some(&input[i - 1..]);
+            }
+            // `$` is in the middle of an identifier (e.g. "abc$xyz") —
+            // not a skill token.
+            return None;
+        }
+        if (prev as char).is_whitespace() {
+            // Crossed whitespace before finding `$` — no active token.
+            return None;
+        }
+        i -= 1;
+    }
+    None
+}
 
 impl App {
     /// Find word boundary going backward (for Ctrl+W, Alt+B)
@@ -264,21 +317,13 @@ impl App {
             return cache.candidates.clone();
         }
 
-        fn push_skill_commands(
-            commands: &mut Vec<(String, &'static str)>,
-            seen: &mut std::collections::HashSet<String>,
-            skills: &crate::skill::SkillRegistry,
-        ) {
-            for skill in skills.list() {
-                let command = format!("/{}", skill.name);
-                if seen.insert(command.clone()) {
-                    commands.push((command, "Activate skill"));
-                }
-            }
-        }
-
+        // Issue #N (UX): only show BUILT-IN commands under `/`. Skills move
+        // to the `$` namespace via skill_candidates() so the / autocomplete
+        // dropdown stays navigable when the user has 100+ skills installed.
+        // The legacy `/<skill>` invocation form still works at submit time
+        // for backwards compatibility — it's just hidden from autocomplete.
         let mut seen = std::collections::HashSet::new();
-        let mut commands: Vec<(String, &'static str)> = REGISTERED_COMMANDS
+        let commands: Vec<(String, &'static str)> = REGISTERED_COMMANDS
             .iter()
             .filter(|command| command.autocomplete)
             .filter(|command| !command.remote_only || self.is_remote)
@@ -288,22 +333,40 @@ impl App {
             })
             .collect();
 
-        let skills = self.current_skills_snapshot();
-        push_skill_commands(&mut commands, &mut seen, &skills);
-
-        if self.is_remote && !self.remote_skills.is_empty() {
-            for skill in &self.remote_skills {
-                let command = format!("/{skill}");
-                if seen.insert(command.clone()) {
-                    commands.push((command, "Activate skill"));
-                }
-            }
-        }
-
         *self.command_candidates_cache.borrow_mut() = Some(CommandCandidatesCache {
             candidates: commands.clone(),
         });
         commands
+    }
+
+    /// Build the autocomplete list for the `$` (skill) namespace.
+    ///
+    /// Each entry is `($<skill-name>, "Activate skill")`. Includes both
+    /// locally-discovered skills (project + user dirs, see SkillRegistry)
+    /// and remote-session skills when running as a TUI client against a
+    /// shared server.
+    fn skill_candidates(&self) -> Vec<(String, &'static str)> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<(String, &'static str)> = Vec::new();
+
+        let skills = self.current_skills_snapshot();
+        for skill in skills.list() {
+            let entry = format!("${}", skill.name);
+            if seen.insert(entry.clone()) {
+                out.push((entry, "Activate skill"));
+            }
+        }
+
+        if self.is_remote && !self.remote_skills.is_empty() {
+            for skill in &self.remote_skills {
+                let entry = format!("${skill}");
+                if seen.insert(entry.clone()) {
+                    out.push((entry, "Activate skill"));
+                }
+            }
+        }
+
+        out
     }
 
     pub(super) fn invalidate_command_candidates_cache(&self) {
@@ -424,7 +487,17 @@ impl App {
     pub(super) fn get_suggestions_for(&self, input: &str) -> Vec<(String, &'static str)> {
         let input = input.trim_start();
 
-        // Only show suggestions when input starts with /
+        // Only show suggestions when input starts with `/` (built-in
+        // commands) or `$` (skills, see skill_candidates).
+        // Issue: skill autocomplete should fire even when `$` appears
+        // mid-text, e.g. "fix the auth $gri" → suggest skills matching
+        // "gri*". Find the last `$` that starts a token (preceded by
+        // start-of-input or whitespace), and if found with no whitespace
+        // between it and the cursor, surface skill candidates ranked by
+        // the partial after `$`.
+        if let Some(token) = active_dollar_token(input) {
+            return self.rank_suggestions(&token.to_lowercase(), self.skill_candidates());
+        }
         if !input.starts_with('/') {
             return vec![];
         }
@@ -1284,5 +1357,54 @@ impl App {
                 | "/rename"
                 | "/cache"
         )
+    }
+}
+
+#[cfg(test)]
+mod dollar_token_tests {
+    use super::active_dollar_token;
+
+    #[test]
+    fn detects_dollar_at_start_of_input() {
+        assert_eq!(active_dollar_token("$grill-me"), Some("$grill-me"));
+        assert_eq!(active_dollar_token("$"), Some("$"));
+    }
+
+    #[test]
+    fn detects_dollar_after_whitespace() {
+        // "fix the auth $gri" → autocomplete on $gri
+        assert_eq!(active_dollar_token("fix the auth $gri"), Some("$gri"));
+        // Multiple spaces
+        assert_eq!(active_dollar_token("xxx   $foo"), Some("$foo"));
+        // Bare dollar at the end (just typed)
+        assert_eq!(active_dollar_token("xxx $"), Some("$"));
+    }
+
+    #[test]
+    fn last_dollar_wins_when_multiple_tokens() {
+        // $a $b → caller is on $b (last token)
+        assert_eq!(active_dollar_token("$a $b"), Some("$b"));
+        assert_eq!(active_dollar_token("xxx $foo $bar"), Some("$bar"));
+    }
+
+    #[test]
+    fn rejects_when_token_ended_with_whitespace() {
+        // User typed `$foo` then space → token boundary; no active token.
+        assert_eq!(active_dollar_token("$foo "), None);
+        assert_eq!(active_dollar_token("$grill-me hello"), None);
+    }
+
+    #[test]
+    fn rejects_dollar_in_middle_of_identifier() {
+        // Embedded `$` like "abc$xyz" is not a skill token.
+        assert_eq!(active_dollar_token("abc$xyz"), None);
+        assert_eq!(active_dollar_token("price=$100"), None);
+    }
+
+    #[test]
+    fn returns_none_when_no_dollar() {
+        assert_eq!(active_dollar_token(""), None);
+        assert_eq!(active_dollar_token("hello world"), None);
+        assert_eq!(active_dollar_token("/help"), None);
     }
 }
