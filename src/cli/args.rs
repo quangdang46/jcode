@@ -14,6 +14,7 @@ pub(crate) enum TranscriptModeArg {
 pub(crate) enum ExportFormatArg {
     Markdown,
     Json,
+    Html,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]

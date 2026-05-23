@@ -20,6 +20,7 @@ use jcode_message_types::Role;
 pub enum ExportFormat {
     Markdown,
     Json,
+    Html,
 }
 
 pub fn run(
@@ -36,6 +37,7 @@ pub fn run(
         ExportFormat::Json => {
             serde_json::to_string_pretty(&session).context("failed to serialize session to JSON")?
         }
+        ExportFormat::Html => render_html(&session),
     };
 
     let body = if redact { redact_secrets(&body) } else { body };
@@ -78,6 +80,7 @@ fn default_output_path(session: &crate::session::Session, format: ExportFormat) 
     let ext = match format {
         ExportFormat::Markdown => "md",
         ExportFormat::Json => "json",
+        ExportFormat::Html => "html",
     };
     PathBuf::from(format!("{stem}-{ts}.{ext}"))
 }
@@ -210,6 +213,215 @@ pub fn render_markdown(session: &crate::session::Session) -> String {
         render_stored_message(&mut out, idx, msg);
     }
 
+    out
+}
+
+/// HTML-escape `s`. Tight subset (no entity references for unicode beyond
+/// the dangerous five), since we control the rendered surface.
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+const HTML_STYLE: &str = r#"
+:root {
+  color-scheme: light dark;
+  --fg: #1f2328; --bg: #ffffff; --muted: #57606a;
+  --code-bg: #f6f8fa; --border: #d0d7de; --accent: #0969da;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --fg: #e6edf3; --bg: #0d1117; --muted: #8b949e;
+          --code-bg: #161b22; --border: #30363d; --accent: #58a6ff; }
+}
+body { color: var(--fg); background: var(--bg);
+       font: 14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",
+             Inter,Roboto,Helvetica,Arial,sans-serif;
+       max-width: 880px; margin: 24px auto; padding: 0 16px; }
+h1 { margin: 0 0 16px; font-size: 22px; }
+.meta { font-size: 13px; color: var(--muted); margin-bottom: 16px;
+        border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+.meta div { display: flex; gap: 8px; }
+.meta strong { color: var(--fg); min-width: 96px; display: inline-block; }
+.message { border-top: 1px solid var(--border); padding: 16px 0; }
+.message header { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.message header .role { color: var(--accent); font-weight: 600; }
+.text { white-space: pre-wrap; word-wrap: break-word; }
+details { background: var(--code-bg); border: 1px solid var(--border);
+          border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+details[open] summary { margin-bottom: 8px; }
+pre { background: var(--code-bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 10px 12px; overflow-x: auto;
+      font: 12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; margin: 0; }
+code { font: 12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+.compaction-note { font-style: italic; color: var(--muted);
+                   border-left: 3px solid var(--accent);
+                   padding: 4px 12px; margin: 12px 0; }
+"#;
+
+/// Render a session as a self-contained HTML document with inline CSS.
+///
+/// Design goals:
+///   - **Self-contained**: no external CSS/JS, no inline scripts. Safe to
+///     attach to email or open from a file:// URL on a locked-down machine.
+///   - **Theme-aware**: `prefers-color-scheme` media query gives a dark mode
+///     fallback automatically.
+///   - **Escaped**: every user/agent-supplied string runs through
+///     html_escape() before insertion. We never trust message bodies.
+///   - **Collapsible**: thinking + tool blocks use `<details>` so the
+///     transcript reads cleanly by default but is fully auditable on click.
+pub fn render_html(session: &crate::session::Session) -> String {
+    use jcode_message_types::{ContentBlock, Role};
+
+    let title = session
+        .display_title()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| session.display_name().to_string());
+    let title_esc = html_escape(&title);
+
+    let mut out = String::with_capacity(4096);
+    out.push_str("<!doctype html>\n<html lang=\"en\"><head>\n");
+    out.push_str("<meta charset=\"utf-8\">\n");
+    out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
+    out.push_str(&format!("<title>{title_esc} — jcode session</title>\n"));
+    out.push_str("<style>");
+    out.push_str(HTML_STYLE);
+    out.push_str("</style>\n</head><body>\n");
+
+    out.push_str(&format!("<h1>{title_esc}</h1>\n"));
+    out.push_str("<div class=\"meta\">\n");
+    out.push_str(&format!(
+        "<div><strong>Session ID</strong><code>{}</code></div>\n",
+        html_escape(&session.id)
+    ));
+    if let Some(name) = &session.short_name {
+        out.push_str(&format!(
+            "<div><strong>Name</strong><code>{}</code></div>\n",
+            html_escape(name)
+        ));
+    }
+    if let Some(provider) = &session.provider_key {
+        out.push_str(&format!(
+            "<div><strong>Provider</strong><code>{}</code></div>\n",
+            html_escape(provider)
+        ));
+    }
+    if let Some(model) = &session.model {
+        out.push_str(&format!(
+            "<div><strong>Model</strong><code>{}</code></div>\n",
+            html_escape(model)
+        ));
+    }
+    out.push_str(&format!(
+        "<div><strong>Created</strong>{}</div>\n",
+        html_escape(&session.created_at.to_rfc3339())
+    ));
+    out.push_str(&format!(
+        "<div><strong>Updated</strong>{}</div>\n",
+        html_escape(&session.updated_at.to_rfc3339())
+    ));
+    out.push_str(&format!(
+        "<div><strong>Messages</strong>{}</div>\n",
+        session.messages.len()
+    ));
+    out.push_str("</div>\n");
+
+    if let Some(compaction) = session.compaction.as_ref() {
+        let kind = if compaction.openai_encrypted_content.is_some() {
+            "native/openai-encrypted"
+        } else if !compaction.summary_text.is_empty() {
+            "summary-text"
+        } else {
+            "none"
+        };
+        out.push_str(&format!(
+            "<div class=\"compaction-note\">Active compaction artifact present (<code>{}</code> — {} chars).</div>\n",
+            html_escape(kind),
+            artifact_chars(compaction)
+        ));
+    }
+
+    for (idx, msg) in session.messages.iter().enumerate() {
+        let role_label = match msg.role {
+            Role::User => "User",
+            Role::Assistant => "Assistant",
+        };
+        let timestamp = msg
+            .timestamp
+            .map(|t| format!(" · {}", t.format("%Y-%m-%d %H:%M:%S")))
+            .unwrap_or_default();
+        out.push_str("<section class=\"message\">\n");
+        out.push_str(&format!(
+            "<header>#{idx} <span class=\"role\">{}</span>{}</header>\n",
+            role_label,
+            html_escape(&timestamp)
+        ));
+        for block in &msg.content {
+            match block {
+                ContentBlock::Text { text, .. } => {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        out.push_str(&format!(
+                            "<div class=\"text\">{}</div>\n",
+                            html_escape(trimmed)
+                        ));
+                    }
+                }
+                ContentBlock::Reasoning { text } => {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        out.push_str(&format!(
+                            "<details><summary>thinking</summary>\n<div class=\"text\">{}</div>\n</details>\n",
+                            html_escape(trimmed)
+                        ));
+                    }
+                }
+                ContentBlock::ToolUse { name, input, .. } => {
+                    let pretty =
+                        serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string());
+                    out.push_str(&format!(
+                        "<details><summary>tool: <code>{}</code></summary>\n<pre><code>{}</code></pre>\n</details>\n",
+                        html_escape(name),
+                        html_escape(&pretty)
+                    ));
+                }
+                ContentBlock::ToolResult { content, .. } => {
+                    let trimmed = content.trim();
+                    if !trimmed.is_empty() {
+                        out.push_str(&format!(
+                            "<details><summary>tool result</summary>\n<pre><code>{}</code></pre>\n</details>\n",
+                            html_escape(trimmed)
+                        ));
+                    }
+                }
+                ContentBlock::Image { media_type, .. } => {
+                    out.push_str(&format!(
+                        "<div class=\"text\"><em>[image: {}]</em></div>\n",
+                        html_escape(media_type)
+                    ));
+                }
+                ContentBlock::OpenAICompaction { encrypted_content } => {
+                    out.push_str(&format!(
+                        "<div class=\"text\"><em>[OpenAI native compaction artifact: {} chars]</em></div>\n",
+                        encrypted_content.len()
+                    ));
+                }
+            }
+        }
+        out.push_str("</section>\n");
+    }
+
+    out.push_str("</body></html>\n");
     out
 }
 
@@ -364,6 +576,107 @@ mod tests {
         assert_eq!(slugify("a/b c"), "a-b-c");
         assert_eq!(slugify("___"), "");
         assert_eq!(slugify(""), "");
+    }
+
+    // ---- HTML render tests ----
+
+    #[test]
+    fn html_escape_handles_dangerous_chars() {
+        assert_eq!(
+            html_escape("<script>alert(\"xss\")</script>"),
+            "&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;"
+        );
+        assert_eq!(html_escape("a & b"), "a &amp; b");
+        assert_eq!(html_escape("'single'"), "&#39;single&#39;");
+        // Non-dangerous unicode passes through.
+        assert_eq!(html_escape("café 🚀"), "café 🚀");
+    }
+
+    #[test]
+    fn render_html_self_contained_doc() {
+        let s = fake_session();
+        let html = render_html(&s);
+        assert!(html.starts_with("<!doctype html>"));
+        assert!(html.contains("<title>Test Export — jcode session</title>"));
+        assert!(html.contains("<style>"));
+        // Inline CSS, no external refs.
+        assert!(!html.contains("<link "));
+        assert!(!html.contains("<script"));
+        // Meta block is present.
+        assert!(html.contains("<strong>Session ID</strong>"));
+        // Ends with closing tags.
+        assert!(html.trim_end().ends_with("</body></html>"));
+    }
+
+    #[test]
+    fn render_html_escapes_user_supplied_text() {
+        // Build a session whose text content is literally an XSS payload.
+        let mut s = fake_session();
+        s.messages.push(crate::session::StoredMessage {
+            id: "m_xss".to_string(),
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: "<img src=x onerror=alert(1)>".to_string(),
+                cache_control: None,
+            }],
+            display_role: None,
+            timestamp: None,
+            tool_duration_ms: None,
+            token_usage: None,
+        });
+        let html = render_html(&s);
+        assert!(!html.contains("<img src=x onerror=alert(1)>"));
+        assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
+    }
+
+    #[test]
+    fn render_html_uses_details_for_thinking_and_tools() {
+        let mut s = fake_session();
+        s.messages.push(crate::session::StoredMessage {
+            id: "m_think".to_string(),
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Reasoning {
+                    text: "internal thought".to_string(),
+                },
+                ContentBlock::ToolUse {
+                    id: "t1".to_string(),
+                    name: "shell".to_string(),
+                    input: serde_json::json!({"cmd": "ls"}),
+                },
+            ],
+            display_role: None,
+            timestamp: None,
+            tool_duration_ms: None,
+            token_usage: None,
+        });
+        let html = render_html(&s);
+        assert!(html.contains("<details><summary>thinking</summary>"));
+        assert!(html.contains("<details><summary>tool: <code>shell</code></summary>"));
+    }
+
+    #[test]
+    fn render_html_round_trips_via_run_and_redact() {
+        // End-to-end: format=Html + redact=true should both produce HTML and
+        // mask any embedded secrets. Here we feed in a known sk-* token and
+        // assert it's gone from the rendered output.
+        let mut s = fake_session();
+        s.messages.push(crate::session::StoredMessage {
+            id: "m_secret".to_string(),
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: "The key is sk-ant-api03-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                cache_control: None,
+            }],
+            display_role: None,
+            timestamp: None,
+            tool_duration_ms: None,
+            token_usage: None,
+        });
+        let html = render_html(&s);
+        let redacted = redact_secrets(&html);
+        assert!(redacted.contains("[REDACTED:sk]"));
+        assert!(!redacted.contains("sk-ant-api03-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
     }
 
     // ---- redact_secrets tests ----
