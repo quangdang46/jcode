@@ -223,7 +223,11 @@ fn collect_providers(jcode_home: Option<&Path>) -> Vec<ProviderStatus> {
         ("perplexity", "", &["PERPLEXITY_API_KEY"]),
         ("togetherai", "", &["TOGETHER_API_KEY"]),
         ("xai", "", &["XAI_API_KEY"]),
-        ("zai", "", &["ZHIPU_API_KEY"]),
+        // Z.AI accepts both ZHIPU_API_KEY (canonical, OpenAI-compat preset
+        // env key) and the legacy ZAI_API_KEY alias resolved by
+        // provider_catalog. Doctor needs the same fallback chain or it will
+        // mis-report a working setup as "not configured".
+        ("zai", "", &["ZHIPU_API_KEY", "ZAI_API_KEY"]),
     ];
 
     let mut out: Vec<ProviderStatus> = Vec::with_capacity(SPECS.len());
@@ -612,6 +616,7 @@ mod tests {
             "TOGETHER_API_KEY",
             "XAI_API_KEY",
             "ZHIPU_API_KEY",
+            "ZAI_API_KEY",
         ];
         let saved: Vec<(&str, Option<std::ffi::OsString>)> = watched_env
             .iter()
