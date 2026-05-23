@@ -18,6 +18,32 @@ pub fn get_current_session() -> Option<String> {
     crate::get_current_session()
 }
 
+/// Defensive terminal reset bytes for issue #158.
+///
+/// Sent after `ratatui::restore()` (and after the equivalent in the signal
+/// handler). Each sequence covers a state ratatui itself doesn't reset:
+///
+/// - `ESC [ r`        Reset scroll region (DECSTBM). Without this, some
+///                    terminals constrain typed input rendering to the
+///                    alt-screen region even after LeaveAlternateScreen,
+///                    which is exactly the reported "input invisible"
+///                    symptom.
+/// - `ESC [ ?25 h`    Show cursor — defensive duplicate of crossterm `Show`.
+/// - `ESC [ ?2004 l`  Disable bracketed paste — defensive duplicate.
+///
+/// Returning the bytes (rather than writing inline) keeps the sequence
+/// testable.
+fn defensive_terminal_reset_bytes() -> &'static [u8] {
+    b"\x1b[r\x1b[?25h\x1b[?2004l"
+}
+
+/// Same as `defensive_terminal_reset_bytes` but adds DisableFocusChange
+/// (`ESC [ ?1004 l`). Used by the signal-handler path which doesn't track
+/// which modes were enabled, so it has to disable everything blind.
+fn defensive_terminal_reset_bytes_signal() -> &'static [u8] {
+    b"\x1b[r\x1b[?25h\x1b[?2004l\x1b[?1004l"
+}
+
 pub fn install_panic_hook() {
     let default_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
@@ -176,6 +202,15 @@ pub fn cleanup_tui_runtime(state: &TuiRuntimeState, restore_terminal: bool) {
             tui::disable_keyboard_enhancement();
         }
         ratatui::restore();
+
+        // Issue #158: defensive belt-and-suspenders reset for terminals
+        // that may still hold state ratatui::restore() doesn't clear (see
+        // defensive_terminal_reset_bytes for the rationale per byte).
+        // Errors silently ignored — we're already exiting; better to leak
+        // an escape than to fail cleanup.
+        let mut stdout = io::stdout();
+        let _ = stdout.write_all(defensive_terminal_reset_bytes());
+        let _ = stdout.flush();
     }
 
     crate::tui::mermaid::clear_image_state();
@@ -270,6 +305,13 @@ fn handle_termination_signal(sig: i32) -> ! {
         crossterm::terminal::LeaveAlternateScreen,
         crossterm::cursor::Show
     );
+
+    // Issue #158: defensive reset for terminals that may still hold state
+    // crossterm doesn't clear (scroll region, bracketed paste, focus mode).
+    // On signal we don't know which were enabled, so reset all unconditionally.
+    let mut stderr = io::stderr();
+    let _ = stderr.write_all(defensive_terminal_reset_bytes_signal());
+    let _ = stderr.flush();
 
     if let Some(session_id) = get_current_session() {
         print_session_resume_hint(&session_id);
@@ -387,5 +429,49 @@ mod tests {
         // Either Ok or BrokenPipe is acceptable; what matters is it doesn't
         // panic.
         let _ = write_crash_resume_hint(ClosedWriter);
+    }
+
+    // ---- Issue #158: terminal reset bytes ----
+
+    #[test]
+    fn defensive_reset_bytes_contain_scroll_region_reset() {
+        let bytes = defensive_terminal_reset_bytes();
+        let s = std::str::from_utf8(bytes).expect("ASCII");
+        assert!(s.contains("\x1b[r"), "missing scroll-region reset: {:?}", s);
+        assert!(s.contains("\x1b[?25h"), "missing cursor show: {:?}", s);
+        assert!(
+            s.contains("\x1b[?2004l"),
+            "missing bracketed-paste disable: {:?}",
+            s
+        );
+    }
+
+    #[test]
+    fn defensive_reset_signal_includes_focus_disable() {
+        let regular = defensive_terminal_reset_bytes();
+        let signal = defensive_terminal_reset_bytes_signal();
+
+        // Signal variant is a superset of the regular one.
+        assert!(signal.starts_with(regular));
+
+        let s = std::str::from_utf8(signal).expect("ASCII");
+        assert!(
+            s.contains("\x1b[?1004l"),
+            "signal-path reset must disable focus mode: {:?}",
+            s
+        );
+    }
+
+    #[test]
+    fn defensive_reset_bytes_are_pure_ascii() {
+        // Terminals should not see unexpected bytes; verify these are valid
+        // 7-bit ASCII so they can't accidentally be interpreted as UTF-8
+        // multi-byte starts.
+        for b in defensive_terminal_reset_bytes() {
+            assert!(*b < 0x80, "non-ASCII byte {:#x} in reset", b);
+        }
+        for b in defensive_terminal_reset_bytes_signal() {
+            assert!(*b < 0x80, "non-ASCII byte {:#x} in signal reset", b);
+        }
     }
 }
