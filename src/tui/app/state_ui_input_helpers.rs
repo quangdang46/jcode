@@ -108,7 +108,10 @@ pub(super) const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
     RegisteredCommand::public("/unsave", "Remove bookmark from session"),
     RegisteredCommand::public("/rename", "Rename current session"),
     RegisteredCommand::public("/export", "Export this session to a Markdown or JSON file"),
-    RegisteredCommand::public("/share", "Upload this session as a private GitHub gist (requires gh CLI)"),
+    RegisteredCommand::public(
+        "/share",
+        "Upload this session as a private GitHub gist (requires gh CLI)",
+    ),
     RegisteredCommand::public("/split", "Split session into a new window"),
     RegisteredCommand::public("/transfer", "Compact context into a fresh handoff session"),
     RegisteredCommand::public("/workspace", "Niri-style session workspace"),
@@ -264,21 +267,13 @@ impl App {
             return cache.candidates.clone();
         }
 
-        fn push_skill_commands(
-            commands: &mut Vec<(String, &'static str)>,
-            seen: &mut std::collections::HashSet<String>,
-            skills: &crate::skill::SkillRegistry,
-        ) {
-            for skill in skills.list() {
-                let command = format!("/{}", skill.name);
-                if seen.insert(command.clone()) {
-                    commands.push((command, "Activate skill"));
-                }
-            }
-        }
-
+        // Issue #N (UX): only show BUILT-IN commands under `/`. Skills move
+        // to the `$` namespace via skill_candidates() so the / autocomplete
+        // dropdown stays navigable when the user has 100+ skills installed.
+        // The legacy `/<skill>` invocation form still works at submit time
+        // for backwards compatibility — it's just hidden from autocomplete.
         let mut seen = std::collections::HashSet::new();
-        let mut commands: Vec<(String, &'static str)> = REGISTERED_COMMANDS
+        let commands: Vec<(String, &'static str)> = REGISTERED_COMMANDS
             .iter()
             .filter(|command| command.autocomplete)
             .filter(|command| !command.remote_only || self.is_remote)
@@ -288,22 +283,40 @@ impl App {
             })
             .collect();
 
-        let skills = self.current_skills_snapshot();
-        push_skill_commands(&mut commands, &mut seen, &skills);
-
-        if self.is_remote && !self.remote_skills.is_empty() {
-            for skill in &self.remote_skills {
-                let command = format!("/{skill}");
-                if seen.insert(command.clone()) {
-                    commands.push((command, "Activate skill"));
-                }
-            }
-        }
-
         *self.command_candidates_cache.borrow_mut() = Some(CommandCandidatesCache {
             candidates: commands.clone(),
         });
         commands
+    }
+
+    /// Build the autocomplete list for the `$` (skill) namespace.
+    ///
+    /// Each entry is `($<skill-name>, "Activate skill")`. Includes both
+    /// locally-discovered skills (project + user dirs, see SkillRegistry)
+    /// and remote-session skills when running as a TUI client against a
+    /// shared server.
+    fn skill_candidates(&self) -> Vec<(String, &'static str)> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out: Vec<(String, &'static str)> = Vec::new();
+
+        let skills = self.current_skills_snapshot();
+        for skill in skills.list() {
+            let entry = format!("${}", skill.name);
+            if seen.insert(entry.clone()) {
+                out.push((entry, "Activate skill"));
+            }
+        }
+
+        if self.is_remote && !self.remote_skills.is_empty() {
+            for skill in &self.remote_skills {
+                let entry = format!("${skill}");
+                if seen.insert(entry.clone()) {
+                    out.push((entry, "Activate skill"));
+                }
+            }
+        }
+
+        out
     }
 
     pub(super) fn invalidate_command_candidates_cache(&self) {
@@ -424,7 +437,11 @@ impl App {
     pub(super) fn get_suggestions_for(&self, input: &str) -> Vec<(String, &'static str)> {
         let input = input.trim_start();
 
-        // Only show suggestions when input starts with /
+        // Only show suggestions when input starts with `/` (built-in
+        // commands) or `$` (skills, see skill_candidates).
+        if input.starts_with('$') {
+            return self.rank_suggestions(&input.to_lowercase(), self.skill_candidates());
+        }
         if !input.starts_with('/') {
             return vec![];
         }
