@@ -308,10 +308,9 @@ jobs:
           echo "::notice title=Dry run::Release publish + Homebrew bump skipped. Built artifacts + SHA256SUMS uploaded as workflow artifacts so you can inspect them."
 
       - name: Update Homebrew formula
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
         env:
           HOMEBREW_DEPLOY_KEY: ${{ secrets.HOMEBREW_DEPLOY_KEY }}
-        if: env.HOMEBREW_DEPLOY_KEY != ''
+        if: ${{ env.HOMEBREW_DEPLOY_KEY != '' && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true) }}
         run: |
           VERSION="${GITHUB_REF_NAME}"
           VERSION_NUM="${VERSION#v}"
