@@ -561,6 +561,19 @@ impl AmbientRunnerHandle {
         }
 
         let amb_config = &config().ambient;
+
+        // Issue #90: when [ambient].provider_profile is set, log it. Full
+        // wiring (constructing sub-agents with the named profile) requires
+        // refactoring the cycle's provider injection — landing in a
+        // follow-up. Until then, the field is documented and forward-compat
+        // so users can configure it ahead of time.
+        if let Some(profile) = &amb_config.provider_profile {
+            logging::info(&format!(
+                "Ambient runner: [ambient.provider_profile] = {profile:?} (wiring in follow-up; \
+                 cycles currently use the parent session's provider)"
+            ));
+        }
+
         let scheduler_config = AmbientSchedulerConfig {
             min_interval_minutes: amb_config.min_interval_minutes,
             max_interval_minutes: amb_config.max_interval_minutes,

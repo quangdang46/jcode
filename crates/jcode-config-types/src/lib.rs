@@ -734,6 +734,11 @@ pub struct AmbientConfig {
     pub enabled: bool,
     /// Provider override (default: auto-select)
     pub provider: Option<String>,
+    /// Named provider profile to route ambient work to (e.g. "local-vllm",
+    /// "ollama"). Wins over `provider` when set. Useful for routing ambient
+    /// cycles to a cheap local model while keeping main sessions on a
+    /// premium provider. See #90.
+    pub provider_profile: Option<String>,
     /// Model override (default: provider's strongest)
     pub model: Option<String>,
     /// Allow API key usage (default: false, only OAuth)
@@ -759,6 +764,7 @@ impl Default for AmbientConfig {
         Self {
             enabled: false,
             provider: None,
+            provider_profile: None,
             model: None,
             allow_api_keys: false,
             api_daily_budget: None,
