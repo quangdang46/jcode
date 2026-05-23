@@ -1,10 +1,84 @@
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+/// Resolve the user-configured solid background color (#bug report:
+/// users on terminals with `window_background_image` / transparency see
+/// through TUI cells; opt-in here forces a solid fill).
+///
+/// Returns `Some(color)` only when `JCODE_BG_COLOR` is set to a
+/// recognized value:
+///
+/// - Hex: `#0d1117`, `#000`, `0d1117`
+/// - Named: `black`, `white`, `red`, `green`, `blue`, `yellow`, `magenta`,
+///   `cyan`, `gray`/`grey`, `darkgray`/`darkgrey`
+/// - `default` / `reset` / unset → returns `None` (transparent, current
+///   behavior — plays nice with bg images and selection-highlight)
+///
+/// Cached in a OnceLock so we don't reparse the env var every frame.
+fn jcode_bg_color() -> Option<Color> {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<Option<Color>> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        let raw = std::env::var("JCODE_BG_COLOR").ok()?;
+        parse_bg_color(&raw)
+    })
+}
+
+/// Parse a JCODE_BG_COLOR string into a ratatui Color.
+/// Public for testing.
+pub fn parse_bg_color(raw: &str) -> Option<Color> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "default" | "reset" | "auto" | "none" => return None,
+        "black" => return Some(Color::Black),
+        "white" => return Some(Color::White),
+        "red" => return Some(Color::Red),
+        "green" => return Some(Color::Green),
+        "blue" => return Some(Color::Blue),
+        "yellow" => return Some(Color::Yellow),
+        "magenta" => return Some(Color::Magenta),
+        "cyan" => return Some(Color::Cyan),
+        "gray" | "grey" => return Some(Color::Gray),
+        "darkgray" | "darkgrey" => return Some(Color::DarkGray),
+        _ => {}
+    }
+    // Hex: #rrggbb, #rgb, rrggbb, rgb (with or without leading #)
+    let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
+    let bytes = match hex.len() {
+        3 => {
+            // #rgb → expand each nibble
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+            (r * 17, g * 17, b * 17)
+        }
+        6 => (
+            u8::from_str_radix(&hex[0..2], 16).ok()?,
+            u8::from_str_radix(&hex[2..4], 16).ok()?,
+            u8::from_str_radix(&hex[4..6], 16).ok()?,
+        ),
+        _ => return None,
+    };
+    Some(Color::Rgb(bytes.0, bytes.1, bytes.2))
+}
+
 pub fn clear_area(frame: &mut Frame, area: Rect) {
+    let bg = jcode_bg_color();
     for x in area.left()..area.right() {
         for y in area.top()..area.bottom() {
-            frame.buffer_mut()[(x, y)].reset();
+            let cell = &mut frame.buffer_mut()[(x, y)];
+            cell.reset();
+            // When user opted into a solid background via JCODE_BG_COLOR,
+            // paint each cell so terminals with transparent / image
+            // backgrounds (WezTerm `window_background_image`, Alacritty
+            // `background_opacity < 1.0`, Windows Terminal acrylic) show
+            // a consistent jcode UI surface.
+            if let Some(color) = bg {
+                cell.set_bg(color);
+            }
         }
     }
 }
@@ -87,5 +161,58 @@ pub fn align_if_unset(line: Line<'static>, align: Alignment) -> Line<'static> {
         line
     } else {
         line.alignment(align)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_bg_color_named() {
+        assert_eq!(parse_bg_color("black"), Some(Color::Black));
+        assert_eq!(parse_bg_color("WHITE"), Some(Color::White));
+        assert_eq!(parse_bg_color("Gray"), Some(Color::Gray));
+        assert_eq!(parse_bg_color("grey"), Some(Color::Gray));
+        assert_eq!(parse_bg_color("darkgray"), Some(Color::DarkGray));
+        assert_eq!(parse_bg_color("darkgrey"), Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn parse_bg_color_hex_long() {
+        assert_eq!(
+            parse_bg_color("#0d1117"),
+            Some(Color::Rgb(0x0d, 0x11, 0x17))
+        );
+        // No leading # also accepted
+        assert_eq!(parse_bg_color("0d1117"), Some(Color::Rgb(0x0d, 0x11, 0x17)));
+        // Surrounding whitespace tolerated
+        assert_eq!(parse_bg_color("  #ff0000  "), Some(Color::Rgb(0xff, 0, 0)));
+    }
+
+    #[test]
+    fn parse_bg_color_hex_short() {
+        // #rgb → each nibble doubled
+        assert_eq!(parse_bg_color("#000"), Some(Color::Rgb(0, 0, 0)));
+        assert_eq!(parse_bg_color("#fff"), Some(Color::Rgb(0xff, 0xff, 0xff)));
+        assert_eq!(parse_bg_color("#abc"), Some(Color::Rgb(0xaa, 0xbb, 0xcc)));
+    }
+
+    #[test]
+    fn parse_bg_color_default_keywords_return_none() {
+        assert_eq!(parse_bg_color("default"), None);
+        assert_eq!(parse_bg_color("reset"), None);
+        assert_eq!(parse_bg_color("auto"), None);
+        assert_eq!(parse_bg_color("none"), None);
+        assert_eq!(parse_bg_color(""), None);
+        assert_eq!(parse_bg_color("   "), None);
+    }
+
+    #[test]
+    fn parse_bg_color_invalid_returns_none() {
+        assert_eq!(parse_bg_color("not-a-color"), None);
+        assert_eq!(parse_bg_color("#zzz"), None);
+        assert_eq!(parse_bg_color("#12"), None); // too short
+        assert_eq!(parse_bg_color("#1234567"), None); // too long
     }
 }
