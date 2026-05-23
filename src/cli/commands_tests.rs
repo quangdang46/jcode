@@ -594,3 +594,92 @@ mod session_delete_tests {
         assert!(result.is_err(), "non-existent session must error");
     }
 }
+
+// ---- Issue #38: jcode logout --provider <name> ----
+
+#[test]
+fn logout_clears_anthropic_accounts_from_jcode_auth_json() {
+    let _lock = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let prev = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", temp.path());
+
+    // Seed an Anthropic account in ~/.jcode/auth.json.
+    let auth_path = crate::auth::claude::jcode_path().unwrap();
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+    let seeded = serde_json::json!({
+        "anthropic_accounts": [
+            {
+                "label": "claude-1",
+                "access": "tok",
+                "refresh": "ref",
+                "expires": 9999999999i64
+            }
+        ],
+        "active_anthropic_account": "claude-1"
+    });
+    std::fs::write(&auth_path, seeded.to_string()).unwrap();
+
+    // Logout — passes --yes to skip confirmation.
+    super::run_logout_command(Some("claude"), false, true).expect("logout");
+
+    let auth = crate::auth::claude::load_auth_file().unwrap();
+    assert!(auth.anthropic_accounts.is_empty());
+    assert!(auth.active_anthropic_account.is_none());
+
+    if let Some(p) = prev {
+        crate::env::set_var("JCODE_HOME", p);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+}
+
+#[test]
+fn logout_anthropic_when_no_accounts_returns_not_present() {
+    let _lock = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let prev = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", temp.path());
+
+    // No auth.json at all — should be a clean no-op.
+    super::run_logout_command(Some("claude"), false, true).expect("logout no-op");
+
+    if let Some(p) = prev {
+        crate::env::set_var("JCODE_HOME", p);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+}
+
+#[test]
+fn logout_zai_removes_env_file_when_present() {
+    let _lock = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let prev = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", temp.path());
+
+    let env_file = crate::storage::app_config_dir().unwrap().join("zai.env");
+    std::fs::create_dir_all(env_file.parent().unwrap()).unwrap();
+    std::fs::write(&env_file, "ZHIPU_API_KEY=test\n").unwrap();
+    assert!(env_file.exists());
+
+    super::run_logout_command(Some("zai"), false, true).expect("logout zai");
+
+    assert!(!env_file.exists(), "env file must be removed");
+
+    if let Some(p) = prev {
+        crate::env::set_var("JCODE_HOME", p);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+}
+
+#[test]
+fn logout_requires_provider_or_all() {
+    // Neither flag set — should return an error rather than silently
+    // succeeding with no targets.
+    let result = super::run_logout_command(None, false, true);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("--provider") || err.contains("--all"));
+}

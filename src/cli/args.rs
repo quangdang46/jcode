@@ -231,6 +231,27 @@ pub(crate) enum Command {
         api_key_env: Option<String>,
     },
 
+    /// Log out of a provider — clears jcode's local credential cache.
+    ///
+    /// Useful when you delete the provider's own auth file (e.g.
+    /// `~/.claude/.credentials.json`) and want jcode to stop using its
+    /// imported copy. Without this command, jcode silently continues
+    /// using `~/.jcode/auth.json` even after the original is gone.
+    Logout {
+        /// Provider id (e.g. `claude`, `openai`, `gemini`, `copilot`,
+        /// `zai`, etc.). Required unless `--all` is set.
+        #[arg(long, short = 'p')]
+        provider: Option<String>,
+
+        /// Log out of every configured provider.
+        #[arg(long, conflicts_with = "provider")]
+        all: bool,
+
+        /// Skip the confirmation prompt.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
     /// Run in simple REPL mode (no TUI)
     Repl,
 

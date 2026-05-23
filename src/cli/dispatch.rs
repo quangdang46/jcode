@@ -119,6 +119,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             )
             .await?;
         }
+        Some(Command::Logout { provider, all, yes }) => {
+            commands::run_logout_command(provider.as_deref(), all, yes)?;
+        }
         Some(Command::Repl) => {
             let (provider, registry) =
                 provider_init::init_provider_and_registry(&args.provider, args.model.as_deref())
