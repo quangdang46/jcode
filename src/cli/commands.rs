@@ -1676,6 +1676,66 @@ fn logout_one_provider(provider: &str) -> Result<LogoutOutcome> {
     }
 }
 
+/// `jcode skills list` — list discovered skills with source labels.
+///
+/// Reads from the standard skill discovery path
+/// (`~/.jcode/skills/`, `<repo>/.jcode/skills/`, `<cwd>/.jcode/skills/`,
+/// `<cwd>/.claude/skills/`) per `SkillRegistry::load_for_working_dir`.
+pub fn run_skills_list(json: bool) -> Result<()> {
+    let working_dir = std::env::current_dir().ok();
+    let registry = crate::skill::SkillRegistry::load_for_working_dir(working_dir.as_deref())
+        .context("load skill registry")?;
+    let skills = registry.list();
+
+    if json {
+        let entries: Vec<_> = skills
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "description": s.description,
+                    "path": s.path.display().to_string(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
+
+    if skills.is_empty() {
+        println!("No skills installed.");
+        println!();
+        println!("Drop SKILL.md files into:");
+        println!("  ~/.jcode/skills/<name>/SKILL.md      (user-level)");
+        println!("  <repo>/.jcode/skills/<name>/SKILL.md (repo-level)");
+        println!("  <cwd>/.jcode/skills/<name>/SKILL.md  (project-level)");
+        return Ok(());
+    }
+
+    println!("{} skill(s) discovered:", skills.len());
+    for skill in &skills {
+        println!("  ${:<28} {}", skill.name, skill.description);
+    }
+    println!();
+    println!("Activate via `$<name>` in TUI or use `jcode skills show <name>` to read full body.");
+    Ok(())
+}
+
+/// `jcode skills show <name>` — print the full SKILL.md body of one skill.
+pub fn run_skills_show(name: &str) -> Result<()> {
+    let working_dir = std::env::current_dir().ok();
+    let registry = crate::skill::SkillRegistry::load_for_working_dir(working_dir.as_deref())
+        .context("load skill registry")?;
+    let skill = registry.get(name).with_context(|| {
+        format!("skill '{name}' not found (use `jcode skills list` to discover)")
+    })?;
+    eprintln!("# ${}  [{}]", skill.name, skill.path.display());
+    eprintln!("# {}", skill.description);
+    eprintln!();
+    println!("{}", skill.content.trim_end());
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "commands_tests.rs"]
 mod tests;

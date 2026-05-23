@@ -339,6 +339,11 @@ pub(crate) enum Command {
     #[command(subcommand)]
     Prompts(PromptsCommand),
 
+    /// List or inspect installed skills (`~/.jcode/skills/`,
+    /// `<repo>/.jcode/skills/`, etc.).
+    #[command(subcommand)]
+    Skills(SkillsCommand),
+
     /// Manage trusted project-local MCP configs (`.jcode/mcp.json`, `.claude/mcp.json`).
     /// Trust is enforced when `JCODE_REQUIRE_MCP_TRUST=1` (auto-set by `--safe-eval`).
     #[command(subcommand)]
@@ -622,6 +627,22 @@ pub(crate) enum PromptsCommand {
         /// Overwrite an existing template of the same name.
         #[arg(long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum SkillsCommand {
+    /// List all discovered skills (built-in + project + repo + user dirs).
+    List {
+        /// Emit JSON instead of human-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show a skill's full SKILL.md content by name.
+    Show {
+        /// Skill name. Use `jcode skills list` to discover names.
+        name: String,
     },
 }
 

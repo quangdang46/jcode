@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use super::args::{
     AmbientCommand, Args, AuthCommand, Command, ExportFormatArg, McpCommand, MemoryCommand,
-    ModelCommand, PromptsCommand, ProviderCommand, RestartCommand, SessionCommand,
+    ModelCommand, PromptsCommand, ProviderCommand, RestartCommand, SessionCommand, SkillsCommand,
     TranscriptModeArg,
 };
 use crate::{
@@ -254,6 +254,10 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 };
                 crate::prompt_templates::run_new(&name, location, force)?;
             }
+        },
+        Some(Command::Skills(subcmd)) => match subcmd {
+            SkillsCommand::List { json } => commands::run_skills_list(json)?,
+            SkillsCommand::Show { name } => commands::run_skills_show(&name)?,
         },
         Some(Command::Mcp(subcmd)) => match subcmd {
             McpCommand::Trust { path } => commands::run_mcp_trust_command(&path)?,

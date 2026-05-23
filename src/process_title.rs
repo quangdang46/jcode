@@ -134,6 +134,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Memory(_)) => "jcode memory".to_string(),
         Some(Command::Session(_)) => "jcode session".to_string(),
         Some(Command::Prompts(_)) => "jcode prompts".to_string(),
+        Some(Command::Skills(_)) => "jcode skills".to_string(),
         Some(Command::Mcp(_)) => "jcode mcp".to_string(),
         Some(Command::Doctor { .. }) => "jcode doctor".to_string(),
         Some(Command::Export { .. }) => "jcode export".to_string(),

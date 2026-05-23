@@ -683,3 +683,94 @@ fn logout_requires_provider_or_all() {
     let err = result.unwrap_err().to_string();
     assert!(err.contains("--provider") || err.contains("--all"));
 }
+
+// ---- #122 partial: jcode skills list/show ----
+
+fn write_test_skill_with_body(root: &std::path::Path, name: &str, description: &str, body: &str) {
+    let dir = root.join(".jcode").join("skills").join(name);
+    std::fs::create_dir_all(&dir).expect("create skill dir");
+    std::fs::write(
+        dir.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n"),
+    )
+    .expect("write SKILL.md");
+}
+
+#[test]
+fn skills_list_runs_without_error_with_no_skills() {
+    let _lock = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let prev = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", temp.path());
+
+    // Run from an empty working dir — no skills anywhere.
+    let prev_cwd = std::env::current_dir().ok();
+    std::env::set_current_dir(temp.path()).unwrap();
+
+    super::run_skills_list(false).expect("list");
+    super::run_skills_list(true).expect("list json");
+
+    if let Some(c) = prev_cwd {
+        std::env::set_current_dir(c).ok();
+    }
+    if let Some(p) = prev {
+        crate::env::set_var("JCODE_HOME", p);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+}
+
+#[test]
+fn skills_show_errors_for_unknown_name() {
+    let _lock = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let prev = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", temp.path());
+
+    let prev_cwd = std::env::current_dir().ok();
+    std::env::set_current_dir(temp.path()).unwrap();
+
+    let result = super::run_skills_show("does-not-exist");
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("not found") || err.contains("does-not-exist"));
+
+    if let Some(c) = prev_cwd {
+        std::env::set_current_dir(c).ok();
+    }
+    if let Some(p) = prev {
+        crate::env::set_var("JCODE_HOME", p);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+}
+
+#[test]
+fn skills_show_finds_user_level_skill() {
+    let _lock = crate::storage::lock_test_env();
+    let temp = tempfile::TempDir::new().unwrap();
+    let prev = std::env::var_os("JCODE_HOME");
+    crate::env::set_var("JCODE_HOME", temp.path());
+
+    // Write a skill to the user-level dir (~/.jcode/skills/ via JCODE_HOME).
+    write_test_skill_with_body(
+        temp.path(),
+        "review",
+        "Review focus skill",
+        "Review the recent changes carefully.",
+    );
+
+    let prev_cwd = std::env::current_dir().ok();
+    std::env::set_current_dir(temp.path()).unwrap();
+
+    super::run_skills_show("review").expect("show found");
+
+    if let Some(c) = prev_cwd {
+        std::env::set_current_dir(c).ok();
+    }
+    if let Some(p) = prev {
+        crate::env::set_var("JCODE_HOME", p);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+}
