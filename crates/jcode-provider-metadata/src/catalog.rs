@@ -551,7 +551,7 @@ pub const ZAI_LOGIN_PROVIDER: LoginProviderDescriptor = LoginProviderDescriptor 
     auth_kind: LoginProviderAuthKind::ApiKey,
     auth_state_key: LoginProviderAuthStateKey::OpenRouterLike,
     auth_status_method: "API key",
-    aliases: &["z.ai", "z-ai", "zai-coding", "zhipu"],
+    aliases: &["z.ai", "z-ai", "zai-coding", "zhipu", "bigmodel", "glm", "zhipu-bigmodel"],
     menu_detail: "API key",
     recommended: false,
     target: LoginProviderTarget::OpenAiCompatible(ZAI_PROFILE),
