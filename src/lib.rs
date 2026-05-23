@@ -22,6 +22,7 @@ pub mod cli;
 pub mod compaction;
 pub mod config;
 pub mod copilot_usage;
+pub mod crash_log;
 pub mod customization;
 pub mod dictation;
 pub mod doctor;

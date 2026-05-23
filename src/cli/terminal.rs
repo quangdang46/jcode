@@ -62,14 +62,35 @@ pub fn install_panic_hook() {
             // print_session_resume_hint is already write-tolerant.
             print_session_resume_hint(&session_id);
 
-            if let Some((provider, model)) = telemetry::current_provider_model() {
-                telemetry::record_crash(&provider, &model, telemetry::SessionEndReason::Panic);
+            let provider_model = telemetry::current_provider_model();
+
+            if let Some((provider, model)) = provider_model.as_ref() {
+                telemetry::record_crash(provider, model, telemetry::SessionEndReason::Panic);
             }
 
             if let Ok(mut session) = session::Session::load(&session_id) {
                 session.mark_crashed(Some(format!("Panic: {}", info)));
                 let _ = session.save();
             }
+
+            // Issue #162: write a structured crash log to ~/.jcode/logs/
+            // so users have a breadcrumb to share with maintainers when
+            // jcode unexpectedly drops back to the shell. Best-effort —
+            // wrapped in catch_unwind so a write failure doesn't trigger
+            // a double panic before the rest of cleanup runs.
+            let panic_msg = format!("{info}");
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if let Some(path) = crate::crash_log::write_crash_log(
+                    &panic_msg,
+                    Some(&session_id),
+                    provider_model
+                        .as_ref()
+                        .map(|(p, m)| (p.as_str(), m.as_str())),
+                ) {
+                    let mut stderr = io::stderr().lock();
+                    let _ = writeln!(stderr, "\x1b[33m   Crash log:\x1b[0m   {}", path.display());
+                }
+            }));
         }
     }));
 }
