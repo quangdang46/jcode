@@ -397,6 +397,35 @@ impl Default for DictationConfig {
     }
 }
 
+/// Issue #163: respect a provider-disable list so disabled providers do not
+/// leak into auth surfaces, model routing, or failover.
+///
+/// Reads `JCODE_DISABLED_PROVIDERS` (comma- or whitespace-separated list of
+/// provider ids; case-insensitive). Returns true when the named provider
+/// should be treated as if it isn't configured at all.
+///
+/// Examples:
+///   JCODE_DISABLED_PROVIDERS=anthropic            # disable Anthropic
+///   JCODE_DISABLED_PROVIDERS="openai, gemini"     # disable two
+///   JCODE_DISABLED_PROVIDERS=zai,bigmodel         # alias-aware
+///
+/// Returns false when the env var is unset, empty, or doesn't list the
+/// provider.
+pub fn is_provider_disabled(provider: &str) -> bool {
+    let target = provider.trim().to_ascii_lowercase();
+    if target.is_empty() {
+        return false;
+    }
+    let list = match std::env::var("JCODE_DISABLED_PROVIDERS") {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    list.split([',', ' ', '\t', '\n'])
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .any(|entry| entry == target)
+}
+
 mod config_file;
 mod default_file;
 mod display_summary;
