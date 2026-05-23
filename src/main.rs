@@ -50,7 +50,35 @@ fn configure_system_allocator() {
 #[cfg(not(all(target_os = "linux", not(feature = "jemalloc"))))]
 fn configure_system_allocator() {}
 
+/// Switch the Windows console to UTF-8 on startup so non-ASCII output
+/// (bullets, box-drawing for QR codes, emoji, etc.) renders correctly
+/// instead of as code-page-437 mojibake (`·` -> `┬╖`, `█` -> `Γûê`).
+///
+/// No-op when stdout is not a console (file redirection, pipes), when
+/// the process is started under a non-console subsystem, or on
+/// non-Windows targets. Restoring the previous code page on exit is
+/// intentionally skipped: most modern terminals (Windows Terminal,
+/// PowerShell 7+, VS Code) already default to 65001, and partial
+/// output already written would be visually corrupted if we flipped
+/// back mid-program.
+#[cfg(windows)]
+fn configure_windows_console_for_utf8() {
+    use windows_sys::Win32::System::Console::{
+        CP_UTF8, GetConsoleOutputCP, SetConsoleCP, SetConsoleOutputCP,
+    };
+    unsafe {
+        if GetConsoleOutputCP() != CP_UTF8 {
+            let _ = SetConsoleOutputCP(CP_UTF8);
+        }
+        let _ = SetConsoleCP(CP_UTF8);
+    }
+}
+
+#[cfg(not(windows))]
+fn configure_windows_console_for_utf8() {}
+
 fn main() -> Result<()> {
+    configure_windows_console_for_utf8();
     configure_system_allocator();
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
