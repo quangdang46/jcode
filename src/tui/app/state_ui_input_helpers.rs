@@ -1231,7 +1231,19 @@ impl App {
                 let next_index = (idx + 1) % base_suggestions.len();
                 let (cmd, _) = &base_suggestions[next_index];
                 self.remember_input_undo_state();
-                self.input = cmd.clone();
+                // Same prefix-preservation fix as the fresh-cycle path below.
+                if cmd.starts_with('$') {
+                    if let Some(token) =
+                        crate::tui::app::state_ui_input_helpers::active_dollar_token(base)
+                    {
+                        let prefix_len = base.len() - token.len();
+                        self.input = format!("{}{cmd}", &base[..prefix_len]);
+                    } else {
+                        self.input = cmd.clone();
+                    }
+                } else {
+                    self.input = cmd.clone();
+                }
                 self.cursor_pos = self.input.len();
                 self.tab_completion_state = Some((base.clone(), next_index));
                 return true;
@@ -1265,7 +1277,28 @@ impl App {
         let (cmd, _) = &current_suggestions[selected];
         let base = self.input.clone();
         self.remember_input_undo_state();
-        self.input = cmd.clone();
+
+        // Bug fix: when the suggestion is a `$<skill>` token and the user
+        // typed it mid-text (e.g. "fix the auth $gri"), replace only the
+        // `$token` at the end of the input, not the whole input. Otherwise
+        // "xxxx $gri" → Tab → "$grill-me" (drops "xxxx ").
+        //
+        // For `/` commands the input always starts with `/` so the whole-
+        // input replacement is correct and unchanged.
+        if cmd.starts_with('$') {
+            if let Some(token) =
+                crate::tui::app::state_ui_input_helpers::active_dollar_token(&self.input)
+            {
+                let prefix_len = self.input.len() - token.len();
+                let prefix = self.input[..prefix_len].to_string();
+                self.input = format!("{prefix}{cmd}");
+            } else {
+                self.input = cmd.clone();
+            }
+        } else {
+            self.input = cmd.clone();
+        }
+
         // If unique match, add trailing space for arg-accepting commands
         if current_suggestions.len() == 1 && Self::command_accepts_args(&self.input) {
             self.input.push(' ');
@@ -1406,5 +1439,26 @@ mod dollar_token_tests {
         assert_eq!(active_dollar_token(""), None);
         assert_eq!(active_dollar_token("hello world"), None);
         assert_eq!(active_dollar_token("/help"), None);
+    }
+
+    // ---- Bug fix: autocomplete must preserve prefix before $token ----
+
+    #[test]
+    fn active_dollar_token_prefix_len_is_correct() {
+        // Verify the prefix-length arithmetic used in autocomplete.
+        let input = "fix the auth $gri";
+        let token = active_dollar_token(input).unwrap();
+        assert_eq!(token, "$gri");
+        let prefix_len = input.len() - token.len();
+        assert_eq!(&input[..prefix_len], "fix the auth ");
+    }
+
+    #[test]
+    fn active_dollar_token_prefix_len_for_bare_dollar() {
+        let input = "xxxx $";
+        let token = active_dollar_token(input).unwrap();
+        assert_eq!(token, "$");
+        let prefix_len = input.len() - token.len();
+        assert_eq!(&input[..prefix_len], "xxxx ");
     }
 }
