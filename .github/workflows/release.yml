@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Dry run: build all artifacts + SHA256SUMS but skip publishing
+          a GitHub release and skip the Homebrew formula bump. Use this
+          to validate the release pipeline before cutting a real tag.
+        type: boolean
+        default: true
 
 concurrency:
   group: release-${{ github.ref }}
@@ -273,6 +282,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Create GitHub Release
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -285,10 +295,22 @@ jobs:
             artifacts/jcode-windows-*/**/*.tar.gz
             artifacts/jcode-windows-*/**/*.exe
 
+      - name: Upload SHA256SUMS as workflow artifact (dry run)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS-dry-run
+          path: SHA256SUMS
+
+      - name: Dry run summary
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+        run: |
+          echo "::notice title=Dry run::Release publish + Homebrew bump skipped. Built artifacts + SHA256SUMS uploaded as workflow artifacts so you can inspect them."
+
       - name: Update Homebrew formula
         env:
           HOMEBREW_DEPLOY_KEY: ${{ secrets.HOMEBREW_DEPLOY_KEY }}
-        if: env.HOMEBREW_DEPLOY_KEY != ''
+        if: ${{ env.HOMEBREW_DEPLOY_KEY != '' && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true) }}
         run: |
           VERSION="${GITHUB_REF_NAME}"
           VERSION_NUM="${VERSION#v}"
