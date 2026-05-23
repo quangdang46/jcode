@@ -2326,8 +2326,8 @@ impl App {
             return;
         }
 
-        let raw_input = std::mem::take(&mut self.input);
-        let input = self.expand_paste_placeholders(&raw_input);
+        let mut raw_input = std::mem::take(&mut self.input);
+        let mut input = self.expand_paste_placeholders(&raw_input);
         if let Some(notice) = input_exceeds_submit_limit(&input) {
             self.input = raw_input;
             self.cursor_pos = self.input.len();
@@ -2367,7 +2367,7 @@ impl App {
         // user message. Built-in slash commands (`/help`, `/quit`, `/export`,
         // etc.) are checked first below, so this only fires for user-defined
         // templates.
-        let input = expand_prompt_template_invocation(&input).unwrap_or(input);
+        let mut input = expand_prompt_template_invocation(&input).unwrap_or(input);
 
         let trimmed = input.trim();
         let handled = commands::handle_help_command(self, trimmed)
@@ -2455,6 +2455,28 @@ impl App {
                     title: None,
                     tool_data: None,
                 });
+
+                // Issue #125: previously, `/skill-name` activated the skill
+                // and returned without sending anything to the model. Some
+                // non-Claude providers (zai/GLM, etc.) then stalled on the
+                // following turn because the agent had a large skill-injected
+                // system prompt with no fresh user message to anchor the
+                // conversation.
+                //
+                // Trigger a real turn now with a short instruction the model
+                // can act on. Mirrors what the user would get if they typed
+                // `/skill-name please begin.`. The skill body is already
+                // wired into the system prompt via active_skill in the agent
+                // prompting layer; this just gives the turn a non-empty
+                // user message.
+                let synthesized = format!(
+                    "Please begin applying the `{}` skill that was just activated.",
+                    skill.name
+                );
+                raw_input = synthesized.clone();
+                input = synthesized;
+                // Fall through to the normal user-message path below, which
+                // will push raw_input to display + send `input` to the model.
             } else {
                 self.push_display_message(DisplayMessage {
                     role: "error".to_string(),
@@ -2464,8 +2486,8 @@ impl App {
                     title: None,
                     tool_data: None,
                 });
+                return;
             }
-            return;
         }
 
         // Add user message to display (show placeholder to user, not full paste)
