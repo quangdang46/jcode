@@ -794,6 +794,12 @@ jcode-linux-x86_64.tar.gz: OK
 artifacts uploaded to the run, so it is always synchronized with the
 binaries you can download.
 
+> 💡 **Windows SmartScreen / macOS Gatekeeper warnings**: jcode binaries
+> are not yet code-signed (see [#56](https://github.com/quangdang46/jcode/issues/56)
+> for context). After verifying the SHA256 checksum, see
+> [docs/RELEASE_SIGNING.md](docs/RELEASE_SIGNING.md) for how to suppress
+> the OS-level warning per-platform.
+
 ### From Source (all platforms)
 
 ```bash
