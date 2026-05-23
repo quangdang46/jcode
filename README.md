@@ -650,6 +650,7 @@ Notes:
 - [Wrappers and Shell Integration](docs/WRAPPERS.md)
 - [Refactoring Notes](docs/REFACTORING.md)
 - [Configuration files reference](docs/CONFIG_REFERENCE.md)
+- [Z.AI Coding Plan quickstart](docs/ZAI_CODING_PLAN.md)
 
 ---
 
