@@ -11,6 +11,7 @@ mod conversation_search;
 mod debug_socket;
 mod edit;
 mod glob;
+pub mod hashline_edit;
 mod gmail;
 mod goal;
 mod grep;
@@ -128,6 +129,7 @@ impl Registry {
                 side_panel::SidePanelTool::new,
             );
             Self::insert_tool_timed(&mut m, &mut timings, "edit", edit::EditTool::new);
+            Self::insert_tool_timed(&mut m, &mut timings, "hashline_edit", hashline_edit::HashlineEditTool::new);
             Self::insert_tool_timed(
                 &mut m,
                 &mut timings,
