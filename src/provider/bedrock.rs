@@ -758,8 +758,7 @@ impl BedrockProvider {
         // operators can tell jcode which underlying model the AIP routes to,
         // and re-run capability detection against that hint instead of the
         // raw AIP id. This keeps existing non-AIP behavior unchanged.
-        let raw = model.trim();
-        if raw.contains("application-inference-profile/")
+        if Self::application_inference_profile_id_from_arn(model).is_some()
             && let Ok(hint) = std::env::var("JCODE_BEDROCK_AIP_MODEL_HINT")
             && !hint.trim().is_empty()
         {
