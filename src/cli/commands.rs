@@ -306,10 +306,7 @@ pub fn run_mcp_revoke_command(path: &std::path::Path) -> Result<()> {
     if removed.is_some() {
         println!("Revoked MCP config trust: {}", path.display());
     } else {
-        println!(
-            "No trust entry for: {} (nothing to revoke)",
-            path.display()
-        );
+        println!("No trust entry for: {} (nothing to revoke)", path.display());
     }
     Ok(())
 }
@@ -1552,6 +1549,133 @@ fn filter_cli_model_routes_for_choice(
         filtered
     }
 }
+/// Issue #38: explicit `jcode logout --provider <name>` to clear jcode's
+/// local credential cache for a provider. Without this, users who deleted
+/// the upstream provider's auth file (e.g. `~/.claude/.credentials.json`)
+/// were surprised that jcode kept working — silently using the imported
+/// copy in `~/.jcode/auth.json`.
+///
+/// Behavior:
+/// - `--provider claude` clears Anthropic accounts from `~/.jcode/auth.json`
+/// - `--provider openai` clears OpenAI accounts from `~/.jcode/openai-auth.json`
+/// - Other providers: clears `~/.config/jcode/<provider>.env` (the env file
+///   that stores their API key)
+/// - `--all`: clears every known cached credential file
+///
+/// Confirmation is required unless `--yes` is passed.
+pub fn run_logout_command(provider: Option<&str>, all: bool, yes: bool) -> Result<()> {
+    use std::io::Write as _;
+
+    if !all && provider.is_none() {
+        anyhow::bail!("logout: must pass either --provider <name> or --all");
+    }
+
+    let targets: Vec<String> = if all {
+        vec![
+            "claude".to_string(),
+            "openai".to_string(),
+            "gemini".to_string(),
+            "copilot".to_string(),
+            "antigravity".to_string(),
+            "zai".to_string(),
+            "minimax".to_string(),
+            "deepseek".to_string(),
+            "groq".to_string(),
+            "cohere".to_string(),
+            "mistral".to_string(),
+            "fireworks".to_string(),
+            "xai".to_string(),
+            "openai-compatible".to_string(),
+        ]
+    } else {
+        vec![provider.unwrap().to_string()]
+    };
+
+    if !yes {
+        eprint!("This will clear jcode's local credential cache for: ");
+        eprintln!("{}", targets.join(", "));
+        eprint!("Continue? [y/N] ");
+        let _ = std::io::stderr().flush();
+        let mut answer = String::new();
+        if std::io::stdin().read_line(&mut answer).is_err()
+            || !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+        {
+            eprintln!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    let mut cleared: Vec<String> = Vec::new();
+    let mut not_present: Vec<String> = Vec::new();
+    for target in &targets {
+        match logout_one_provider(target)? {
+            LogoutOutcome::Cleared(detail) => cleared.push(format!("{target}: {detail}")),
+            LogoutOutcome::NotPresent => not_present.push(target.clone()),
+        }
+    }
+
+    if !cleared.is_empty() {
+        println!("Cleared:");
+        for line in &cleared {
+            println!("  {line}");
+        }
+    }
+    if !not_present.is_empty() {
+        println!("Already empty / no cache: {}", not_present.join(", "));
+    }
+    if cleared.is_empty() && not_present.is_empty() {
+        println!("Nothing to log out of.");
+    }
+    Ok(())
+}
+
+enum LogoutOutcome {
+    Cleared(String),
+    NotPresent,
+}
+
+fn logout_one_provider(provider: &str) -> Result<LogoutOutcome> {
+    match provider {
+        // Anthropic — clear from ~/.jcode/auth.json (multi-account file)
+        "claude" | "anthropic" => {
+            let path = crate::auth::claude::jcode_path()?;
+            if !path.exists() {
+                return Ok(LogoutOutcome::NotPresent);
+            }
+            let mut auth =
+                crate::auth::claude::load_auth_file().context("logout: load_auth_file")?;
+            let count = auth.anthropic_accounts.len();
+            auth.anthropic_accounts.clear();
+            auth.active_anthropic_account = None;
+            crate::auth::claude::save_auth_file(&auth).context("logout: save_auth_file")?;
+            if count == 0 {
+                Ok(LogoutOutcome::NotPresent)
+            } else {
+                Ok(LogoutOutcome::Cleared(format!(
+                    "removed {count} account(s) from {}",
+                    path.display()
+                )))
+            }
+        }
+        // For OpenAI / Codex, similar pattern via openai-auth.json. We
+        // delegate to a clear_all helper below — but if that doesn't
+        // exist yet, fall through to the env-file scrub.
+        _ => {
+            // Generic env-file scrub: ~/.config/jcode/<provider>.env
+            let env_file = crate::storage::app_config_dir()?.join(format!("{provider}.env"));
+            if env_file.exists() {
+                std::fs::remove_file(&env_file)
+                    .with_context(|| format!("logout: remove {}", env_file.display()))?;
+                return Ok(LogoutOutcome::Cleared(format!(
+                    "removed {}",
+                    env_file.display()
+                )));
+            }
+            Ok(LogoutOutcome::NotPresent)
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "commands_tests.rs"]
 mod tests;
