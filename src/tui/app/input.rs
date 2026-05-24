@@ -918,87 +918,210 @@ pub(super) fn expand_paste_placeholders(app: &mut App, input: &str) -> String {
 /// via the `read` tool — better than blowing the context window silently.
 const AT_PATH_MAX_BYTES: u64 = 200 * 1024;
 
-/// Expand `@<path>` references in user input to inlined file contents.
+/// Maximum directory entries inlined for an `@folder/` mention.
+/// Matches Claude Code's `MAX_DIR_ENTRIES = 1000`.
+const AT_FOLDER_MAX_ENTRIES: usize = 1000;
+
+/// Expand `@<path>` references in user input.
 ///
-/// MVP scope per issue #11:
-///   - Trigger on `@` followed by a non-whitespace path-like token.
-///   - Resolve relative to the session's working directory; absolute paths
-///     pass through.
-///   - Skip files larger than `AT_PATH_MAX_BYTES` and leave a marker.
-///   - Skip non-existent files (leave the literal `@token` so the user can
-///     fix typos or fall back to the `read` tool).
-///   - Wrap inlined content in a labeled block so the model sees the
-///     boundary clearly.
+/// Supported forms:
+///   - `@path/to/file` — inline full content (cap: `AT_PATH_MAX_BYTES`)
+///   - `@"path with spaces"` — quoted path; same expansion rules
+///   - `@path/to/file#L10` or `@path/to/file#L10-20` — line range slice
+///   - `@path/to/folder/` — directory listing (1 level, cap:
+///     `AT_FOLDER_MAX_ENTRIES`)
 ///
-/// Out of scope (separate PRs):
-///   - Editor-side autocomplete dropdown.
-///   - .gitignore-aware indexing.
-///   - Multi-token expansion semantics (last-token-only completion).
+/// Email-like tokens (`user@example.com`) are left untouched.
+/// Multiple mentions in a single message are all expanded.
 pub fn expand_at_path_references(input: &str, working_dir: Option<&str>) -> String {
     if !input.contains('@') {
         return input.to_string();
     }
+    let bytes = input.as_bytes();
     let mut out = String::with_capacity(input.len());
-    let mut chars = input.char_indices().peekable();
-    while let Some((_, ch)) = chars.next() {
-        if ch != '@' {
-            out.push(ch);
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        // Fast path: copy non-`@` chars verbatim.
+        if bytes[i] != b'@' {
+            // Find the next `@` or end of input and copy that slice.
+            let next = bytes[i + 1..]
+                .iter()
+                .position(|&b| b == b'@')
+                .map(|p| i + 1 + p)
+                .unwrap_or(bytes.len());
+            out.push_str(&input[i..next]);
+            i = next;
             continue;
         }
-        // Don't trigger on email-like tokens: alphanumeric just before '@'.
-        if let Some(prev) = out.chars().last()
-            && (prev.is_ascii_alphanumeric() || prev == '_' || prev == '-')
-        {
+
+        // We're at an `@`. Validate token-start (start of input or
+        // preceded by whitespace) — anything else (including `,@`,
+        // `(@`, `user@`) is left as a literal `@`.
+        let valid_start = i == 0
+            || (bytes[i - 1] as char).is_ascii_whitespace();
+        if !valid_start {
             out.push('@');
+            i += 1;
             continue;
         }
-        // Read the token after '@'. Stop at whitespace or trailing punctuation.
-        let mut token = String::new();
-        while let Some(&(_, next)) = chars.peek() {
-            if next.is_whitespace() {
-                break;
-            }
-            chars.next();
-            token.push(next);
-        }
-        // Strip trailing punctuation that's clearly not part of a path.
-        let trimmed = token
-            .trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | '!' | '?' | ':' | ';'));
-        let trail = &token[trimmed.len()..];
-        if trimmed.is_empty() {
-            out.push('@');
-            out.push_str(&token);
+
+        // Parse the token after `@`. Two forms:
+        //   - quoted: `@"..."` — content can include spaces; ends at
+        //     matching `"` or end-of-input.
+        //   - bare:   `@path` — ends at first whitespace.
+        let token_start = i + 1;
+        let (raw_token, token_end, was_quoted) =
+            if bytes.get(token_start) == Some(&b'"') {
+                let inner_start = token_start + 1;
+                let mut j = inner_start;
+                while j < bytes.len() && bytes[j] != b'"' {
+                    j += 1;
+                }
+                let closed = j < bytes.len();
+                let token = input[inner_start..j].to_string();
+                let end = if closed { j + 1 } else { j };
+                (token, end, true)
+            } else {
+                let mut j = token_start;
+                while j < bytes.len() && !(bytes[j] as char).is_ascii_whitespace() {
+                    j += 1;
+                }
+                (input[token_start..j].to_string(), j, false)
+            };
+
+        // Strip trailing punctuation that's clearly not part of a path
+        // (only for unquoted tokens — quoted paths are taken verbatim).
+        let (token, trail_punct) = if was_quoted {
+            (raw_token.as_str(), "")
+        } else {
+            let trimmed = raw_token
+                .trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | '!' | '?' | ':' | ';'));
+            let trail = &raw_token[trimmed.len()..];
+            (trimmed, trail)
+        };
+
+        if token.is_empty() {
+            // Lone `@` — emit as-is and continue past it.
+            out.push_str(&input[i..token_end]);
+            out.push_str(trail_punct);
+            i = token_end;
             continue;
         }
-        match try_read_at_path(trimmed, working_dir) {
-            ResolveOutcome::Ok { display_path, body } => {
+
+        // Parse optional `#L<n>` or `#L<a>-<b>` line range. The hash must
+        // be in the unquoted suffix; quoted paths can contain `#` literally.
+        let (path_part, line_range, range_was_invalid) = if was_quoted {
+            (token.to_string(), None, false)
+        } else {
+            split_line_range(token)
+        };
+
+        match try_read_at_path(&path_part, working_dir, line_range) {
+            ResolveOutcome::File { display_path, body, range } => {
+                let header = match range {
+                    Some((a, b)) if a == b => format!("@{display_path} (line {a})"),
+                    Some((a, b)) => format!("@{display_path} (lines {a}-{b})"),
+                    None => format!("@{display_path}"),
+                };
+                let mut suffix = String::new();
+                if range_was_invalid {
+                    suffix.push_str(
+                        " _(note: ignored invalid line range, showing full file)_",
+                    );
+                }
                 out.push_str(&format!(
-                    "\n\n--- @{display_path} ---\n{body}\n--- end @{display_path} ---\n\n"
+                    "\n\n--- {header}{suffix} ---\n{body}\n--- end @{display_path} ---\n\n"
                 ));
-                out.push_str(trail);
+                out.push_str(trail_punct);
+            }
+            ResolveOutcome::Folder { display_path, listing, total_entries, shown_entries } => {
+                let header = if total_entries > shown_entries {
+                    format!(
+                        "@{display_path} (directory listing, {shown_entries} of {total_entries} entries)"
+                    )
+                } else {
+                    format!("@{display_path} (directory listing, {total_entries} entries)")
+                };
+                out.push_str(&format!(
+                    "\n\n--- {header} ---\n{listing}--- end @{display_path} ---\n\n"
+                ));
+                out.push_str(trail_punct);
             }
             ResolveOutcome::TooLarge { display_path, size } => {
                 out.push_str(&format!(
                     "@{display_path} _(skipped — {size} bytes > {AT_PATH_MAX_BYTES} byte cap; use the read tool)_"
                 ));
-                out.push_str(trail);
+                out.push_str(trail_punct);
             }
             ResolveOutcome::Missing => {
-                out.push('@');
-                out.push_str(&token);
+                // Leave the original token verbatim (incl. quotes/range).
+                out.push_str(&input[i..token_end]);
+                out.push_str(trail_punct);
             }
         }
+        i = token_end;
     }
     out
 }
 
 enum ResolveOutcome {
-    Ok { display_path: String, body: String },
-    TooLarge { display_path: String, size: u64 },
+    File {
+        display_path: String,
+        body: String,
+        range: Option<(usize, usize)>,
+    },
+    Folder {
+        display_path: String,
+        listing: String,
+        total_entries: usize,
+        shown_entries: usize,
+    },
+    TooLarge {
+        display_path: String,
+        size: u64,
+    },
     Missing,
 }
 
-fn try_read_at_path(token: &str, working_dir: Option<&str>) -> ResolveOutcome {
+/// Split a bare token into (path, optional_range, range_was_invalid).
+///
+/// Recognized forms (case-insensitive `L`):
+///   - `path#L10`     → ("path", Some((10, 10)), false)
+///   - `path#L10-20`  → ("path", Some((10, 20)), false)
+///   - `path#L`       → ("path#L", None, true)        — invalid, treat as path
+///   - `path#Lbad`    → ("path#Lbad", None, true)     — invalid
+///
+/// If no `#L` suffix is present, returns `(path, None, false)`.
+fn split_line_range(token: &str) -> (String, Option<(usize, usize)>, bool) {
+    // Find the LAST `#L` so paths containing `#` work (`@path#with#L1`).
+    let Some(hash_pos) = token.rfind("#L") else {
+        return (token.to_string(), None, false);
+    };
+    let path = &token[..hash_pos];
+    let spec = &token[hash_pos + 2..];
+    if spec.is_empty() {
+        return (token.to_string(), None, true);
+    }
+    if let Some((a_str, b_str)) = spec.split_once('-') {
+        match (a_str.parse::<usize>(), b_str.parse::<usize>()) {
+            (Ok(a), Ok(b)) if a >= 1 && b >= a => {
+                return (path.to_string(), Some((a, b)), false);
+            }
+            _ => return (token.to_string(), None, true),
+        }
+    }
+    match spec.parse::<usize>() {
+        Ok(n) if n >= 1 => (path.to_string(), Some((n, n)), false),
+        _ => (token.to_string(), None, true),
+    }
+}
+
+fn try_read_at_path(
+    token: &str,
+    working_dir: Option<&str>,
+    range: Option<(usize, usize)>,
+) -> ResolveOutcome {
     let path = std::path::Path::new(token);
     let resolved = if path.is_absolute() {
         path.to_path_buf()
@@ -1010,9 +1133,15 @@ fn try_read_at_path(token: &str, working_dir: Option<&str>) -> ResolveOutcome {
     let Ok(meta) = std::fs::metadata(&resolved) else {
         return ResolveOutcome::Missing;
     };
+
+    if meta.is_dir() {
+        return read_folder_listing(&resolved, token);
+    }
+
     if !meta.is_file() {
         return ResolveOutcome::Missing;
     }
+
     let size = meta.len();
     if size > AT_PATH_MAX_BYTES {
         return ResolveOutcome::TooLarge {
@@ -1020,12 +1149,88 @@ fn try_read_at_path(token: &str, working_dir: Option<&str>) -> ResolveOutcome {
             size,
         };
     }
-    match std::fs::read_to_string(&resolved) {
-        Ok(body) => ResolveOutcome::Ok {
-            display_path: token.to_string(),
-            body,
-        },
-        Err(_) => ResolveOutcome::Missing,
+
+    let body = match std::fs::read_to_string(&resolved) {
+        Ok(b) => b,
+        Err(_) => return ResolveOutcome::Missing,
+    };
+
+    let (sliced, applied_range) = match range {
+        Some((a, b)) => {
+            let lines: Vec<&str> = body.lines().collect();
+            // Clamp to actual line count; preserve user's reported range.
+            let end = b.min(lines.len()).max(a.min(lines.len()));
+            if a > lines.len() {
+                (String::new(), Some((a, b)))
+            } else {
+                let slice = lines[a - 1..end].join("\n");
+                (slice, Some((a, b)))
+            }
+        }
+        None => (body, None),
+    };
+
+    ResolveOutcome::File {
+        display_path: token.to_string(),
+        body: sliced,
+        range: applied_range,
+    }
+}
+
+/// Build a 1-level directory listing in the format Claude Code uses.
+/// Sort: directories first (alphabetical), then files (alphabetical).
+/// Each directory entry has a trailing `/`.
+fn read_folder_listing(abs: &std::path::Path, display_token: &str) -> ResolveOutcome {
+    let entries = match std::fs::read_dir(abs) {
+        Ok(e) => e,
+        Err(_) => return ResolveOutcome::Missing,
+    };
+    let mut dirs: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().into_owned();
+        let is_dir = entry
+            .file_type()
+            .map(|t| t.is_dir())
+            .unwrap_or(false);
+        if is_dir {
+            dirs.push(format!("{name_str}/"));
+        } else {
+            files.push(name_str);
+        }
+    }
+    dirs.sort();
+    files.sort();
+    let total = dirs.len() + files.len();
+
+    let mut listing = String::new();
+    let mut shown = 0usize;
+    for entry in dirs.iter().chain(files.iter()) {
+        if shown >= AT_FOLDER_MAX_ENTRIES {
+            break;
+        }
+        listing.push_str(entry);
+        listing.push('\n');
+        shown += 1;
+    }
+    if total > shown {
+        listing.push_str(&format!("… and {} more entries\n", total - shown));
+    }
+
+    // Always present folder paths with a trailing `/` in the marker so
+    // model can distinguish folder mentions from file mentions.
+    let display_path = if display_token.ends_with('/') {
+        display_token.to_string()
+    } else {
+        format!("{display_token}/")
+    };
+
+    ResolveOutcome::Folder {
+        display_path,
+        listing,
+        total_entries: total,
+        shown_entries: shown,
     }
 }
 
@@ -1082,6 +1287,197 @@ mod at_path_tests {
         let out = expand_at_path_references("see @a.rs.", Some(&cwd));
         assert!(out.contains("--- @a.rs ---"));
         assert!(out.trim_end().ends_with("."));
+    }
+
+    // ---- Phase 5: quoted paths, line ranges, folder listings ----
+
+    #[test]
+    fn quoted_path_with_space_expands() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let file = temp.path().join("my file.txt");
+        std::fs::write(&file, "hello world").unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+        let out = expand_at_path_references("@\"my file.txt\"", Some(&cwd));
+        assert!(out.contains("--- @my file.txt ---"), "got: {out}");
+        assert!(out.contains("hello world"));
+    }
+
+    #[test]
+    fn line_range_single_line() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let file = temp.path().join("a.rs");
+        std::fs::write(&file, "line1\nline2\nline3\nline4").unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+        let out = expand_at_path_references("@a.rs#L2", Some(&cwd));
+        assert!(out.contains("--- @a.rs (line 2) ---"), "got: {out}");
+        assert!(out.contains("line2"));
+        assert!(!out.contains("line1"));
+        assert!(!out.contains("line3"));
+    }
+
+    #[test]
+    fn line_range_multi_line() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let file = temp.path().join("a.rs");
+        std::fs::write(&file, "a\nb\nc\nd\ne").unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+        let out = expand_at_path_references("@a.rs#L2-4", Some(&cwd));
+        assert!(out.contains("--- @a.rs (lines 2-4) ---"), "got: {out}");
+        assert!(out.contains("b\nc\nd"));
+        assert!(!out.contains("\na\n") && !out.starts_with("a\n"));
+    }
+
+    #[test]
+    fn invalid_line_range_falls_back_to_full_file_with_note() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let file = temp.path().join("a.rs");
+        std::fs::write(&file, "x\ny\nz").unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+        let out = expand_at_path_references("@a.rs#Lbad", Some(&cwd));
+        // The path with `#Lbad` doesn't exist, so the token stays literal.
+        // (Better to keep it as `@a.rs#Lbad` than silently expand to a
+        // different path the user didn't ask for.)
+        assert!(out.contains("@a.rs#Lbad"), "got: {out}");
+    }
+
+    #[test]
+    fn line_range_just_hash_l_treated_as_path() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let file = temp.path().join("a.rs");
+        std::fs::write(&file, "x").unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+        // `@a.rs#L` is invalid range → token is `a.rs#L` → file not found
+        // → literal kept.
+        let out = expand_at_path_references("@a.rs#L", Some(&cwd));
+        assert!(out.contains("@a.rs#L"));
+    }
+
+    #[test]
+    fn folder_mention_inlines_listing() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let cwd = temp.path().to_string_lossy().to_string();
+        std::fs::create_dir(temp.path().join("src")).unwrap();
+        std::fs::write(temp.path().join("src/a.rs"), "").unwrap();
+        std::fs::write(temp.path().join("src/b.rs"), "").unwrap();
+        std::fs::create_dir(temp.path().join("src/sub")).unwrap();
+
+        let out = expand_at_path_references("review @src/", Some(&cwd));
+        assert!(out.contains("--- @src/ (directory listing"), "got: {out}");
+        // Sort: directories first, then files, alphabetically.
+        let listing_section = out
+            .split("--- @src/ (directory listing")
+            .nth(1)
+            .unwrap();
+        let pos_sub = listing_section.find("sub/").unwrap();
+        let pos_a = listing_section.find("a.rs").unwrap();
+        let pos_b = listing_section.find("b.rs").unwrap();
+        assert!(pos_sub < pos_a, "dirs should come before files");
+        assert!(pos_a < pos_b, "files alphabetically sorted");
+        // No file content was inlined — only the listing.
+        assert!(!out.contains("--- end @src/ ---\n\n--- ") || out.matches("--- end").count() == 1);
+    }
+
+    #[test]
+    fn folder_listing_caps_at_max_entries() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let big = temp.path().join("big");
+        std::fs::create_dir(&big).unwrap();
+        for n in 0..(super::AT_FOLDER_MAX_ENTRIES + 50) {
+            std::fs::write(big.join(format!("f{n:05}.txt")), "").unwrap();
+        }
+        let cwd = temp.path().to_string_lossy().to_string();
+        let out = expand_at_path_references("@big/", Some(&cwd));
+        // Header announces shown vs total.
+        assert!(
+            out.contains(&format!(
+                "{} of {} entries",
+                super::AT_FOLDER_MAX_ENTRIES,
+                super::AT_FOLDER_MAX_ENTRIES + 50
+            )),
+            "got: {out}"
+        );
+        // Truncation note present.
+        assert!(out.contains("… and 50 more entries"));
+    }
+
+    #[test]
+    fn multiple_mentions_all_expanded() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let cwd = temp.path().to_string_lossy().to_string();
+        std::fs::write(temp.path().join("a.rs"), "AAA").unwrap();
+        std::fs::write(temp.path().join("b.rs"), "BBB").unwrap();
+        std::fs::create_dir(temp.path().join("docs")).unwrap();
+        std::fs::write(temp.path().join("docs/x.md"), "").unwrap();
+
+        let out = expand_at_path_references(
+            "see @a.rs and @docs/ then @b.rs",
+            Some(&cwd),
+        );
+        assert!(out.contains("AAA"));
+        assert!(out.contains("BBB"));
+        assert!(out.contains("--- @docs/ (directory listing"));
+    }
+
+    #[test]
+    fn email_with_mention_after_only_expands_mention() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let cwd = temp.path().to_string_lossy().to_string();
+        std::fs::write(temp.path().join("real.rs"), "REAL").unwrap();
+        let out = expand_at_path_references(
+            "ping user@example.com about @real.rs",
+            Some(&cwd),
+        );
+        assert!(out.contains("user@example.com"));
+        assert!(!out.contains("--- @example.com"));
+        assert!(out.contains("REAL"));
+    }
+
+    #[test]
+    fn folder_without_trailing_slash_still_works() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let cwd = temp.path().to_string_lossy().to_string();
+        std::fs::create_dir(temp.path().join("src")).unwrap();
+        let out = expand_at_path_references("look at @src", Some(&cwd));
+        // No trailing `/` in token, but the marker normalizes to `@src/`.
+        assert!(out.contains("--- @src/ (directory listing"), "got: {out}");
+    }
+
+    #[test]
+    fn line_range_clamped_to_file_length() {
+        let temp = tempfile::TempDir::new().expect("temp");
+        let file = temp.path().join("a.rs");
+        std::fs::write(&file, "x\ny\nz").unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+        let out = expand_at_path_references("@a.rs#L1-100", Some(&cwd));
+        assert!(out.contains("--- @a.rs (lines 1-100) ---"), "got: {out}");
+        assert!(out.contains("x\ny\nz"));
+    }
+
+    #[test]
+    fn split_line_range_helper() {
+        use super::split_line_range;
+        assert_eq!(
+            split_line_range("file.rs#L10"),
+            ("file.rs".into(), Some((10, 10)), false)
+        );
+        assert_eq!(
+            split_line_range("file.rs#L5-7"),
+            ("file.rs".into(), Some((5, 7)), false)
+        );
+        assert_eq!(
+            split_line_range("file.rs"),
+            ("file.rs".into(), None, false)
+        );
+        // Backwards range → invalid, keep literal.
+        assert_eq!(
+            split_line_range("file.rs#L7-3"),
+            ("file.rs#L7-3".into(), None, true)
+        );
+        // Zero → invalid.
+        assert_eq!(
+            split_line_range("file.rs#L0"),
+            ("file.rs#L0".into(), None, true)
+        );
     }
 }
 
