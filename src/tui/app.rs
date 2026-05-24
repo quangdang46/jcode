@@ -533,6 +533,12 @@ pub struct App {
     /// Pauses auto-scroll when user scrolls up during streaming
     auto_scroll_paused: bool,
     active_skill: Option<String>,
+    /// Issue #85: Plan Mode (read-only). When `true`, the next slash
+    /// command tap on `/plan` re-enables write tools. While active,
+    /// write-class tools (write/edit/bash/etc.) are gated off and a
+    /// reminder is injected so the model produces a plan instead of
+    /// executing.
+    plan_mode: bool,
     is_processing: bool,
     streaming_text: String,
     should_quit: bool,

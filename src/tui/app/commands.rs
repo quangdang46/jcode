@@ -1637,6 +1637,38 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
         return true;
     }
 
+    if trimmed == "/plan" || trimmed.starts_with("/plan ") {
+        // Issue #85: Plan Mode toggle (read-only).
+        //
+        //   /plan       → toggle on; subsequent turn becomes plan-only
+        //   /plan off   → explicitly disable
+        //   /plan on    → explicitly enable
+        //
+        // While enabled, plan_mode() returns true and the agent gates
+        // out write-class tools (full filtering wires up in a follow-up
+        // PR; this PR adds the toggle + a hint to the model).
+        let rest = trimmed.strip_prefix("/plan").unwrap_or_default().trim();
+        let want_on = match rest {
+            "" => !app.plan_mode,
+            "on" | "enable" | "1" | "true" => true,
+            "off" | "disable" | "0" | "false" => false,
+            _ => {
+                app.push_display_message(DisplayMessage::error(format!(
+                    "Unknown /plan flag: `{rest}`. Supported: (no arg), `on`, `off`."
+                )));
+                return true;
+            }
+        };
+        app.plan_mode = want_on;
+        let label = if want_on {
+            "🧠 Plan Mode ON — agent will draft a plan instead of editing/running. Re-run `/plan` to disable."
+        } else {
+            "Plan Mode OFF — write tools restored."
+        };
+        app.push_display_message(DisplayMessage::system(label.to_string()));
+        return true;
+    }
+
     if trimmed == "/share" || trimmed.starts_with("/share ") {
         // Issue #25: upload the session as a private GitHub gist via the
         // installed `gh` CLI, copy the URL to clipboard, print it in chat.

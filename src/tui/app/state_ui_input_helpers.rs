@@ -112,6 +112,10 @@ pub(super) const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
         "/share",
         "Upload this session as a private GitHub gist (requires gh CLI)",
     ),
+    RegisteredCommand::public(
+        "/plan",
+        "Toggle plan mode (read-only — agent drafts a plan instead of executing)",
+    ),
     RegisteredCommand::public("/split", "Split session into a new window"),
     RegisteredCommand::public("/transfer", "Compact context into a fresh handoff session"),
     RegisteredCommand::public("/workspace", "Niri-style session workspace"),
