@@ -912,3 +912,17 @@ impl Default for GatewayConfig {
         }
     }
 }
+
+/// Terminal / shell execution configuration (issue #260 follow-up).
+///
+/// When `shell` is set, the bash tool spawns the named shell instead
+/// of the platform default (`bash` on Unix, `cmd.exe` on Windows).
+/// Useful for users on `nu`, `zsh`, `fish`, or PowerShell who want
+/// shell-specific syntax to work in agent-spawned commands.
+///
+/// Overridden by the `JCODE_SHELL` env var.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct TerminalConfig {
+    pub shell: Option<String>,
+}
