@@ -80,6 +80,18 @@ pub(crate) struct Args {
     #[arg(long = "sandbox", global = true)]
     pub(crate) sandbox: bool,
 
+    /// Issue #110: filesystem sandbox root. When set, every file-touching
+    /// tool (read, write, edit, multiedit, bash, glob, grep, ...) rejects
+    /// paths that escape this directory tree (absolute paths outside,
+    /// `..` traversal, symlink escape). Equivalent to setting
+    /// `JCODE_SANDBOX_ROOT=<DIR>`.
+    ///
+    /// Examples:
+    ///   jcode --sandbox-root ~/scratch run 'experiment'
+    ///   JCODE_SANDBOX_ROOT=/tmp/safe jcode
+    #[arg(long = "sandbox-root", global = true, value_name = "DIR")]
+    pub(crate) sandbox_root: Option<std::path::PathBuf>,
+
     /// Replace the built-in system prompt with the given text for this session.
     /// Higher priority than `.jcode/SYSTEM.md` and the `provider.system_prompt`
     /// config value. Equivalent to setting `JCODE_SYSTEM_PROMPT`.
