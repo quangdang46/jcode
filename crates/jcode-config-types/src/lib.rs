@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Compaction mode
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -266,6 +267,12 @@ pub enum NamedProviderType {
     #[serde(alias = "openai-compatible", alias = "openai_compatible")]
     #[default]
     OpenAiCompatible,
+    /// Issue #83: Anthropic Messages API-compatible endpoints (Bedrock,
+    /// Vertex Anthropic, custom corporate gateways implementing the
+    /// `/v1/messages` schema). Distinct from OpenAI-compatible chat
+    /// completions because the request/response shape differs.
+    #[serde(alias = "anthropic-compatible", alias = "anthropic_compatible")]
+    AnthropicCompatible,
     OpenRouter,
 }
 
@@ -315,6 +322,12 @@ pub struct NamedProviderConfig {
     pub model_catalog: bool,
     #[serde(default)]
     pub allow_provider_pinning: bool,
+    /// Issue #83: extra HTTP headers to attach to every request to
+    /// this provider. Useful for corporate gateways requiring
+    /// X-Tenant / X-Project / etc. Header values are persisted in
+    /// the config file plaintext — do NOT use for secrets.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<NamedProviderModelConfig>,
 }
@@ -335,6 +348,7 @@ impl Default for NamedProviderConfig {
             provider_routing: false,
             model_catalog: false,
             allow_provider_pinning: false,
+            headers: BTreeMap::new(),
             models: Vec::new(),
         }
     }
