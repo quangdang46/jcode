@@ -195,6 +195,166 @@ pub(super) fn active_dollar_token(input: &str) -> Option<&str> {
     None
 }
 
+/// Result of `extract_at_token_at_cursor`: a single `@<path>` token under
+/// the cursor, with byte offsets so callers can do exact replacement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AtTokenMatch<'a> {
+    /// The text after `@`, with surrounding quotes stripped if quoted.
+    /// Example: `@"foo bar"` → `"foo bar"`.
+    pub query: &'a str,
+    /// Byte offset of the `@` symbol in `input`.
+    pub start: usize,
+    /// Exclusive byte offset where the token ends. For unquoted tokens this
+    /// is the first whitespace (or end of input). For quoted tokens it
+    /// includes the closing `"` if present.
+    pub end: usize,
+    /// `true` if the token uses the `@"..."` quoted form.
+    pub is_quoted: bool,
+}
+
+/// Detect if `cursor` (byte offset) is inside an active `@<path>` token at
+/// any position in `input` (start, middle, or end).
+///
+/// Rules:
+///   - The `@` must be at the start of input or preceded by whitespace.
+///   - The cursor must lie within `[at_pos .. token_end]` inclusive on the
+///     left, exclusive on the right (cursor in trailing whitespace → None).
+///   - Quoted form `@"..."` is supported: token continues through spaces
+///     until the matching closing `"` or end of input. Cursor anywhere
+///     inside the quotes (or on the `@`) is "inside the token".
+///   - Email-like `user@example.com` → None (the `@` is preceded by an
+///     alphanumeric char, not whitespace).
+///
+/// `cursor` is clamped to `input.len()` if out of range. UTF-8 boundary
+/// checks ensure we never split a multibyte char.
+pub(super) fn extract_at_token_at_cursor(input: &str, cursor: usize) -> Option<AtTokenMatch<'_>> {
+    let cursor = cursor.min(input.len());
+    let bytes = input.as_bytes();
+
+    // --- 1. Walk backward from cursor to find the most recent `@`
+    //        that satisfies the start-of-token rule. ----------------
+    let mut at_idx: Option<usize> = None;
+    let mut i = cursor;
+    while i > 0 {
+        // Step back to the previous char boundary.
+        let prev = i - 1;
+        // Quick check: only inspect ASCII bytes. UTF-8 multibyte chars
+        // never contain a 0x40 ('@'), 0x22 ('"'), or whitespace ASCII byte
+        // in continuation positions, so this is safe.
+        let b = bytes[prev];
+        if b == b'@' {
+            // Verify start condition: pos==0 or preceded by whitespace.
+            if prev == 0 {
+                at_idx = Some(prev);
+                break;
+            }
+            // Look at the char before the `@`.
+            let before = bytes[prev - 1];
+            if (before as char).is_ascii_whitespace() {
+                at_idx = Some(prev);
+                break;
+            }
+            // `@` mid-word (like `user@example.com`) — not a token start.
+            return None;
+        }
+        // For the *unquoted* part of the search (cursor → @), if we hit
+        // whitespace we know there's no active token — the cursor is in a
+        // gap or in a non-@ word.
+        //
+        // BUT: we still need to handle quoted tokens that contain spaces.
+        // We can't tell from this side whether a space is inside `@"..."`
+        // or outside. So a hit here doesn't immediately disqualify; we
+        // also try the quoted-detection path below.
+        if (b as char).is_ascii_whitespace() {
+            // Save where we hit whitespace; quoted detection picks up
+            // from before this point.
+            break;
+        }
+        i = prev;
+    }
+
+    // --- 2. If we found an unquoted-style `@`, parse forward. -----
+    if let Some(start) = at_idx {
+        // Determine if this is a quoted token: `@` followed by `"`.
+        let after_at = start + 1;
+        if bytes.get(after_at) == Some(&b'"') {
+            return parse_quoted_token(input, start, cursor);
+        }
+        // Plain unquoted token: include path-like chars until whitespace.
+        let mut end = after_at;
+        while end < bytes.len() && !(bytes[end] as char).is_ascii_whitespace() {
+            end += 1;
+        }
+        if cursor <= end {
+            // SAFETY: end is at a whitespace boundary or end-of-input;
+            // both are UTF-8 safe split points.
+            return Some(AtTokenMatch {
+                query: &input[after_at..end],
+                start,
+                end,
+                is_quoted: false,
+            });
+        }
+        return None;
+    }
+
+    // --- 3. No unquoted match. Try quoted: scan back for the most -
+    //        recent unmatched `@"` whose `@` qualifies as token start.
+    //        This handles cursor inside a quoted token with spaces.
+    let mut j = cursor;
+    while j > 0 {
+        let prev = j - 1;
+        let b = bytes[prev];
+        if b == b'@' {
+            // Must be followed by `"` and pass the start-of-token rule.
+            let starts_quote = bytes.get(prev + 1) == Some(&b'"');
+            let valid_start = prev == 0
+                || (bytes[prev - 1] as char).is_ascii_whitespace();
+            if starts_quote && valid_start {
+                return parse_quoted_token(input, prev, cursor);
+            }
+            // Hit a non-quoted `@` while scanning backward — abort.
+            return None;
+        }
+        j = prev;
+    }
+
+    None
+}
+
+/// Parse `@"..."` starting at `start` (which points at the `@`). Returns
+/// `Some` only if the cursor is positioned inside the token (after the
+/// `@` and not past the closing quote).
+fn parse_quoted_token(input: &str, start: usize, cursor: usize) -> Option<AtTokenMatch<'_>> {
+    let bytes = input.as_bytes();
+    debug_assert!(bytes.get(start) == Some(&b'@'));
+    debug_assert!(bytes.get(start + 1) == Some(&b'"'));
+
+    let inner_start = start + 2;
+    // Find the closing `"`, scanning forward over arbitrary bytes
+    // (including spaces and UTF-8 sequences — `"` is never a continuation).
+    let mut end = inner_start;
+    let mut closed = false;
+    while end < bytes.len() {
+        if bytes[end] == b'"' {
+            closed = true;
+            break;
+        }
+        end += 1;
+    }
+    let token_end = if closed { end + 1 } else { end };
+    if cursor > token_end {
+        return None;
+    }
+    let inner_end = if closed { end } else { end };
+    Some(AtTokenMatch {
+        query: &input[inner_start..inner_end],
+        start,
+        end: token_end,
+        is_quoted: true,
+    })
+}
+
 /// Issue #11: detect an active `@<path>` token at the END of the input.
 ///
 /// Returns the substring beginning at the most recent `@` that:
@@ -1167,6 +1327,49 @@ impl App {
     }
 
     /// Get command suggestions based on current input
+    /// Compute `@<path>` suggestions if the cursor currently sits inside
+    /// an active @-token. Returns `None` when no token is active or the
+    /// picker is unavailable.
+    ///
+    /// Each entry is formatted as `@path` (file) or `@path/` (folder), and
+    /// the help text indicates the kind. Folders sort before files within
+    /// the same score band — ffs already handles this internally.
+    fn at_suggestions(&self) -> Option<Vec<(String, &'static str)>> {
+        let m = super::state_ui_input_helpers::extract_at_token_at_cursor(
+            &self.input,
+            self.cursor_pos,
+        )?;
+
+        // Lazy-init: if the picker is missing, try to build one. This
+        // briefly takes a mut borrow on the RefCell.
+        let picker = {
+            let mut slot = self.at_picker.borrow_mut();
+            slot.ensure(self.session.working_dir.as_deref())?
+        };
+
+        let raw = picker.search(m.query, super::at_picker::AT_PICKER_MAX_SUGGESTIONS);
+        if raw.is_empty() {
+            // Picker still warming up or query has no matches. Returning
+            // an empty Vec here would suppress the dropdown and also block
+            // the `/` and `$` fallbacks (which is what we want — once the
+            // user types `@`, we own the dropdown).
+            return Some(Vec::new());
+        }
+
+        let suggestions = raw
+            .into_iter()
+            .map(|s| {
+                let (display, help) = if s.is_directory {
+                    (format!("@{}/", s.display_path), "Folder")
+                } else {
+                    (format!("@{}", s.display_path), "File")
+                };
+                (display, help)
+            })
+            .collect();
+        Some(suggestions)
+    }
+
     pub fn command_suggestions(&self) -> Vec<(String, &'static str)> {
         if self
             .inline_interactive_state
@@ -1178,6 +1381,16 @@ impl App {
                 return Vec::new();
             }
         }
+
+        // `@<path>` autocomplete: when the cursor sits inside an @-token
+        // anywhere in the input, return ffs-search file/folder suggestions
+        // formatted as `@path` (file) or `@path/` (folder, drill-in).
+        // This must come BEFORE the `/` and `$` checks because `@` tokens
+        // can appear mid-input and shouldn't be confused with command-mode.
+        if let Some(at) = self.at_suggestions() {
+            return at;
+        }
+
         self.get_suggestions_for(&self.input)
     }
 
@@ -1310,7 +1523,82 @@ impl App {
     }
 
     /// Autocomplete current input - cycles through suggestions on repeated Tab
+    /// If the cursor sits inside an active `@<path>` token AND the picker
+    /// has a current selection, compute the (new_input, new_cursor) pair
+    /// that would result from accepting that selection. Returns `None`
+    /// otherwise so the caller can fall through to other autocomplete
+    /// modes (slash, dollar).
+    fn try_apply_at_completion(&self) -> Option<(String, usize)> {
+        let m = super::state_ui_input_helpers::extract_at_token_at_cursor(
+            &self.input,
+            self.cursor_pos,
+        )?;
+        // Read suggestions WITHOUT mutably re-initializing the picker —
+        // if the user got here by Tab they've already seen the dropdown,
+        // which means init succeeded.
+        let suggestions = self.command_suggestions();
+        if suggestions.is_empty() {
+            return None;
+        }
+        let selected = self
+            .command_suggestion_selected
+            .min(suggestions.len().saturating_sub(1));
+        let (display, help) = &suggestions[selected];
+        // Sanity: only proceed if this is genuinely an @-suggestion (the
+        // dropdown could in theory be showing slash/dollar items if both
+        // happen to coexist, but we've ordered branches so @ wins).
+        if !display.starts_with('@') {
+            return None;
+        }
+        let is_directory = *help == "Folder";
+
+        // Strip the leading `@` from the display to get the bare path.
+        let bare = display.strip_prefix('@').unwrap_or(display);
+        // For folders the display already has trailing `/`; strip it so
+        // we can decide quoting based on the bare path text.
+        let (bare_path, _had_slash) = if is_directory && bare.ends_with('/') {
+            (&bare[..bare.len() - 1], true)
+        } else {
+            (bare, false)
+        };
+
+        let needs_quotes = bare_path.contains(' ');
+        // Build the replacement text. Folders → trailing `/` and KEEP the
+        // token open for drill-in; files → trailing space, close token.
+        let replacement = match (needs_quotes, is_directory) {
+            (true, true) => format!("@\"{bare_path}\"/"),
+            (true, false) => format!("@\"{bare_path}\" "),
+            (false, true) => format!("@{bare_path}/"),
+            (false, false) => format!("@{bare_path} "),
+        };
+
+        let new_input = format!(
+            "{}{}{}",
+            &self.input[..m.start],
+            replacement,
+            &self.input[m.end..]
+        );
+        let new_cursor = m.start + replacement.len();
+        Some((new_input, new_cursor))
+    }
+
     pub fn autocomplete(&mut self) -> bool {
+        // ---- @<path> autocomplete: replace the active @-token in place. ----
+        //
+        // This MUST come before the slash/dollar tab-cycle logic because
+        // @-tokens live in arbitrary positions inside the input (not just
+        // at the start), and the existing logic assumes whole-input
+        // replacement for `/` commands.
+        if let Some(replacement) = self.try_apply_at_completion() {
+            self.remember_input_undo_state();
+            let (new_input, new_cursor) = replacement;
+            self.input = new_input;
+            self.cursor_pos = new_cursor;
+            self.tab_completion_state = None;
+            self.command_suggestion_selected = 0;
+            return true;
+        }
+
         // Get suggestions for current input
         let current_suggestions = self.get_suggestions_for(&self.input);
 
@@ -1590,6 +1878,192 @@ mod dollar_token_tests {
     fn at_token_no_at_returns_none() {
         assert_eq!(active_at_token("hello world"), None);
         assert_eq!(active_at_token(""), None);
+    }
+
+    // ---- extract_at_token_at_cursor: cursor-based detection ----
+    //
+    // Each test uses a sentinel "|" in the input to mark cursor position.
+    // Helper splits on "|" so test cases stay readable.
+
+    fn at(input: &str) -> (String, usize) {
+        let cursor = input.find('|').expect("test input must contain '|'");
+        let mut s = input.to_string();
+        s.remove(cursor);
+        (s, cursor)
+    }
+
+    fn extract<'a>(input: &'a str, cursor: usize) -> Option<super::AtTokenMatch<'a>> {
+        super::extract_at_token_at_cursor(input, cursor)
+    }
+
+    #[test]
+    fn cursor_before_at_returns_none() {
+        let (s, c) = at("|@src");
+        assert_eq!(extract(&s, c), None);
+    }
+
+    #[test]
+    fn cursor_right_after_at_at_start() {
+        let (s, c) = at("@|src");
+        let m = extract(&s, c).expect("active");
+        // Token extends forward to end of word regardless of cursor.
+        assert_eq!(m.query, "src");
+        assert_eq!(m.start, 0);
+        assert_eq!(m.end, 4); // "@src"
+        assert!(!m.is_quoted);
+    }
+
+    #[test]
+    fn cursor_at_end_of_token() {
+        let (s, c) = at("@src|");
+        let m = extract(&s, c).expect("active");
+        assert_eq!(m.query, "src");
+        assert_eq!(m.start, 0);
+        assert_eq!(m.end, 4);
+    }
+
+    #[test]
+    fn cursor_in_middle_of_input_inside_token() {
+        let (s, c) = at("look @src| done");
+        let m = extract(&s, c).expect("active");
+        assert_eq!(m.query, "src");
+        assert_eq!(m.start, 5);
+        assert_eq!(m.end, 9);
+    }
+
+    #[test]
+    fn cursor_in_whitespace_after_token_returns_none() {
+        let (s, c) = at("look @src |done");
+        assert_eq!(extract(&s, c), None);
+    }
+
+    #[test]
+    fn cursor_in_next_token_returns_none() {
+        let (s, c) = at("look @src d|one");
+        assert_eq!(extract(&s, c), None);
+    }
+
+    #[test]
+    fn multiple_tokens_picks_active_one() {
+        let (s, c) = at("@a @b|");
+        let m = extract(&s, c).expect("active");
+        assert_eq!(m.query, "b");
+        assert_eq!(m.start, 3);
+        assert_eq!(m.end, 5);
+    }
+
+    #[test]
+    fn multiple_tokens_picks_first_when_cursor_there() {
+        let (s, c) = at("@a| @b");
+        let m = extract(&s, c).expect("active");
+        assert_eq!(m.query, "a");
+        assert_eq!(m.start, 0);
+        assert_eq!(m.end, 2);
+    }
+
+    #[test]
+    fn three_consecutive_tokens_middle_active() {
+        let (s, c) = at("@a @b| @c");
+        let m = extract(&s, c).expect("active");
+        assert_eq!(m.query, "b");
+        assert_eq!(m.start, 3);
+        assert_eq!(m.end, 5);
+    }
+
+    #[test]
+    fn email_like_never_triggers() {
+        let (s, c) = at("user@exam|ple.com");
+        assert_eq!(extract(&s, c), None);
+    }
+
+    #[test]
+    fn at_after_punctuation_no_space_rejects() {
+        let (s, c) = at("before,@src|");
+        // `,` is not whitespace → not a valid token start.
+        assert_eq!(extract(&s, c), None);
+    }
+
+    #[test]
+    fn at_after_paren_with_space_accepts() {
+        let (s, c) = at("( @src|)");
+        let m = extract(&s, c).expect("active");
+        // `)` is not whitespace → token extends through it.
+        // Submission-time `expand_at_path_references` strips trailing
+        // punctuation; here we just verify the token is detected.
+        assert_eq!(m.query, "src)");
+    }
+
+    #[test]
+    fn quoted_path_with_spaces() {
+        let (s, c) = at(r#"@"foo bar|""#);
+        let m = extract(&s, c).expect("active");
+        assert_eq!(m.query, "foo bar");
+        assert_eq!(m.start, 0);
+        assert!(m.is_quoted);
+    }
+
+    #[test]
+    fn quoted_path_cursor_in_middle() {
+        let (s, c) = at(r#"@"foo b|ar baz""#);
+        let m = extract(&s, c).expect("active");
+        assert_eq!(m.query, "foo bar baz");
+        assert!(m.is_quoted);
+    }
+
+    #[test]
+    fn quoted_path_unclosed() {
+        let (s, c) = at(r#"@"unclosed|"#);
+        let m = extract(&s, c).expect("active");
+        assert_eq!(m.query, "unclosed");
+        assert!(m.is_quoted);
+    }
+
+    #[test]
+    fn cursor_after_closing_quote_returns_none() {
+        let (s, c) = at(r#"cmd @"a b" |then"#);
+        assert_eq!(extract(&s, c), None);
+    }
+
+    #[test]
+    fn slash_separator_works() {
+        let (s, c) = at("@src/|main.rs");
+        let m = extract(&s, c).expect("active");
+        assert_eq!(m.query, "src/main.rs");
+        assert_eq!(m.start, 0);
+    }
+
+    #[test]
+    fn unicode_path() {
+        let (s, c) = at("@日本/|");
+        let m = extract(&s, c).expect("active");
+        assert!(m.query.contains("日本"));
+    }
+
+    #[test]
+    fn empty_input() {
+        assert_eq!(extract("", 0), None);
+    }
+
+    #[test]
+    fn bare_at_at_start() {
+        let m = extract("@", 1).expect("active");
+        assert_eq!(m.query, "");
+        assert_eq!(m.start, 0);
+        assert_eq!(m.end, 1);
+    }
+
+    #[test]
+    fn cursor_clamped_when_out_of_range() {
+        // Should not panic.
+        let m = extract("@src", 999).expect("active");
+        assert_eq!(m.query, "src");
+    }
+
+    #[test]
+    fn whitespace_between_at_tokens_blocks() {
+        // Cursor sits in whitespace between two tokens — neither is active.
+        let (s, c) = at("@a |@b");
+        assert_eq!(extract(&s, c), None);
     }
 
     #[test]
