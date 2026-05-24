@@ -1702,6 +1702,63 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
         return true;
     }
 
+    if trimmed == "/settings" || trimmed.starts_with("/settings ") {
+        // Issue #7: display the active config in the chat for quick
+        // inspection. This is the read-only viewer; interactive
+        // editing is a larger overlay design — for now users edit
+        // ~/.jcode/config.toml directly and this command shows what
+        // jcode is using.
+        let cfg = crate::config::config();
+        let output = format!(
+            "## jcode settings (from ~/.jcode/config.toml + env)\n\n\
+             provider:\n\
+             • default_provider: {}\n\
+             • default_model:    {}\n\
+             • openai_reasoning_effort: {}\n\
+             • anthropic_reasoning_effort: {}\n\n\
+             features:\n\
+             • memory:    {}\n\
+             • swarm:     {}\n\
+             • message_timestamps: {}\n\n\
+             tools:\n\
+             • profile:        {}\n\
+             • enabled count:  {}\n\
+             • disabled count: {}\n\n\
+             flags (env):\n\
+             • JCODE_OFFLINE:        {}\n\
+             • JCODE_NO_TELEMETRY:   {}\n\
+             • JCODE_SAFE_EVAL:      {}\n\
+             • JCODE_SANDBOX_ROOT:   {}\n\
+             • JCODE_EXTENSION_POLICY: {}\n\
+             • JCODE_NO_BUILTIN_TOOLS: {}\n\n\
+             Edit `~/.jcode/config.toml` to change persistent settings.",
+            cfg.provider.default_provider.as_deref().unwrap_or("(auto)"),
+            cfg.provider.default_model.as_deref().unwrap_or("(default)"),
+            cfg.provider
+                .openai_reasoning_effort
+                .as_deref()
+                .unwrap_or("(default)"),
+            cfg.provider
+                .anthropic_reasoning_effort
+                .as_deref()
+                .unwrap_or("(default)"),
+            cfg.features.memory,
+            cfg.features.swarm,
+            cfg.features.message_timestamps,
+            cfg.tools.profile,
+            cfg.tools.enabled.len(),
+            cfg.tools.disabled.len(),
+            std::env::var("JCODE_OFFLINE").unwrap_or_else(|_| "(unset)".to_string()),
+            std::env::var("JCODE_NO_TELEMETRY").unwrap_or_else(|_| "(unset)".to_string()),
+            std::env::var("JCODE_SAFE_EVAL").unwrap_or_else(|_| "(unset)".to_string()),
+            std::env::var("JCODE_SANDBOX_ROOT").unwrap_or_else(|_| "(unset)".to_string()),
+            std::env::var("JCODE_EXTENSION_POLICY").unwrap_or_else(|_| "(unset)".to_string()),
+            std::env::var("JCODE_NO_BUILTIN_TOOLS").unwrap_or_else(|_| "(unset)".to_string()),
+        );
+        app.push_display_message(DisplayMessage::system(output));
+        return true;
+    }
+
     if trimmed == "/doctor" || trimmed.starts_with("/doctor ") {
         // Issue #155 etc.: surface jcode doctor inline so users
         // don't need to drop to a shell. Keeps the same JSON format

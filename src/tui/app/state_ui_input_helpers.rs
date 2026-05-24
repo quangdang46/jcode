@@ -121,6 +121,10 @@ pub(super) const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
         "Fork this session into a new branch with the same history",
     ),
     RegisteredCommand::public(
+        "/settings",
+        "Show active jcode config (provider, features, tools, flags)",
+    ),
+    RegisteredCommand::public(
         "/doctor",
         "Print a quick environment diagnostic (build, flags, providers, health)",
     ),
