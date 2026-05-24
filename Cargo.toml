@@ -92,6 +92,12 @@ path = "src/bin/tui_bench.rs"
 required-features = ["dev-bins"]
 
 [dependencies]
+# File picker for `@<path>` autocomplete in the TUI input.
+# Provides a long-lived FilePicker with background scan, gitignore-aware walk,
+# fuzzy matching with typo resistance, and frecency-ranked results.
+# Pinned with `=` because the crate is still 0.1.x — minor bumps may break API.
+ffs-search = "=0.1.3"
+
 # Memory allocator (reduces fragmentation for long-running server)
 tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"], optional = true }
 tikv-jemalloc-ctl = { version = "0.6", optional = true }

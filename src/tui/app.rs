@@ -51,6 +51,7 @@ pub enum AppRuntimeMode {
 
 mod auth;
 mod auth_account_picker_saved_accounts;
+mod at_picker;
 mod catchup;
 mod commands;
 mod commands_improve;
@@ -528,6 +529,10 @@ pub struct App {
     compacted_history_lazy: CompactedHistoryLazyState,
     input: String,
     command_candidates_cache: RefCell<Option<CommandCandidatesCache>>,
+    /// Lazy-initialized `@<path>` picker. Created on first @-keystroke when
+    /// `session.working_dir` is set. `RefCell` because creation needs to
+    /// happen behind `&self` calls (e.g. `command_suggestions`).
+    at_picker: RefCell<crate::tui::app::at_picker::AtPickerSlot>,
     cursor_pos: usize,
     scroll_offset: usize,
     /// Pauses auto-scroll when user scrolls up during streaming
