@@ -800,6 +800,7 @@ pub(super) fn insert_input_text(app: &mut App, text: &str) {
     app.input.insert_str(app.cursor_pos, text);
     app.cursor_pos += text.len();
     app.reset_tab_completion();
+    app.reset_input_history_browse();
     app.sync_model_picker_preview_from_input();
 }
 
@@ -829,7 +830,6 @@ pub(super) fn handle_text_input(app: &mut App, text: &str) -> bool {
     }
 
     insert_input_text(app, text);
-    app.reset_input_history_browse();
     true
 }
 
@@ -2202,7 +2202,6 @@ pub(super) fn handle_basic_key(app: &mut App, code: KeyCode) -> bool {
                 app.input.drain(prev..app.cursor_pos);
                 app.cursor_pos = prev;
                 app.reset_tab_completion();
-                app.reset_input_history_browse();
                 app.sync_model_picker_preview_from_input();
             }
             true
@@ -2242,7 +2241,7 @@ pub(super) fn handle_basic_key(app: &mut App, code: KeyCode) -> bool {
             true
         }
         KeyCode::Up | KeyCode::PageUp => {
-            if code == KeyCode::Up && app.input.is_empty() && app.input_history_up() {
+            if code == KeyCode::Up && (app.input.is_empty() || app.input_history_index.is_some()) && app.input_history_up() {
                 return true;
             }
             let inc = if code == KeyCode::PageUp { 10 } else { 1 };
@@ -2757,7 +2756,6 @@ impl App {
         self.cursor_pos = 0;
         self.clear_input_undo_history();
         self.reset_input_history_browse();
-        self.push_input_history(input.clone());
         self.follow_chat_bottom(); // Reset to bottom and resume auto-scroll on new input
 
         // If the previous assistant turn still has visible streamed text that has not yet been
@@ -2781,6 +2779,9 @@ impl App {
             return;
         }
 
+            return;
+        }
+
         // Issue #4 follow-up: if the user typed `/<name>` (or `/<name> <args>`)
         // and `<name>` is a discovered prompt template, expand the template
         // body in-place so the rest of the submit flow treats it as a normal
@@ -2788,6 +2789,11 @@ impl App {
         // etc.) are checked first below, so this only fires for user-defined
         // templates.
         let mut input = expand_prompt_template_invocation(&input).unwrap_or(input);
+
+        // Issue #265 (input history): record submitted input for Up/Down recall.
+        // Done after template expansion so the recall menu shows the
+        // user-typed string, not the expanded body.
+        self.push_input_history(input.clone());
 
         let trimmed = input.trim();
         let handled = commands::handle_help_command(self, trimmed)
