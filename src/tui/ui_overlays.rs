@@ -183,6 +183,10 @@ pub(super) fn draw_help_overlay(frame: &mut Frame, area: Rect, scroll: usize, ap
         "Show numbered history, /rewind N to rewind",
     ));
     lines.push(help_entry(
+        "/history [input N]",
+        "Show input history, load entry N into input",
+    ));
+    lines.push(help_entry(
         "/fix",
         "Attempt recovery when model cannot continue",
     ));
@@ -321,7 +325,7 @@ pub(super) fn draw_help_overlay(frame: &mut Frame, area: Rect, scroll: usize, ap
     lines.push(Line::from(Span::styled("  Navigation", section_style)));
     lines.push(Line::from(""));
     lines.push(key_entry("PageUp / PageDown", "Scroll history"));
-    lines.push(key_entry("Up / Down", "Scroll history (when input empty)"));
+    lines.push(key_entry("Up / Down (empty input)", "Recall previous input / scroll history"));
     lines.push(key_entry("Ctrl+[ / Ctrl+]", "Jump between user prompts"));
     lines.push(key_entry("Ctrl+1..4", "Resize side panel to 25/50/75/100%"));
     lines.push(key_entry(
