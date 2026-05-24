@@ -628,6 +628,11 @@ pub enum WebSearchEngine {
     Duckduckgo,
     /// Bing search. Uses the Bing API when configured, otherwise Bing HTML search.
     Bing,
+    /// Exa.ai semantic search — requires `EXA_API_KEY` env var.
+    /// Higher-quality results for code/research queries; no scraping
+    /// fallback, so falls back to DuckDuckGo / Bing if the API key is
+    /// missing or quota-exhausted.
+    Exa,
 }
 
 impl WebSearchEngine {
@@ -635,6 +640,7 @@ impl WebSearchEngine {
         match self {
             Self::Duckduckgo => "duckduckgo",
             Self::Bing => "bing",
+            Self::Exa => "exa",
         }
     }
 
@@ -642,6 +648,7 @@ impl WebSearchEngine {
         match value.trim().to_ascii_lowercase().as_str() {
             "duckduckgo" | "ddg" => Some(Self::Duckduckgo),
             "bing" => Some(Self::Bing),
+            "exa" | "exa.ai" | "exa-ai" => Some(Self::Exa),
             _ => None,
         }
     }
