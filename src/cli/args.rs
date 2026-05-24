@@ -68,6 +68,18 @@ pub(crate) struct Args {
     #[arg(long = "safe-eval", global = true)]
     pub(crate) safe_eval: bool,
 
+    /// Issue #110: hardened defaults profile (lighter than --safe-eval).
+    ///
+    /// Equivalent to setting:
+    ///   JCODE_REQUIRE_MCP_TRUST=1   (only trusted MCP servers load)
+    ///   JCODE_EXTENSION_POLICY=trusted (other extensions follow same rule)
+    ///
+    /// Use when running jcode in a CI runner, against an unfamiliar
+    /// repository, or any other context where you want to limit
+    /// extension blast radius without going full safe-eval.
+    #[arg(long = "sandbox", global = true)]
+    pub(crate) sandbox: bool,
+
     /// Replace the built-in system prompt with the given text for this session.
     /// Higher priority than `.jcode/SYSTEM.md` and the `provider.system_prompt`
     /// config value. Equivalent to setting `JCODE_SYSTEM_PROMPT`.

@@ -153,6 +153,20 @@ fn parse_and_prepare_args() -> Result<Args> {
         crate::env::set_var("JCODE_EXTENSION_POLICY", policy);
     }
 
+    // Issue #110: --sandbox shortcut for hardened defaults.
+    // Lighter than --safe-eval; doesn't reroute JCODE_HOME or
+    // disable network — just locks down extension loading to
+    // explicitly trusted entries.
+    if args.sandbox {
+        crate::env::set_var("JCODE_REQUIRE_MCP_TRUST", "1");
+        // Only set if user hasn't explicitly chosen a different
+        // policy via --extension-policy; their choice wins.
+        if std::env::var_os("JCODE_EXTENSION_POLICY").is_none() {
+            crate::env::set_var("JCODE_EXTENSION_POLICY", "trusted");
+        }
+    }
+
+
     if let Some(ref socket) = args.socket {
         server::set_socket_path(socket);
     }
