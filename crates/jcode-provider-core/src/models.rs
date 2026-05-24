@@ -190,6 +190,12 @@ pub fn context_limit_for_model_with_provider_and_cache(
         return Some(limit);
     }
 
+    // Issue #81: DeepSeek V4 / chat models default to 1M context.
+    // Upstream PR 1jehuang/jcode#92 for the same fallback.
+    if model.starts_with("deepseek") {
+        return Some(1_000_000);
+    }
+
     if model.starts_with("gemini-2.0-flash")
         || model.starts_with("gemini-2.5")
         || model.starts_with("gemini-3")
