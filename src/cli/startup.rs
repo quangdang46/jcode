@@ -146,6 +146,13 @@ fn parse_and_prepare_args() -> Result<Args> {
         crate::env::set_var("JCODE_NO_BUILTIN_TOOLS", "1");
     }
 
+    // Issue #14: --extension-policy → JCODE_EXTENSION_POLICY.
+    // Other subsystems (MCP loader, future extension runtime) read
+    // this env var via crate::extension_policy::current().
+    if let Some(ref policy) = args.extension_policy {
+        crate::env::set_var("JCODE_EXTENSION_POLICY", policy);
+    }
+
     if let Some(ref socket) = args.socket {
         server::set_socket_path(socket);
     }

@@ -112,6 +112,24 @@ pub(crate) struct Args {
     #[arg(long = "no-builtin-tools", visible_alias = "nbt", global = true)]
     pub(crate) no_builtin_tools: bool,
 
+    /// Issue #14: extension-load policy. Controls which extensions
+    /// (MCP servers, plugin tools, side-loaded extensions) are
+    /// permitted at startup.
+    ///
+    /// Values:
+    ///   - `all`        load everything (DEFAULT)
+    ///   - `trusted`    load only entries that have been explicitly
+    ///                  trusted via `jcode mcp trust`
+    ///   - `none`       block all extension loading
+    ///
+    /// Equivalent to setting `JCODE_EXTENSION_POLICY=<value>` in env.
+    #[arg(
+        long = "extension-policy",
+        global = true,
+        value_parser = ["all", "trusted", "none"],
+    )]
+    pub(crate) extension_policy: Option<String>,
+
     /// Resume a session by ID, or list sessions if no ID provided
     #[arg(long, global = true, num_args = 0..=1, default_missing_value = "")]
     pub(crate) resume: Option<String>,
