@@ -689,6 +689,11 @@ pub struct ProviderConfig {
     pub default_model: Option<String>,
     /// Default provider to use (claude|openai|copilot|openrouter)
     pub default_provider: Option<String>,
+    /// Issue #163: list of provider keys to treat as disabled.
+    /// Each entry matches case-insensitively against provider keys
+    /// (e.g. `["copilot", "openrouter"]`). Disabled providers are
+    /// hidden from auth status, login UI, and provider catalog.
+    pub disabled_providers: Vec<String>,
     /// Reasoning effort for OpenAI Responses API (none|low|medium|high|xhigh)
     pub openai_reasoning_effort: Option<String>,
     /// Reasoning effort for Anthropic Messages API output_config (none|low|medium|high|xhigh; max aliases to strongest supported)
@@ -728,6 +733,7 @@ impl Default for ProviderConfig {
         Self {
             default_model: None,
             default_provider: None,
+            disabled_providers: Vec::new(),
             openai_reasoning_effort: Some("low".to_string()),
             anthropic_reasoning_effort: None,
             openai_transport: None,
