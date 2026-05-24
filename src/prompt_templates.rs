@@ -19,6 +19,133 @@
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::SystemTime;
+
+// ---- Issue #4: prompt template hot reload ----
+//
+// `discover()` already re-reads from disk on every call (so adding a
+// new .md file is picked up immediately). What was missing:
+//   1. A cheap "did anything change?" probe the TUI can poll without
+//      paying the full directory walk
+//   2. A cache that returns the prior result when nothing changed
+//
+// `discover_cached()` provides both. It records the maximum mtime
+// across all prompt directories on each scan; subsequent calls are
+// no-ops when no mtime advanced. The TUI can call
+// `prompt_templates_changed_since(token)` to test for changes
+// without paying for the templates themselves.
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PromptCacheToken(SystemTime);
+
+impl PromptCacheToken {
+    pub fn epoch() -> Self {
+        Self(SystemTime::UNIX_EPOCH)
+    }
+}
+
+struct PromptCache {
+    last_max_mtime: SystemTime,
+    cached: Vec<PromptTemplate>,
+    cached_for_working_dir: Option<PathBuf>,
+}
+
+impl Default for PromptCache {
+    fn default() -> Self {
+        Self {
+            last_max_mtime: SystemTime::UNIX_EPOCH,
+            cached: Vec::new(),
+            cached_for_working_dir: None,
+        }
+    }
+}
+
+static PROMPT_CACHE: Mutex<Option<PromptCache>> = Mutex::new(None);
+
+/// Hot-reload aware discover: returns the cached list when no source
+/// file under any prompts directory has changed since the last call.
+/// Falls back to a fresh scan otherwise.
+///
+/// The token is the mtime watermark at the time of scan; pass it
+/// back to `prompt_templates_changed_since` to check for change
+/// without doing another scan.
+pub fn discover_cached() -> (Vec<PromptTemplate>, PromptCacheToken) {
+    discover_cached_in(std::env::current_dir().ok().as_deref())
+}
+
+pub fn discover_cached_in(working_dir: Option<&Path>) -> (Vec<PromptTemplate>, PromptCacheToken) {
+    let max_mtime = max_mtime_in(working_dir);
+    let working_dir_buf = working_dir.map(|p| p.to_path_buf());
+
+    let mut guard = PROMPT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = guard.get_or_insert_with(PromptCache::default);
+
+    let stale =
+        cache.last_max_mtime != max_mtime || cache.cached_for_working_dir != working_dir_buf;
+    if stale {
+        cache.cached = discover_in(working_dir);
+        cache.last_max_mtime = max_mtime;
+        cache.cached_for_working_dir = working_dir_buf;
+    }
+    (cache.cached.clone(), PromptCacheToken(cache.last_max_mtime))
+}
+
+/// Has anything changed since `token`? Cheap mtime probe — no scan.
+pub fn prompt_templates_changed_since(token: &PromptCacheToken) -> bool {
+    let max_mtime = max_mtime_in(std::env::current_dir().ok().as_deref());
+    max_mtime != token.0
+}
+
+/// Drop the cache. Useful in tests to ensure isolation.
+pub fn clear_prompt_cache_for_tests() {
+    let mut guard = PROMPT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = None;
+}
+
+fn max_mtime_in(working_dir: Option<&Path>) -> SystemTime {
+    let mut max = SystemTime::UNIX_EPOCH;
+
+    fn fold_dir_mtimes(dir: &Path, max: &mut SystemTime) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata()
+                && let Ok(m) = meta.modified()
+                && m > *max
+            {
+                *max = m;
+            }
+        }
+        // Also include the directory's own mtime so file deletions
+        // bump the watermark.
+        if let Ok(meta) = std::fs::metadata(dir)
+            && let Ok(m) = meta.modified()
+            && m > *max
+        {
+            *max = m;
+        }
+    }
+
+    if let Some(start) = working_dir {
+        let mut current: Option<&Path> = Some(start);
+        while let Some(d) = current {
+            let dir = d.join(".jcode").join("prompts");
+            if dir.is_dir() {
+                fold_dir_mtimes(&dir, &mut max);
+            }
+            current = d.parent();
+        }
+    }
+    if let Ok(home) = crate::storage::jcode_dir() {
+        let global = home.join("prompts");
+        if global.is_dir() {
+            fold_dir_mtimes(&global, &mut max);
+        }
+    }
+    max
+}
 
 /// One discovered prompt template.
 #[derive(Debug, Clone)]
@@ -783,5 +910,158 @@ mod arg_substitution_tests {
         bindings.insert("focus".into(), "auth".into());
         let out = substitute_placeholders("Look at {{ focus }}.", &bindings);
         assert_eq!(out, "Look at auth.");
+    }
+}
+
+#[cfg(test)]
+mod hot_reload_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn write_template(dir: &Path, name: &str, body: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.md")), body).unwrap();
+    }
+
+    #[test]
+    fn cached_returns_cached_when_unchanged() {
+        let _lock = crate::storage::lock_test_env();
+        clear_prompt_cache_for_tests();
+        let temp = tempfile::TempDir::new().unwrap();
+        let prev = std::env::var_os("JCODE_HOME");
+        crate::env::set_var("JCODE_HOME", temp.path());
+
+        let project = temp.path().join("project");
+        let prompts = project.join(".jcode/prompts");
+        write_template(&prompts, "review", "Review this.");
+
+        let (first, token1) = discover_cached_in(Some(&project));
+        let (second, token2) = discover_cached_in(Some(&project));
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(first.len(), second.len());
+        assert_eq!(token1, token2);
+
+        if let Some(p) = prev {
+            crate::env::set_var("JCODE_HOME", p);
+        } else {
+            crate::env::remove_var("JCODE_HOME");
+        }
+    }
+
+    #[test]
+    fn cached_invalidates_when_new_template_added() {
+        let _lock = crate::storage::lock_test_env();
+        clear_prompt_cache_for_tests();
+        let temp = tempfile::TempDir::new().unwrap();
+        let prev = std::env::var_os("JCODE_HOME");
+        crate::env::set_var("JCODE_HOME", temp.path());
+
+        let project = temp.path().join("proj2");
+        let prompts = project.join(".jcode/prompts");
+        write_template(&prompts, "first", "First.");
+
+        let (first, token1) = discover_cached_in(Some(&project));
+        assert_eq!(first.len(), 1);
+
+        // Sleep enough for mtime to advance (filesystem resolution).
+        std::thread::sleep(Duration::from_millis(50));
+        write_template(&prompts, "second", "Second.");
+
+        let (second, token2) = discover_cached_in(Some(&project));
+        assert_eq!(second.len(), 2);
+        assert_ne!(token1, token2);
+
+        if let Some(p) = prev {
+            crate::env::set_var("JCODE_HOME", p);
+        } else {
+            crate::env::remove_var("JCODE_HOME");
+        }
+    }
+
+    #[test]
+    fn cached_invalidates_when_template_deleted() {
+        let _lock = crate::storage::lock_test_env();
+        clear_prompt_cache_for_tests();
+        let temp = tempfile::TempDir::new().unwrap();
+        let prev = std::env::var_os("JCODE_HOME");
+        crate::env::set_var("JCODE_HOME", temp.path());
+
+        let project = temp.path().join("proj3");
+        let prompts = project.join(".jcode/prompts");
+        write_template(&prompts, "doomed", "About to be deleted.");
+
+        let (first, token1) = discover_cached_in(Some(&project));
+        assert_eq!(first.len(), 1);
+
+        std::thread::sleep(Duration::from_millis(50));
+        std::fs::remove_file(prompts.join("doomed.md")).unwrap();
+
+        let (second, token2) = discover_cached_in(Some(&project));
+        assert_eq!(second.len(), 0);
+        assert_ne!(token1, token2);
+
+        if let Some(p) = prev {
+            crate::env::set_var("JCODE_HOME", p);
+        } else {
+            crate::env::remove_var("JCODE_HOME");
+        }
+    }
+
+    #[test]
+    fn changed_since_detects_new_file_without_full_rescan() {
+        let _lock = crate::storage::lock_test_env();
+        clear_prompt_cache_for_tests();
+        let temp = tempfile::TempDir::new().unwrap();
+        let prev_home = std::env::var_os("JCODE_HOME");
+        let prev_cwd = std::env::current_dir().ok();
+        crate::env::set_var("JCODE_HOME", temp.path());
+        std::env::set_current_dir(temp.path()).unwrap();
+
+        let prompts = temp.path().join(".jcode/prompts");
+        write_template(&prompts, "initial", "x");
+
+        let (_, token) = discover_cached();
+        assert!(!prompt_templates_changed_since(&token));
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_template(&prompts, "added", "y");
+
+        assert!(prompt_templates_changed_since(&token));
+
+        if let Some(c) = prev_cwd {
+            std::env::set_current_dir(c).ok();
+        }
+        if let Some(p) = prev_home {
+            crate::env::set_var("JCODE_HOME", p);
+        } else {
+            crate::env::remove_var("JCODE_HOME");
+        }
+    }
+
+    #[test]
+    fn epoch_token_always_signals_change_with_existing_files() {
+        let _lock = crate::storage::lock_test_env();
+        clear_prompt_cache_for_tests();
+        let temp = tempfile::TempDir::new().unwrap();
+        let prev_home = std::env::var_os("JCODE_HOME");
+        let prev_cwd = std::env::current_dir().ok();
+        crate::env::set_var("JCODE_HOME", temp.path());
+        std::env::set_current_dir(temp.path()).unwrap();
+
+        let prompts = temp.path().join(".jcode/prompts");
+        write_template(&prompts, "any", "any");
+
+        // Epoch token should always differ from current state when files exist.
+        assert!(prompt_templates_changed_since(&PromptCacheToken::epoch()));
+
+        if let Some(c) = prev_cwd {
+            std::env::set_current_dir(c).ok();
+        }
+        if let Some(p) = prev_home {
+            crate::env::set_var("JCODE_HOME", p);
+        } else {
+            crate::env::remove_var("JCODE_HOME");
+        }
     }
 }
