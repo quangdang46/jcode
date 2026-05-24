@@ -2785,9 +2785,6 @@ impl App {
             return;
         }
 
-            return;
-        }
-
         // Issue #4 follow-up: if the user typed `/<name>` (or `/<name> <args>`)
         // and `<name>` is a discovered prompt template, expand the template
         // body in-place so the rest of the submit flow treats it as a normal

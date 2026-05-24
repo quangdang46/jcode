@@ -77,7 +77,7 @@ pub(super) const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
     RegisteredCommand::public("/rewind", "Rewind conversation to previous message"),
     RegisteredCommand::public(
         "/history",
-        "Show input history, /history input N to load entry",
+        "Input history: list, load N, search, delete N, clear",
     ),
     RegisteredCommand::public("/poke", "Poke model to resume with incomplete todos"),
     RegisteredCommand::public("/improve", "Autonomously improve the repository"),
@@ -1775,6 +1775,7 @@ impl App {
                 | "/improve"
                 | "/refactor"
                 | "/rewind"
+                | "/history"
                 | "/compact"
                 | "/compact mode"
                 | "/alignment"
