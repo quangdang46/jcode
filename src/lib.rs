@@ -69,6 +69,7 @@ pub mod replay;
 pub mod restart_snapshot;
 pub mod runtime_memory_log;
 pub mod safety;
+pub mod sandbox;
 pub mod scoped_models;
 pub mod server;
 pub mod session;

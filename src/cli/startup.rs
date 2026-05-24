@@ -166,6 +166,14 @@ fn parse_and_prepare_args() -> Result<Args> {
         }
     }
 
+    // Issue #110: --sandbox-root <DIR> → JCODE_SANDBOX_ROOT.
+    // Canonicalize the path so downstream tool-context comparisons
+    // are stable (matters when user passes a relative directory).
+    if let Some(ref dir) = args.sandbox_root {
+        let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+        crate::env::set_var("JCODE_SANDBOX_ROOT", &canonical);
+    }
+
     // JCODE_MODEL fallback: when --model is not passed on the CLI,
     // read JCODE_MODEL from the env so users can `export JCODE_MODEL=...`
     // in their shell profile and have it apply to every jcode invocation.
