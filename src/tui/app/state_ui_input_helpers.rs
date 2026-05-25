@@ -323,8 +323,7 @@ pub(super) fn extract_at_token_at_cursor(input: &str, cursor: usize) -> Option<A
         if b == b'@' {
             // Must be followed by `"` and pass the start-of-token rule.
             let starts_quote = bytes.get(prev + 1) == Some(&b'"');
-            let valid_start = prev == 0
-                || (bytes[prev - 1] as char).is_ascii_whitespace();
+            let valid_start = prev == 0 || (bytes[prev - 1] as char).is_ascii_whitespace();
             if starts_quote && valid_start {
                 return parse_quoted_token(input, prev, cursor);
             }

@@ -49,9 +49,9 @@ pub enum AppRuntimeMode {
     TestHarness,
 }
 
+mod at_picker;
 mod auth;
 mod auth_account_picker_saved_accounts;
-mod at_picker;
 mod catchup;
 mod commands;
 mod commands_improve;
