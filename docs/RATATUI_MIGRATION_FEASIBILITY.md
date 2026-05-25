@@ -221,3 +221,94 @@ Don't proceed past **step 2 (`jcode-tui-render`)** without first answering:
 - **Frankentui upstream stability**: re-check `quangdang46/frankentui` and `Dicklesworthstone/frankentui` for breaking-change advisories. The current pin (`33ad1c57`) is on the `quangdang46` fork; if the upstream fork merges or diverges, we need to re-pin.
 
 If any of those gates fail, the right answer is still **"stop and revert"** — the original recommendation in this document was to skip the migration, and Phase 1 is the smallest reversible unit (drop the feature, drop the dep, drop 3 lockfile bumps).
+
+
+---
+
+## Phase 2 (landed): `jcode-tui-usage-overlay` is now ratatui-free
+
+**Status**: ✅ Committed in `experimental/ratatui-to-frankentui` (commit `67fc2c35`).
+
+The Phase 1 dual-color API was collapsed:
+
+- `crates/jcode-tui-usage-overlay/Cargo.toml` no longer depends on ratatui at all.
+- `UsageOverlayStatus::color()` returns `ftui_style::Color`, not `ratatui::style::Color`.
+- A new shared shim `src/tui/ftui_compat.rs` exports `ftui_color_to_rata(c: ftui_style::Color) -> ratatui::style::Color`. It maps every variant of `ftui_style::Color` (`Rgb`, `Ansi256`, `Ansi16`, `Mono`) to the closest ratatui `Color` variant. Has 5 unit tests. This is the **single grep-able boundary** every other leaf-crate migration during this transition will use.
+- `src/tui/usage_overlay.rs` (the consumer) declares a private `status_color_rata()` helper that wraps `ftui_color_to_rata(status.color())` at the three `ratatui::Style::fg` call sites in that file.
+
+Verified with `cargo check -p jcode --lib` (clean) and `cargo test -p jcode-tui-usage-overlay` (4/4 pass). Top-level `jcode/Cargo.toml` gains an `ftui-style` git dep on the same `quangdang46/frankentui@33ad1c57` pin Phase 1 used.
+
+**Crate count**: 1 of 8 ratatui-dependent crates is now ratatui-free.
+
+---
+
+## Phase 3 attempt: `jcode-tui-style` migration — REVERTED
+
+**Status**: ❌ Attempted, reverted, deferred. See blocker analysis below.
+
+### What was tried
+
+Rewrote `crates/jcode-tui-style/src/{color,theme,lib}.rs` and `Cargo.toml` to drop ratatui, depend only on `ftui-style`, and return `ftui_style::Color` from every public function (`user_color()`, `ai_color()`, `tool_color()`, `rgb()`, `blend_color()`, `rainbow_prompt_color()`, etc.).
+
+The leaf crate compiled cleanly. **The consumers exploded with 687 errors**.
+
+### Why the migration could not finish in one session
+
+- `jcode-tui-style` has **50 consumer files** with **502 call sites**.
+- ratatui 0.30's signature for `Style::fg` is **`pub const fn fg(self, color: Color) -> Self`** — it takes `Color` exactly, **not** `impl Into<Color>`. (Confirmed in `ratatui-core/src/style.rs:335`.)
+- The orphan rule prevents adding `impl From<ftui_style::Color> for ratatui::style::Color` from a third crate (both types are foreign).
+- Therefore every call site that feeds a `style::*_color()` return value into a ratatui `Style::fg(...)` or `Style::bg(...)` must add an explicit conversion call (`ftui_color_to_rata(...)` or a `.rata()` extension method).
+- 502 explicit conversions across 50 files is not safely mechanical: many call sites are nested inside conditional branches, format-string args, closures, or `match` arms where pattern_rewrite cannot blindly transform without breaking surrounding type inference.
+
+### Path forward (out of session scope)
+
+Three options, any of which would unblock Phase 3:
+
+1. **Newtype + trait gymnastics.** Define a `JColor` newtype in `jcode-tui-style` wrapping `ftui_style::Color`, with `Into<ftui_style::Color>` and a separately-defined `Into<ratatui::style::Color>` that lives in `src/tui/ftui_compat.rs`. Callers still need explicit `.into()` at every `Style::fg` site, but pattern_rewrite over `.fg(<X>)` → `.fg(<X>.into())` becomes much safer because the source pattern is uniform and the target type unambiguous.
+2. **Bulk extension trait.** Define `pub trait FtuiColorExt { fn rata(self) -> ratatui::Color }` in `src/tui/ftui_compat.rs`, impl it for `ftui_style::Color`, then run a scripted sed over the 50 consumer files mapping `style::user_color()` → `style::user_color().rata()` (and the 17 other `*_color()` helpers). Each consumer file gains one `use crate::tui::ftui_compat::FtuiColorExt;` line. Estimated 1–2 days of careful manual review per file.
+3. **Migrate the rendering layer first** so ratatui's `Style::fg` is no longer the consumer of these colors. This is the "right" answer but it is the structural rewrite that section §C in this doc warned about — 2–4 weeks.
+
+Option 2 is the pragmatic next step but **must not be attempted in the same session as the leaf-crate migration** because every call-site error blocks the next. Land the leaf change green, then iterate on consumers in a separate PR.
+
+---
+
+## Hard blockers confirmed (from frankentui's own docs)
+
+These are not migration *difficulties* — they are absent dependencies. Frankentui's own [`docs/migration-map.md`](https://github.com/quangdang46/frankentui/blob/main/docs/migration-map.md), section "De-scoped to Extras (Phase 5, feature-gated)", lists:
+
+| Feature | Phase | Status as of `33ad1c57` |
+|---|---:|---|
+| Markdown renderer | 5 | ❌ Not implemented. `ftui-extras` does not ship a markdown widget. |
+| Canvas / image protocols | 5 | ❌ Not implemented. No `ratatui-image` equivalent. |
+
+### Impact on jcode
+
+- **`jcode-tui-markdown`** — the entire crate is a custom markdown renderer built on ratatui's `Line`/`Span`/`Paragraph`. There is no frankentui type to migrate to. Options:
+  - (a) Wait for `ftui-extras` Phase 5 to ship a markdown widget and rewrite against that.
+  - (b) Port jcode's existing markdown renderer to consume `ftui_render::Buffer` directly (i.e., bypass the missing widget and write a hand-rolled equivalent). This is a 1–2 week chunk on its own.
+  - (c) Accept that `jcode-tui-markdown` keeps a ratatui dependency permanently and the workspace is "ratatui-mostly-free" rather than "ratatui-free".
+- **`jcode-tui-mermaid`** — depends on `ratatui-image = "10.0.6"` for kitty/sixel/iterm2 image protocol rendering inside the diagram pane. There is no frankentui equivalent shipped today. Options:
+  - (a) Wait for frankentui Phase 5's image protocol support.
+  - (b) Keep `ratatui-image` standalone if its API doesn't actually depend on ratatui's internals (needs investigation — `ratatui-image` uses `Resize`, `Image`, etc., which are likely ratatui types).
+  - (c) Accept that `jcode-tui-mermaid` keeps a ratatui dependency permanently.
+
+Both blockers were already documented in §C of the original feasibility report. Phase 2's investigation confirms they are still real and unresolved upstream as of the pinned commit.
+
+---
+
+## Realistic crate-by-crate status (as of Phase 2 commit `67fc2c35`)
+
+| Crate | LOC | ratatui refs | Status | Blocking issue |
+|---|---:|---:|---|---|
+| `jcode-tui-usage-overlay` | 134 | 0 | ✅ migrated | none |
+| `jcode-tui-style` | ~490 | 4 | ⏳ deferred | 502 call sites in 50 consumers |
+| `jcode-tui-workspace` | ~440 | 3 | ⏳ deferred | `render_workspace_map(buf: &mut Buffer, ...)` is a ratatui-`Buffer`-based widget; can't migrate without the rendering layer |
+| `jcode-tui-render` | ~unknown | 1+ | ⏳ deferred | `Buffer` cell layout swap is the structural hard step |
+| `jcode-tui-messages` | ~unknown | 4 | ⏳ deferred | widget-heavy, depends on ratatui Buffer/Span/Line |
+| `jcode-tui-markdown` | ~unknown | 39 | 🚫 blocked | frankentui has no markdown widget |
+| `jcode-tui-mermaid` | ~unknown | 9 | 🚫 blocked | `ratatui-image` has no frankentui equivalent |
+| `jcode` (top-level) | huge | ~240 | ⏳ deferred | ~52 `Terminal::new` + 51 `TestBackend::new` + widget consumers across 80+ files |
+
+**1 of 8 done. 5 of 8 deferred (ratatui type-system rippling). 2 of 8 hard-blocked upstream.**
+
+The path from "1 of 8" to "all 8" is genuinely the 2–4 week estimate that opened this document. Phase 1 + Phase 2 took ~1 hour each and represent the easy work. Everything else is structural rewrite or upstream blocker.
