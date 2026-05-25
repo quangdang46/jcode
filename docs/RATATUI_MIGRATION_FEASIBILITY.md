@@ -157,3 +157,67 @@ Currently no such shim exists — `ftui-harness/tests/shadow_ratatui_e2e.rs` run
 ```
 
 Even that prototype is 1-2 days of work. Done as throwaway; no production code changes until the data tells us frankentui is worth it.
+
+
+---
+
+## Phase 1 prototype: `jcode-tui-usage-overlay` (landed)
+
+**Status**: ✅ Prototype merged into `experimental/ratatui-to-frankentui` (commit pending push).
+
+The "If the user insists on prototyping" recipe above was implemented end-to-end. See the actual code in `crates/jcode-tui-usage-overlay/{Cargo.toml,src/lib.rs}`.
+
+### What changed
+
+| File | Change |
+|---|---|
+| `crates/jcode-tui-usage-overlay/Cargo.toml` | Added optional `ftui-style` git dep pinned to `quangdang46/frankentui@33ad1c57`, plus a `frankentui` feature that activates it. Kept `ratatui = "0.30"` as a regular (non-feature-gated) dep so the existing public API does not break. |
+| `crates/jcode-tui-usage-overlay/src/lib.rs` | Introduced `pub const fn rgb(self) -> (u8, u8, u8)` as the single source of truth for status colors. `color()` (ratatui-shaped) and the new `color_ftui()` (frankentui-shaped, feature-gated) both delegate to `rgb()` so the two backends can never drift. Added 3 new tests that lock in this contract. |
+| `Cargo.lock` | Bumped 3 lockfile entries inside existing semver bounds: `unicode-width 0.2.0 → 0.2.2`, `bitflags 2.10.0 → 2.11.1`, `bumpalo 3.19.1 → 3.20.3`. No `Cargo.toml` version requirements were widened. |
+
+The git dep was deliberately picked over a path dep (`../../../frankentui/crates/ftui-style`) so CI machines and other contributors do not need a sibling `frankentui` checkout to resolve dependencies.
+
+### What this prototype confirmed
+
+| Question (from §B above) | Answer |
+|---|---|
+| Builds cleanly on jcode's toolchain? | **Yes**. `rustc 1.98.0-nightly` (jcode default) builds `ftui-core` → `ftui-render` → `ftui-style` without modification. Frankentui's `rust-toolchain.toml` pins nightly but in practice the style sub-tree we exercise stays edition-2024-only. |
+| Acceptable transitive dep cost? | **Yes for this slice**. The `frankentui` feature pulls in `ftui-core`, `ftui-render`, `ftui-style`, plus three already-present-in-the-graph crates bumped within semver (`unicode-width`, `bitflags`, `bumpalo`). No new top-level deps when the feature is off (off-state graph is byte-for-byte the same modulo the lockfile bumps that are minor patch-level upgrades). |
+| Both backends render identical RGB? | **Yes**. The new `frankentui_color_matches_rgb_source_of_truth` test round-trips through `ftui_style::Color::to_rgb()` and asserts `Color::Rgb(r, g, b)` equality with the ratatui side. |
+| Default consumer (`src/tui/usage_overlay.rs`) still works? | **Yes**. `cargo check -p jcode --lib` succeeds with no changes to consumers; the existing `Style::default().fg(item.status.color())` call site keeps the ratatui `Color` type. |
+
+### What this prototype did *not* answer
+
+The prototype is intentionally minimal — it only swaps a `Color` constructor, which is the easiest surface area frankentui has. It does **not** validate any of the harder questions:
+
+1. **Widget render pipeline.** The `Widget::render(&self, area, &mut Frame)` vs ratatui's `render(self, area, &mut Buffer)` signature mismatch is untouched here (this crate has no widgets).
+2. **Buffer cell layout.** The 16-byte aligned, grapheme-pool-ID frankentui `Cell` has not been integrated.
+3. **Terminal lifecycle.** `TerminalSession` (frankentui RAII) vs `Terminal::new` / `ratatui::init` is untouched.
+4. **Test backend.** None of the 51 `TestBackend::new(...)` sites were migrated.
+5. **`ratatui-image` replacement.** Mermaid pipeline still depends on `ratatui-image`.
+
+So this prototype is a **necessary but not sufficient** foundation for a full migration. It only proves we *can* run both color models off the same data, which is the cheapest test of compatibility.
+
+### Recommended next migration target
+
+If we keep going, the next slice should be `jcode-tui-style` (4 ratatui refs, ~490 LOC). It is the next-smallest crate that touches color/style primitives and has no widgets or buffers of its own — same shape of change as Phase 1, slightly larger footprint.
+
+After that, the order of escalation should be (from cheapest to hardest):
+
+1. `jcode-tui-style` — pure color/style primitives, no widgets.
+2. `jcode-tui-render` — switch from ratatui `Buffer` to frankentui `Buffer`/`Frame` for the lowest-level rendering layer. **This is the first hard step**: signatures change, downstream consumers ripple.
+3. `jcode-tui-markdown` / `jcode-tui-messages` / `jcode-tui-tool-display` — widget-heavy crates. Each `impl Widget for Foo { fn render(self, area, buf) }` must become `impl Widget for Foo { fn render(&self, area, frame) }`.
+4. `jcode-tui-usage-overlay` (consumer side, not the leaf crate) — the `src/tui/usage_overlay.rs` rewrite to use `color_ftui()` and `ftui_style::Style`.
+5. `jcode-tui-mermaid` — needs a `ratatui-image` replacement before it can move.
+6. Top-level `src/tui/` — the ~52 `Terminal::new` / `ratatui::init` / `restore` sites and 51 `TestBackend::new` test sites. **This is the longest single chunk** and probably should be split further (e.g., per-screen or per-overlay).
+
+### Stop / continue gates
+
+Don't proceed past **step 2 (`jcode-tui-render`)** without first answering:
+
+- **Binary-size delta**: build a release binary in both states (`--no-default-features` vs `--features frankentui`) and compare `size target/release/jcode`. If the delta is more than +1 MB for a feature off → on flip, that's a signal frankentui's "all 20 crates" surface is leaking in.
+- **Build-time delta**: clean `cargo build --release` time in both states. We expect the frankentui side to be slower because `ftui-render` + `ftui-core` are large; budget no more than +30s on a fresh build before pulling the brake.
+- **Render parity**: shadow-render at least the chat view, the side panel, and one mermaid diagram through `ftui-harness::buffer_to_text()` and diff against the ratatui output. Any non-whitespace diff is a regression.
+- **Frankentui upstream stability**: re-check `quangdang46/frankentui` and `Dicklesworthstone/frankentui` for breaking-change advisories. The current pin (`33ad1c57`) is on the `quangdang46` fork; if the upstream fork merges or diverges, we need to re-pin.
+
+If any of those gates fail, the right answer is still **"stop and revert"** — the original recommendation in this document was to skip the migration, and Phase 1 is the smallest reversible unit (drop the feature, drop the dep, drop 3 lockfile bumps).
