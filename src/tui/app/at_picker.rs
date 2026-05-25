@@ -25,8 +25,8 @@
 //! the background scan is mutating internal state.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(test)]
 use std::time::Duration;
 
@@ -105,11 +105,7 @@ impl AtPicker {
     /// no-ops. Returns `Ok(())` even if frecency init fails (frecency is
     /// optional — search still works without it).
     pub fn warm_up(&self) -> Result<(), AtPickerError> {
-        if self
-            .inner
-            .warm_up_started
-            .swap(true, Ordering::AcqRel)
-        {
+        if self.inner.warm_up_started.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
 
@@ -218,10 +214,7 @@ impl AtPicker {
             qt,
             FuzzySearchOptions {
                 max_threads: 0, // auto
-                pagination: PaginationArgs {
-                    offset: 0,
-                    limit,
-                },
+                pagination: PaginationArgs { offset: 0, limit },
                 ..Default::default()
             },
         );
@@ -271,9 +264,7 @@ impl AtPicker {
             return;
         };
         if let Err(err) = tracker.track_access(path) {
-            crate::logging::warn(&format!(
-                "AtPicker: frecency track_access failed: {err}"
-            ));
+            crate::logging::warn(&format!("AtPicker: frecency track_access failed: {err}"));
         }
     }
 
@@ -380,7 +371,10 @@ fn repo_cache_key(path: &Path) -> String {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("repo")
-        .replace(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_', "_");
+        .replace(
+            |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+            "_",
+        );
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut hasher);
     format!("{}-{:016x}", basename, hasher.finish())

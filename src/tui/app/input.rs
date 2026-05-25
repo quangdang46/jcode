@@ -17,6 +17,22 @@ use std::time::{Duration, Instant};
 
 const INPUT_SHELL_MAX_OUTPUT_LEN: usize = 30_000;
 
+fn mission_turn_reminder(session_id: &str) -> Option<String> {
+    crate::mission::active_system_reminder(session_id)
+        .map_err(|err| crate::logging::warn(&format!("failed to load active mission: {err}")))
+        .ok()
+        .flatten()
+}
+
+fn merge_turn_reminders(a: Option<String>, b: Option<String>) -> Option<String> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(format!("{}\n\n{}", a, b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
 pub(super) fn extract_input_shell_command(input: &str) -> Option<&str> {
     input.trim().strip_prefix('!').map(str::trim)
 }
@@ -959,8 +975,7 @@ pub fn expand_at_path_references(input: &str, working_dir: Option<&str>) -> Stri
         // We're at an `@`. Validate token-start (start of input or
         // preceded by whitespace) — anything else (including `,@`,
         // `(@`, `user@`) is left as a literal `@`.
-        let valid_start = i == 0
-            || (bytes[i - 1] as char).is_ascii_whitespace();
+        let valid_start = i == 0 || (bytes[i - 1] as char).is_ascii_whitespace();
         if !valid_start {
             out.push('@');
             i += 1;
@@ -972,32 +987,32 @@ pub fn expand_at_path_references(input: &str, working_dir: Option<&str>) -> Stri
         //     matching `"` or end-of-input.
         //   - bare:   `@path` — ends at first whitespace.
         let token_start = i + 1;
-        let (raw_token, token_end, was_quoted) =
-            if bytes.get(token_start) == Some(&b'"') {
-                let inner_start = token_start + 1;
-                let mut j = inner_start;
-                while j < bytes.len() && bytes[j] != b'"' {
-                    j += 1;
-                }
-                let closed = j < bytes.len();
-                let token = input[inner_start..j].to_string();
-                let end = if closed { j + 1 } else { j };
-                (token, end, true)
-            } else {
-                let mut j = token_start;
-                while j < bytes.len() && !(bytes[j] as char).is_ascii_whitespace() {
-                    j += 1;
-                }
-                (input[token_start..j].to_string(), j, false)
-            };
+        let (raw_token, token_end, was_quoted) = if bytes.get(token_start) == Some(&b'"') {
+            let inner_start = token_start + 1;
+            let mut j = inner_start;
+            while j < bytes.len() && bytes[j] != b'"' {
+                j += 1;
+            }
+            let closed = j < bytes.len();
+            let token = input[inner_start..j].to_string();
+            let end = if closed { j + 1 } else { j };
+            (token, end, true)
+        } else {
+            let mut j = token_start;
+            while j < bytes.len() && !(bytes[j] as char).is_ascii_whitespace() {
+                j += 1;
+            }
+            (input[token_start..j].to_string(), j, false)
+        };
 
         // Strip trailing punctuation that's clearly not part of a path
         // (only for unquoted tokens — quoted paths are taken verbatim).
         let (token, trail_punct) = if was_quoted {
             (raw_token.as_str(), "")
         } else {
-            let trimmed = raw_token
-                .trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | '!' | '?' | ':' | ';'));
+            let trimmed = raw_token.trim_end_matches(|c: char| {
+                matches!(c, '.' | ',' | ')' | ']' | '!' | '?' | ':' | ';')
+            });
             let trail = &raw_token[trimmed.len()..];
             (trimmed, trail)
         };
@@ -1019,7 +1034,11 @@ pub fn expand_at_path_references(input: &str, working_dir: Option<&str>) -> Stri
         };
 
         match try_read_at_path(&path_part, working_dir, line_range) {
-            ResolveOutcome::File { display_path, body, range } => {
+            ResolveOutcome::File {
+                display_path,
+                body,
+                range,
+            } => {
                 let header = match range {
                     Some((a, b)) if a == b => format!("@{display_path} (line {a})"),
                     Some((a, b)) => format!("@{display_path} (lines {a}-{b})"),
@@ -1027,16 +1046,19 @@ pub fn expand_at_path_references(input: &str, working_dir: Option<&str>) -> Stri
                 };
                 let mut suffix = String::new();
                 if range_was_invalid {
-                    suffix.push_str(
-                        " _(note: ignored invalid line range, showing full file)_",
-                    );
+                    suffix.push_str(" _(note: ignored invalid line range, showing full file)_");
                 }
                 out.push_str(&format!(
                     "\n\n--- {header}{suffix} ---\n{body}\n--- end @{display_path} ---\n\n"
                 ));
                 out.push_str(trail_punct);
             }
-            ResolveOutcome::Folder { display_path, listing, total_entries, shown_entries } => {
+            ResolveOutcome::Folder {
+                display_path,
+                listing,
+                total_entries,
+                shown_entries,
+            } => {
                 let header = if total_entries > shown_entries {
                     format!(
                         "@{display_path} (directory listing, {shown_entries} of {total_entries} entries)"
@@ -1191,10 +1213,7 @@ fn read_folder_listing(abs: &std::path::Path, display_token: &str) -> ResolveOut
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy().into_owned();
-        let is_dir = entry
-            .file_type()
-            .map(|t| t.is_dir())
-            .unwrap_or(false);
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
         if is_dir {
             dirs.push(format!("{name_str}/"));
         } else {
@@ -1365,10 +1384,7 @@ mod at_path_tests {
         let out = expand_at_path_references("review @src/", Some(&cwd));
         assert!(out.contains("--- @src/ (directory listing"), "got: {out}");
         // Sort: directories first, then files, alphabetically.
-        let listing_section = out
-            .split("--- @src/ (directory listing")
-            .nth(1)
-            .unwrap();
+        let listing_section = out.split("--- @src/ (directory listing").nth(1).unwrap();
         let pos_sub = listing_section.find("sub/").unwrap();
         let pos_a = listing_section.find("a.rs").unwrap();
         let pos_b = listing_section.find("b.rs").unwrap();
@@ -1410,10 +1426,7 @@ mod at_path_tests {
         std::fs::create_dir(temp.path().join("docs")).unwrap();
         std::fs::write(temp.path().join("docs/x.md"), "").unwrap();
 
-        let out = expand_at_path_references(
-            "see @a.rs and @docs/ then @b.rs",
-            Some(&cwd),
-        );
+        let out = expand_at_path_references("see @a.rs and @docs/ then @b.rs", Some(&cwd));
         assert!(out.contains("AAA"));
         assert!(out.contains("BBB"));
         assert!(out.contains("--- @docs/ (directory listing"));
@@ -1424,10 +1437,7 @@ mod at_path_tests {
         let temp = tempfile::TempDir::new().expect("temp");
         let cwd = temp.path().to_string_lossy().to_string();
         std::fs::write(temp.path().join("real.rs"), "REAL").unwrap();
-        let out = expand_at_path_references(
-            "ping user@example.com about @real.rs",
-            Some(&cwd),
-        );
+        let out = expand_at_path_references("ping user@example.com about @real.rs", Some(&cwd));
         assert!(out.contains("user@example.com"));
         assert!(!out.contains("--- @example.com"));
         assert!(out.contains("REAL"));
@@ -1465,10 +1475,7 @@ mod at_path_tests {
             split_line_range("file.rs#L5-7"),
             ("file.rs".into(), Some((5, 7)), false)
         );
-        assert_eq!(
-            split_line_range("file.rs"),
-            ("file.rs".into(), None, false)
-        );
+        assert_eq!(split_line_range("file.rs"), ("file.rs".into(), None, false));
         // Backwards range → invalid, keep literal.
         assert_eq!(
             split_line_range("file.rs#L7-3"),
@@ -2942,6 +2949,7 @@ impl App {
             ));
         }
         if images.is_empty() {
+            self.current_turn_system_reminder = mission_turn_reminder(&self.session.id);
             self.add_provider_message(Message::user(&input));
             self.session.add_message(
                 Role::User,
@@ -2951,6 +2959,7 @@ impl App {
                 }],
             );
         } else {
+            self.current_turn_system_reminder = mission_turn_reminder(&self.session.id);
             self.add_provider_message(Message::user_with_images(&input, images.clone()));
             let mut blocks: Vec<ContentBlock> = images
                 .into_iter()
@@ -2978,6 +2987,7 @@ impl App {
         self.streaming_output_tokens = 0;
         self.streaming_cache_read_tokens = None;
         self.streaming_cache_creation_tokens = None;
+        self.current_api_usage_recorded = false;
         self.upstream_provider = None;
         self.status_detail = None;
         self.streaming_tps_start = None;
@@ -3021,7 +3031,8 @@ impl App {
                 }
             }
 
-            self.current_turn_system_reminder = reminder;
+            self.current_turn_system_reminder =
+                merge_turn_reminders(reminder, mission_turn_reminder(&self.session.id));
 
             if has_combined {
                 self.add_provider_message(Message::user(&combined));
@@ -3044,6 +3055,7 @@ impl App {
             self.streaming_output_tokens = 0;
             self.streaming_cache_read_tokens = None;
             self.streaming_cache_creation_tokens = None;
+            self.current_api_usage_recorded = false;
             self.upstream_provider = None;
             self.status_detail = None;
             self.streaming_tps_start = None;

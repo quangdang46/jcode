@@ -49,9 +49,9 @@ pub enum AppRuntimeMode {
     TestHarness,
 }
 
+mod at_picker;
 mod auth;
 mod auth_account_picker_saved_accounts;
-mod at_picker;
 mod catchup;
 mod commands;
 mod commands_improve;
@@ -576,6 +576,7 @@ pub struct App {
     cache_next_optimal_input_tokens: Option<u64>,
     kv_cache_baseline: Option<KvCacheBaseline>,
     pending_kv_cache_request: Option<PendingKvCacheRequest>,
+    current_api_usage_recorded: bool,
     kv_cache_turn_number: Option<usize>,
     kv_cache_turn_call_index: u16,
     kv_cache_miss_samples: Vec<KvCacheMissSample>,
@@ -721,6 +722,8 @@ pub struct App {
     remote_skills: Vec<String>,
     // Total session token usage (from server in remote mode)
     remote_total_tokens: Option<(u64, u64)>,
+    // Detailed persisted token/cache usage totals (from server in remote mode)
+    remote_token_usage_totals: Option<crate::protocol::TokenUsageTotals>,
     // Whether the remote session is canary/self-dev (from server)
     remote_is_canary: Option<bool>,
     // Remote server version (from server)
@@ -1104,6 +1107,7 @@ impl App {
             self.kv_cache_turn_call_index,
             baseline.as_ref(),
         );
+        self.current_api_usage_recorded = false;
 
         self.pending_kv_cache_request = Some(PendingKvCacheRequest {
             turn_number,
@@ -1144,6 +1148,7 @@ impl App {
             self.kv_cache_turn_call_index,
             baseline.as_ref(),
         );
+        self.current_api_usage_recorded = false;
         self.pending_kv_cache_request = Some(PendingKvCacheRequest {
             turn_number,
             call_index: self.kv_cache_turn_call_index,
@@ -1192,11 +1197,14 @@ impl App {
         )));
     }
 
-    pub(super) fn record_completed_stream_cache_usage(&mut self) {
+    pub(super) fn record_completed_stream_cache_usage(&mut self) -> bool {
         let has_cache_telemetry = self.streaming_cache_read_tokens.is_some()
             || self.streaming_cache_creation_tokens.is_some();
+        if self.current_api_usage_recorded {
+            return false;
+        }
         if self.streaming_input_tokens == 0 {
-            return;
+            return false;
         }
 
         let optimal_input_tokens = self.cache_next_optimal_input_tokens;
@@ -1206,6 +1214,7 @@ impl App {
             .pending_kv_cache_request
             .take()
             .unwrap_or_else(|| self.fallback_pending_kv_cache_request());
+        self.current_api_usage_recorded = true;
 
         self.record_kv_cache_miss_sample(&request);
 
@@ -1218,7 +1227,7 @@ impl App {
                 upstream_provider: request.upstream_provider,
                 signature: request.signature,
             });
-            return;
+            return true;
         }
 
         self.total_cache_reported_input_tokens = self
@@ -1249,6 +1258,7 @@ impl App {
             upstream_provider: request.upstream_provider,
             signature: request.signature,
         });
+        true
     }
 
     fn log_kv_cache_usage_summary(

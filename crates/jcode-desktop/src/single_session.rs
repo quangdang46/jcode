@@ -1,6 +1,5 @@
 use crate::{
-    desktop_rich_text,
-    session_data::{self, SessionTranscriptMessage},
+    desktop_rich_text, session_data,
     session_launch::{
         DesktopModelChoice, DesktopSessionEvent, DesktopSessionHandle, DesktopSessionStatus,
     },
@@ -10,10 +9,10 @@ use jcode_tui_messages::DisplayMessage;
 use pulldown_cmark::{
     Alignment, BlockQuoteKind, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd,
 };
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
-use workspace::{KeyInput, KeyOutcome};
+use workspace::{KeyInput, KeyOutcome, SessionTranscriptMessage};
 
 pub(crate) const SINGLE_SESSION_FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 pub(crate) const SINGLE_SESSION_USER_FONT_FAMILY: &str = "Kalam";
@@ -144,6 +143,7 @@ const DESKTOP_SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/resume", "open the recent session switcher"),
     ("/sessions", "open the recent session switcher"),
     ("/session", "alias for /sessions"),
+    ("/issues", "toggle the local GitHub issue browser"),
     ("/model [name]", "open model picker or switch to a model"),
     ("/models", "alias for /model"),
     ("/refresh-model-list", "refresh provider model catalogs"),
@@ -268,6 +268,312 @@ pub(crate) struct SingleSessionApp {
     runtime: SingleSessionRuntimeState,
     tool: SingleSessionToolState,
     view: SingleSessionViewState,
+    side_panel: DesktopSidePanelState,
+    pending_issue_sync_request: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DesktopSidePanelState {
+    pub(crate) visible: bool,
+    pub(crate) focus: DesktopSidePanelFocus,
+    pub(crate) github_issues: GitHubIssueBrowserState,
+    pub(crate) github_issue_sync: GitHubIssueSyncUiState,
+}
+
+impl Default for DesktopSidePanelState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            focus: DesktopSidePanelFocus::Chat,
+            github_issues: GitHubIssueBrowserState::sample(),
+            github_issue_sync: GitHubIssueSyncUiState::default(),
+        }
+    }
+}
+
+impl DesktopSidePanelState {
+    fn focus_next(&mut self) {
+        self.focus = match self.focus {
+            DesktopSidePanelFocus::IssueList => DesktopSidePanelFocus::IssuePreview,
+            DesktopSidePanelFocus::IssuePreview => DesktopSidePanelFocus::Chat,
+            DesktopSidePanelFocus::Chat => DesktopSidePanelFocus::IssueList,
+        };
+    }
+
+    fn focus_previous(&mut self) {
+        self.focus = match self.focus {
+            DesktopSidePanelFocus::IssueList => DesktopSidePanelFocus::Chat,
+            DesktopSidePanelFocus::IssuePreview => DesktopSidePanelFocus::IssueList,
+            DesktopSidePanelFocus::Chat => DesktopSidePanelFocus::IssuePreview,
+        };
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DesktopSidePanelFocus {
+    IssueList,
+    IssuePreview,
+    Chat,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct GitHubIssueSyncUiState {
+    pub(crate) syncing: bool,
+    pub(crate) last_message: Option<String>,
+    pub(crate) last_error: Option<String>,
+}
+
+impl GitHubIssueSyncUiState {
+    pub(crate) fn label(&self) -> Option<String> {
+        if self.syncing {
+            return Some("syncing from GitHub in the background".to_string());
+        }
+        if let Some(error) = &self.last_error {
+            return Some(format!("sync failed · {error}"));
+        }
+        self.last_message.clone()
+    }
+
+    pub(crate) fn guidance(&self) -> Option<String> {
+        let error = self.last_error.as_deref()?;
+        Some(issue_sync_error_guidance(error).to_string())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GitHubIssueBrowserState {
+    pub(crate) repo: String,
+    pub(crate) filter_label: String,
+    pub(crate) selected: usize,
+    pub(crate) list_scroll: usize,
+    pub(crate) preview_scroll: usize,
+    pub(crate) issues: Vec<GitHubIssuePreview>,
+}
+
+impl GitHubIssueBrowserState {
+    fn sample() -> Self {
+        Self {
+            repo: "1jehuang/jcode".to_string(),
+            filter_label: "priority · open · local cache".to_string(),
+            selected: 0,
+            list_scroll: 0,
+            preview_scroll: 0,
+            issues: vec![
+                GitHubIssuePreview {
+                    number: 342,
+                    priority: "P0".to_string(),
+                    title: "Desktop reload can lose the active chat surface".to_string(),
+                    labels: vec!["bug".to_string(), "desktop".to_string(), "regression".to_string()],
+                    age: "2d".to_string(),
+                    comments: 8,
+                    state: GitHubIssueVisualState::Selected,
+                    body_lines: vec![
+                        "When the desktop process reloads while a session is streaming, the window sometimes returns to the welcome state instead of the active chat.".to_string(),
+                        "Expected: reload handoff preserves the session id, transcript, draft, and scroll position.".to_string(),
+                        "Observed: the app opens, paints the shell, then falls back to a fresh session.".to_string(),
+                    ],
+                    comment_lines: vec![
+                        "maintainer: happens more often after resizing during handoff".to_string(),
+                        "agent note: likely snapshot restore ordering or worker init race".to_string(),
+                    ],
+                    priority_reason: "explicit regression label, data-loss risk, bounded desktop repro".to_string(),
+                },
+                GitHubIssuePreview {
+                    number: 337,
+                    priority: "P1".to_string(),
+                    title: "Tool-card animation does too much work offscreen".to_string(),
+                    labels: vec!["performance".to_string(), "desktop".to_string()],
+                    age: "5d".to_string(),
+                    comments: 4,
+                    state: GitHubIssueVisualState::Idle,
+                    body_lines: vec![
+                        "Large transcripts still spend frame time walking tool-card metadata for rows far outside the viewport.".to_string(),
+                        "The UI remains correct, but long sessions can miss frame budget during streaming.".to_string(),
+                    ],
+                    comment_lines: vec![
+                        "profiling: check viewport clipping before card motion".to_string(),
+                    ],
+                    priority_reason: "perf label plus objective frame-time validation path".to_string(),
+                },
+                GitHubIssuePreview {
+                    number: 329,
+                    priority: "P2".to_string(),
+                    title: "Provider auth errors should link to doctor output".to_string(),
+                    labels: vec!["auth".to_string(), "ux".to_string()],
+                    age: "1w".to_string(),
+                    comments: 2,
+                    state: GitHubIssueVisualState::Idle,
+                    body_lines: vec![
+                        "Desktop auth failures currently show a terse provider error.".to_string(),
+                        "It should offer a one-click path to the same diagnostic information as `jcode auth doctor`.".to_string(),
+                    ],
+                    comment_lines: vec!["nice to have after core desktop stability".to_string()],
+                    priority_reason: "important UX improvement, but not blocking active work".to_string(),
+                },
+            ],
+        }
+    }
+
+    pub(crate) fn selected_issue(&self) -> Option<&GitHubIssuePreview> {
+        self.issues.get(self.selected)
+    }
+
+    fn selected_issue_mut(&mut self) -> Option<&mut GitHubIssuePreview> {
+        self.issues.get_mut(self.selected)
+    }
+
+    fn select_first(&mut self) {
+        self.set_selected(0);
+    }
+
+    fn select_last(&mut self) {
+        self.set_selected(self.issues.len().saturating_sub(1));
+    }
+
+    fn move_selection(&mut self, delta: i32) {
+        if self.issues.is_empty() {
+            self.selected = 0;
+            self.list_scroll = 0;
+            self.preview_scroll = 0;
+            return;
+        }
+        let selected = self.selected as i32 + delta;
+        self.set_selected(selected.clamp(0, self.issues.len().saturating_sub(1) as i32) as usize);
+    }
+
+    fn set_selected(&mut self, selected: usize) {
+        if self.issues.is_empty() {
+            self.selected = 0;
+            self.list_scroll = 0;
+            self.preview_scroll = 0;
+            return;
+        }
+        self.selected = selected.min(self.issues.len() - 1);
+        self.preview_scroll = 0;
+        let visible_rows = 6usize;
+        if self.selected < self.list_scroll {
+            self.list_scroll = self.selected;
+        } else if self.selected >= self.list_scroll.saturating_add(visible_rows) {
+            self.list_scroll = self.selected.saturating_sub(visible_rows - 1);
+        }
+        self.sync_visual_selection_state();
+    }
+
+    fn sync_visual_selection_state(&mut self) {
+        for (index, issue) in self.issues.iter_mut().enumerate() {
+            if issue.state != GitHubIssueVisualState::Active {
+                issue.state = if index == self.selected {
+                    GitHubIssueVisualState::Selected
+                } else {
+                    GitHubIssueVisualState::Idle
+                };
+            }
+        }
+    }
+
+    fn scroll_preview_lines(&mut self, lines: i32) {
+        let max_scroll = self
+            .selected_issue()
+            .map(|issue| issue.body_lines.len().saturating_sub(1))
+            .unwrap_or_default();
+        if lines > 0 {
+            self.preview_scroll = self.preview_scroll.saturating_sub(lines as usize);
+        } else if lines < 0 {
+            self.preview_scroll = self
+                .preview_scroll
+                .saturating_add(lines.unsigned_abs() as usize)
+                .min(max_scroll);
+        }
+    }
+
+    fn mark_selected_active(&mut self) {
+        for issue in &mut self.issues {
+            if issue.state == GitHubIssueVisualState::Active {
+                issue.state = GitHubIssueVisualState::Idle;
+            }
+        }
+        if let Some(issue) = self.selected_issue_mut() {
+            issue.state = GitHubIssueVisualState::Active;
+        }
+    }
+
+    pub(crate) fn selected_issue_context_prompt(&self) -> Option<String> {
+        let issue = self.selected_issue()?;
+        Some(issue_context_prompt(&self.repo, issue))
+    }
+}
+
+fn issue_context_prompt(repo: &str, issue: &GitHubIssuePreview) -> String {
+    let labels = if issue.labels.is_empty() {
+        "none".to_string()
+    } else {
+        issue.labels.join(", ")
+    };
+    let body = issue.body_lines.join("\n");
+    let comments = if issue.comment_lines.is_empty() {
+        "none".to_string()
+    } else {
+        issue.comment_lines.join("\n")
+    };
+    format!(
+        "GitHub issue mission\n\nRepository: {repo}\nIssue: #{}\nTitle: {}\nPriority: {}\nLabels: {labels}\nAge: {}\nComment count: {}\nPriority rationale: {}\n\nIssue body:\n{body}\n\nRecent comments:\n{comments}\n\nMission objective: investigate and, when safe, implement a fix for this issue in the local repository.\n\nOperating instructions:\n1. Start by inspecting the relevant code and reproducing or narrowing the behavior.\n2. Preserve existing user changes and avoid destructive actions.\n3. If implementing a fix, add or update targeted tests.\n4. Run the maximum reasonable validation before reporting completion.\n5. Report evidence, remaining gaps, and any follow-up work.\n6. Do not rely on the GitHub web UI unless local cache context is insufficient.",
+        issue.number, issue.title, issue.priority, issue.age, issue.comments, issue.priority_reason
+    )
+}
+
+fn issue_sync_error_guidance(error: &str) -> &'static str {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("not installed")
+        || lower.contains("not on path")
+        || lower.contains("no such file")
+    {
+        "Install GitHub CLI `gh`, authenticate it, then press r or Ctrl+R to sync."
+    } else if lower.contains("auth")
+        || lower.contains("authentication")
+        || lower.contains("login")
+        || lower.contains("unauthorized")
+        || lower.contains("forbidden")
+    {
+        "Run `gh auth login` or refresh GitHub CLI auth, then press r or Ctrl+R to sync."
+    } else if lower.contains("could not find a github origin") || lower.contains("origin remote") {
+        "Add a GitHub origin remote for this repository, then press r or Ctrl+R to sync."
+    } else {
+        "Using cached GitHub issues. Press r or Ctrl+R to retry background sync."
+    }
+}
+
+fn compact_issue_sync_error(error: &str) -> String {
+    let mut compact = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.len() > 160 {
+        compact.truncate(157);
+        compact.push_str("...");
+    }
+    if compact.is_empty() {
+        "unknown error".to_string()
+    } else {
+        compact
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GitHubIssueVisualState {
+    Idle,
+    Selected,
+    Active,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GitHubIssuePreview {
+    pub(crate) number: u64,
+    pub(crate) priority: String,
+    pub(crate) title: String,
+    pub(crate) labels: Vec<String>,
+    pub(crate) age: String,
+    pub(crate) comments: u32,
+    pub(crate) state: GitHubIssueVisualState,
+    pub(crate) body_lines: Vec<String>,
+    pub(crate) comment_lines: Vec<String>,
+    pub(crate) priority_reason: String,
 }
 
 #[derive(Clone, Debug)]
@@ -637,6 +943,10 @@ impl SingleSessionOverlay {
                 mode: InlineWidgetMode::ReadOnly,
             } => false,
             Self::Inline {
+                kind: InlineWidgetKind::SessionSwitcher,
+                mode: InlineWidgetMode::ReadOnly,
+            } => false,
+            Self::Inline {
                 kind: InlineWidgetKind::SlashSuggestions,
                 mode: InlineWidgetMode::ReadOnly,
             } => false,
@@ -653,6 +963,7 @@ impl InlineWidgetKind {
             }
             Self::ModelPicker if app.model_picker.preview => InlineWidgetMode::ReadOnly,
             Self::ModelPicker => InlineWidgetMode::Interactive,
+            Self::SessionSwitcher if app.session_switcher.preview => InlineWidgetMode::ReadOnly,
             Self::SessionSwitcher => InlineWidgetMode::Interactive,
         }
     }
@@ -762,6 +1073,7 @@ pub(crate) struct ModelPickerState {
     pub(crate) current_model: Option<String>,
     pub(crate) provider_name: Option<String>,
     pub(crate) choices: Vec<DesktopModelChoice>,
+    search_texts: Vec<String>,
     visible_indices: Vec<usize>,
     pub(crate) error: Option<String>,
 }
@@ -810,6 +1122,7 @@ impl ModelPickerState {
         }
         if !choices.is_empty() {
             self.choices = dedupe_model_choices(choices);
+            self.rebuild_search_texts();
         }
         self.loading = false;
         self.error = None;
@@ -895,19 +1208,27 @@ impl ModelPickerState {
     }
 
     fn refresh_visible_indices(&mut self) {
+        self.ensure_search_texts_current();
         let query = self.filter.trim().to_lowercase();
         if query.is_empty() {
             self.visible_indices = (0..self.choices.len()).collect();
             return;
         }
 
-        let mut substring_matches = Vec::new();
+        let substring_matches = self
+            .search_texts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, search_text)| search_text.contains(&query).then_some(index))
+            .collect::<Vec<_>>();
+        if !substring_matches.is_empty() {
+            self.visible_indices = substring_matches;
+            return;
+        }
+
         let mut fuzzy_matches = Vec::new();
-        for (index, choice) in self.choices.iter().enumerate() {
-            let search_text = model_choice_search_text(choice);
-            if search_text.contains(&query) {
-                substring_matches.push(index);
-            } else if let Some(score) = model_picker_fuzzy_score(&query, &search_text) {
+        for (index, search_text) in self.search_texts.iter().enumerate() {
+            if let Some(score) = model_picker_fuzzy_score(&query, search_text) {
                 fuzzy_matches.push((score, search_text.len(), index));
             }
         }
@@ -916,10 +1237,9 @@ impl ModelPickerState {
                 .then_with(|| a.1.cmp(&b.1))
                 .then_with(|| a.2.cmp(&b.2))
         });
-
-        self.visible_indices = substring_matches
+        self.visible_indices = fuzzy_matches
             .into_iter()
-            .chain(fuzzy_matches.into_iter().map(|(_, _, index)| index))
+            .map(|(_, _, index)| index)
             .collect();
     }
 
@@ -958,6 +1278,16 @@ impl ModelPickerState {
         }
     }
 
+    fn rebuild_search_texts(&mut self) {
+        self.search_texts = self.choices.iter().map(model_choice_search_text).collect();
+    }
+
+    fn ensure_search_texts_current(&mut self) {
+        if self.search_texts.len() != self.choices.len() {
+            self.rebuild_search_texts();
+        }
+    }
+
     fn ensure_current_choice_present(&mut self) {
         let Some(current_model) = self.current_model.clone() else {
             return;
@@ -969,16 +1299,16 @@ impl ModelPickerState {
         {
             return;
         }
-        self.choices.insert(
-            0,
-            DesktopModelChoice {
-                model: current_model,
-                provider: self.provider_name.clone(),
-                api_method: Some("current".to_string()),
-                detail: Some("current model".to_string()),
-                available: true,
-            },
-        );
+        let choice = DesktopModelChoice {
+            model: current_model,
+            provider: self.provider_name.clone(),
+            api_method: Some("current".to_string()),
+            detail: Some("current model".to_string()),
+            available: true,
+        };
+        let search_text = model_choice_search_text(&choice);
+        self.choices.insert(0, choice);
+        self.search_texts.insert(0, search_text);
     }
 }
 
@@ -986,15 +1316,17 @@ impl ModelPickerState {
 pub(crate) struct SessionSwitcherState {
     pub(crate) open: bool,
     pub(crate) loading: bool,
+    pub(crate) preview: bool,
     pub(crate) filter: String,
     pub(crate) selected: usize,
     pub(crate) sessions: Vec<workspace::SessionCard>,
+    visible_indices: Vec<usize>,
     preview_scroll: usize,
-    focus: SessionSwitcherPane,
+    pub(crate) focus: SessionSwitcherPane,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-enum SessionSwitcherPane {
+pub(crate) enum SessionSwitcherPane {
     #[default]
     Sessions,
     Preview,
@@ -1002,18 +1334,30 @@ enum SessionSwitcherPane {
 
 impl SessionSwitcherState {
     fn open_loading(&mut self, current_session_id: Option<&str>) {
-        self.open_loading_with_filter(current_session_id, String::new());
+        self.open_loading_with_filter(current_session_id, String::new(), false);
+    }
+
+    fn open_preview_loading(&mut self, current_session_id: Option<&str>, filter: String) {
+        self.open_loading_with_filter(current_session_id, filter, true);
     }
 
     fn refresh_loading(&mut self, current_session_id: Option<&str>) {
         let filter = self.filter.clone();
-        self.open_loading_with_filter(current_session_id, filter);
+        let preview = self.preview;
+        self.open_loading_with_filter(current_session_id, filter, preview);
     }
 
-    fn open_loading_with_filter(&mut self, current_session_id: Option<&str>, filter: String) {
+    fn open_loading_with_filter(
+        &mut self,
+        current_session_id: Option<&str>,
+        filter: String,
+        preview: bool,
+    ) {
         self.open = true;
         self.loading = true;
+        self.preview = preview;
         self.filter = filter;
+        self.refresh_visible_indices();
         self.focus = SessionSwitcherPane::Sessions;
         self.preview_scroll = 0;
         self.selected = self
@@ -1025,6 +1369,7 @@ impl SessionSwitcherState {
     fn close(&mut self) {
         self.open = false;
         self.loading = false;
+        self.preview = false;
     }
 
     fn apply_sessions(
@@ -1033,6 +1378,7 @@ impl SessionSwitcherState {
         current_session_id: Option<&str>,
     ) {
         self.sessions = sessions;
+        self.refresh_visible_indices();
         self.loading = false;
         self.selected = self
             .current_visible_position(current_session_id)
@@ -1042,11 +1388,14 @@ impl SessionSwitcherState {
     }
 
     fn selected_session(&self) -> Option<workspace::SessionCard> {
+        self.selected_session_ref().cloned()
+    }
+
+    fn selected_session_ref(&self) -> Option<&workspace::SessionCard> {
         let visible = self.filtered_indices();
         visible
             .get(self.selected)
             .and_then(|index| self.sessions.get(*index))
-            .cloned()
     }
 
     fn move_selection(&mut self, delta: i32) {
@@ -1075,20 +1424,37 @@ impl SessionSwitcherState {
 
     fn push_filter_text(&mut self, text: &str) {
         self.filter.push_str(text);
+        self.refresh_visible_indices();
         self.selected = 0;
         self.preview_scroll = 0;
     }
 
     fn pop_filter_char(&mut self) {
         self.filter.pop();
+        self.refresh_visible_indices();
         self.selected = 0;
         self.preview_scroll = 0;
     }
 
-    fn filtered_indices(&self) -> Vec<usize> {
+    fn set_filter(&mut self, filter: String) {
+        if self.filter != filter {
+            self.filter = filter;
+            self.refresh_visible_indices();
+            self.selected = 0;
+            self.preview_scroll = 0;
+        }
+        self.clamp_selection();
+    }
+
+    fn filtered_indices(&self) -> &[usize] {
+        &self.visible_indices
+    }
+
+    fn refresh_visible_indices(&mut self) {
         let query = self.filter.trim().to_lowercase();
         if query.is_empty() {
-            return (0..self.sessions.len()).collect();
+            self.visible_indices = (0..self.sessions.len()).collect();
+            return;
         }
 
         let mut substring_matches = Vec::new();
@@ -1107,7 +1473,7 @@ impl SessionSwitcherState {
                 .then_with(|| a.2.cmp(&b.2))
         });
 
-        substring_matches
+        self.visible_indices = substring_matches
             .into_iter()
             .chain(fuzzy_matches.into_iter().map(|(_, _, index)| index))
             .collect()
@@ -1159,8 +1525,8 @@ impl SessionSwitcherState {
     }
 
     fn preview_line_count(&self) -> usize {
-        self.selected_session()
-            .map(|session| session_switcher_preview_lines_for_session(&session).len())
+        self.selected_session_ref()
+            .map(session_switcher_preview_line_count_for_session)
             .unwrap_or(0)
     }
 
@@ -1342,9 +1708,39 @@ fn hash_text_cache_fingerprint<H: Hasher>(text: &str, hasher: &mut H) {
     bytes[bytes.len() - BODY_CACHE_TEXT_EDGE_BYTES..].hash(hasher);
 }
 
+fn hash_tool_cache_fingerprint<H: Hasher>(tool: &SingleSessionToolState, hasher: &mut H) {
+    tool.active_message_index.hash(hasher);
+    tool.active_call_id.hash(hasher);
+    visible_active_tool_input_preview(tool).hash(hasher);
+    for run in &tool.runs {
+        run.call_id.hash(hasher);
+        run.message_index.hash(hasher);
+        run.name.hash(hasher);
+        run.state.hash(hasher);
+        run.summary.hash(hasher);
+        run.input_preview.hash(hasher);
+        run.stdin_prompt.hash(hasher);
+    }
+}
+
+fn visible_active_tool_input_preview(tool: &SingleSessionToolState) -> Option<String> {
+    if tool.input_buffer.is_empty() {
+        return None;
+    }
+    let tool_name = tool
+        .active_call_id
+        .as_ref()
+        .and_then(|call_id| tool.runs.iter().find(|run| &run.call_id == call_id))
+        .or_else(|| tool.runs.last())
+        .map(|run| run.name.as_str())
+        .unwrap_or("tool");
+    compact_tool_metadata(&formatted_tool_input_lines(tool_name, &tool.input_buffer))
+}
+
 fn hash_session_switcher_cache_state<H: Hasher>(switcher: &SessionSwitcherState, hasher: &mut H) {
     switcher.open.hash(hasher);
     switcher.loading.hash(hasher);
+    switcher.preview.hash(hasher);
     switcher.filter.hash(hasher);
     switcher.selected.hash(hasher);
     switcher.preview_scroll.hash(hasher);
@@ -1369,13 +1765,25 @@ fn hash_session_switcher_cache_state<H: Hasher>(switcher: &SessionSwitcherState,
 impl SingleSessionApp {
     pub(crate) fn new(session: Option<workspace::SessionCard>) -> Self {
         let welcome = SingleSessionWelcomeState::new(session.is_some());
+        let messages = session
+            .as_ref()
+            .filter(|session| !session.transcript_messages.is_empty())
+            .map(|session| {
+                session
+                    .transcript_messages
+                    .iter()
+                    .cloned()
+                    .map(SingleSessionMessage::from_session_transcript)
+                    .collect()
+            })
+            .unwrap_or_default();
         Self {
             session,
             draft: String::new(),
             draft_cursor: 0,
             detail_scroll: 0,
             live_session_id: None,
-            messages: Vec::new(),
+            messages,
             streaming_response: String::new(),
             status: None,
             status_kind: None,
@@ -1396,6 +1804,8 @@ impl SingleSessionApp {
             runtime: SingleSessionRuntimeState::default(),
             tool: SingleSessionToolState::default(),
             view: SingleSessionViewState::default(),
+            side_panel: DesktopSidePanelState::default(),
+            pending_issue_sync_request: false,
         }
     }
 
@@ -1575,6 +1985,289 @@ impl SingleSessionApp {
         self.tool = SingleSessionToolState::default();
         self.view.inline_widget_opened_at = None;
         self.view.closing_inline_widget = None;
+        self.side_panel = DesktopSidePanelState::default();
+        self.pending_issue_sync_request = false;
+    }
+
+    pub(crate) fn side_panel(&self) -> &DesktopSidePanelState {
+        &self.side_panel
+    }
+
+    pub(crate) fn take_github_issue_sync_request(&mut self) -> bool {
+        std::mem::take(&mut self.pending_issue_sync_request)
+    }
+
+    pub(crate) fn note_github_issue_sync_already_running(&mut self) {
+        self.side_panel.github_issue_sync.syncing = true;
+        self.side_panel.github_issue_sync.last_error = None;
+        self.side_panel.github_issue_sync.last_message =
+            Some("GitHub issue sync already running; cached issues remain interactive".to_string());
+    }
+
+    pub(crate) fn apply_github_issue_sync_result(
+        &mut self,
+        result: std::result::Result<crate::desktop_issue_cache::GitHubIssueSyncSummary, String>,
+    ) {
+        self.pending_issue_sync_request = false;
+        self.side_panel.github_issue_sync.syncing = false;
+        match result {
+            Ok(summary) => {
+                let warning_label = if summary.comment_fetch_errors == 0 {
+                    String::new()
+                } else {
+                    format!(
+                        " · {} comment refresh warning(s)",
+                        summary.comment_fetch_errors
+                    )
+                };
+                let message = format!(
+                    "synced {} GitHub issues for {} in {}ms · cache {}{}",
+                    summary.issue_count,
+                    summary.repo,
+                    summary.elapsed.as_millis(),
+                    summary.cache_path.display(),
+                    warning_label
+                );
+                self.side_panel.github_issues = summary.browser;
+                self.side_panel.github_issue_sync.last_error = None;
+                self.side_panel.github_issue_sync.last_message = Some(message.clone());
+                self.set_status(SingleSessionStatus::Info(message));
+            }
+            Err(error) => {
+                let compact_error = compact_issue_sync_error(&error);
+                self.side_panel.github_issue_sync.last_error = Some(compact_error.clone());
+                self.side_panel.github_issue_sync.last_message =
+                    Some(issue_sync_error_guidance(&error).to_string());
+                self.set_status(SingleSessionStatus::Info(format!(
+                    "GitHub issue sync failed · {compact_error}"
+                )));
+            }
+        }
+    }
+
+    pub(crate) fn issue_browser_visible(&self) -> bool {
+        self.side_panel.visible
+    }
+
+    fn request_issue_browser_sync(&mut self) {
+        self.pending_issue_sync_request = true;
+        self.side_panel.github_issue_sync.syncing = true;
+        self.side_panel.github_issue_sync.last_error = None;
+        self.side_panel.github_issue_sync.last_message =
+            Some("syncing from GitHub via gh; cached issues remain interactive".to_string());
+    }
+
+    fn toggle_issue_browser(&mut self, visible: Option<bool>) -> KeyOutcome {
+        let visible = visible.unwrap_or(!self.side_panel.visible);
+        self.side_panel.visible = visible;
+        self.side_panel.focus = if visible {
+            DesktopSidePanelFocus::IssueList
+        } else {
+            DesktopSidePanelFocus::Chat
+        };
+        let cache_status = visible
+            .then(|| self.refresh_issue_browser_from_cache())
+            .flatten();
+        if visible {
+            self.request_issue_browser_sync();
+        }
+        self.draft.clear();
+        self.draft_cursor = 0;
+        self.composer.input_undo_stack.clear();
+        self.set_status(SingleSessionStatus::Info(cache_status.unwrap_or_else(
+            || {
+                if visible {
+                    "showing local GitHub issue browser".to_string()
+                } else {
+                    "hid local GitHub issue browser".to_string()
+                }
+            },
+        )));
+        KeyOutcome::Redraw
+    }
+
+    #[cfg(not(test))]
+    fn refresh_issue_browser_from_cache(&mut self) -> Option<String> {
+        match crate::desktop_issue_cache::load_current_repo_issue_browser() {
+            Ok(Some(browser)) => {
+                let repo = browser.repo.clone();
+                let count = browser.issues.len();
+                self.side_panel.github_issues = browser;
+                Some(format!("showing {count} cached GitHub issues for {repo}"))
+            }
+            Ok(None) => None,
+            Err(error) => Some(format!(
+                "showing sample issues; cache unavailable: {error:#}"
+            )),
+        }
+    }
+
+    #[cfg(test)]
+    fn refresh_issue_browser_from_cache(&mut self) -> Option<String> {
+        None
+    }
+
+    fn handle_issue_browser_key(&mut self, key: &KeyInput) -> Option<KeyOutcome> {
+        if !self.side_panel.visible {
+            return None;
+        }
+
+        if matches!(key, KeyInput::Autocomplete) && self.draft.is_empty() {
+            self.side_panel.focus_next();
+            return Some(KeyOutcome::Redraw);
+        }
+
+        if let KeyInput::Character(text) = key
+            && text.starts_with('/')
+        {
+            self.side_panel.focus = DesktopSidePanelFocus::Chat;
+            return None;
+        }
+
+        if matches!(key, KeyInput::RefreshSessions) {
+            self.request_issue_browser_sync();
+            return Some(KeyOutcome::Redraw);
+        }
+
+        match self.side_panel.focus {
+            DesktopSidePanelFocus::Chat => None,
+            DesktopSidePanelFocus::IssueList => Some(self.handle_issue_list_key(key)),
+            DesktopSidePanelFocus::IssuePreview => Some(self.handle_issue_preview_key(key)),
+        }
+    }
+
+    fn handle_issue_list_key(&mut self, key: &KeyInput) -> KeyOutcome {
+        match key {
+            KeyInput::Escape => {
+                self.side_panel.focus = DesktopSidePanelFocus::Chat;
+                KeyOutcome::Redraw
+            }
+            KeyInput::SubmitDraft => self.investigate_selected_issue(),
+            KeyInput::Character(text) if text.eq_ignore_ascii_case("r") => {
+                self.request_issue_browser_sync();
+                KeyOutcome::Redraw
+            }
+            KeyInput::ModelPickerMove(delta) => {
+                self.side_panel.github_issues.move_selection(*delta);
+                KeyOutcome::Redraw
+            }
+            KeyInput::ScrollBodyPages(pages) => {
+                self.side_panel.github_issues.move_selection(-pages * 5);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "j" => {
+                self.side_panel.github_issues.move_selection(1);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "k" => {
+                self.side_panel.github_issues.move_selection(-1);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "g" => {
+                self.side_panel.github_issues.select_first();
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "G" => {
+                self.side_panel.github_issues.select_last();
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "l" => {
+                self.side_panel.focus = DesktopSidePanelFocus::IssuePreview;
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "h" => {
+                self.side_panel.focus_previous();
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text.eq_ignore_ascii_case("q") => {
+                self.toggle_issue_browser(Some(false))
+            }
+            _ => KeyOutcome::None,
+        }
+    }
+
+    fn handle_issue_preview_key(&mut self, key: &KeyInput) -> KeyOutcome {
+        match key {
+            KeyInput::Escape => {
+                self.side_panel.focus = DesktopSidePanelFocus::Chat;
+                KeyOutcome::Redraw
+            }
+            KeyInput::SubmitDraft => self.investigate_selected_issue(),
+            KeyInput::Character(text) if text.eq_ignore_ascii_case("r") => {
+                self.request_issue_browser_sync();
+                KeyOutcome::Redraw
+            }
+            KeyInput::ScrollBodyLines(lines) => {
+                self.side_panel.github_issues.scroll_preview_lines(*lines);
+                KeyOutcome::Redraw
+            }
+            KeyInput::ScrollBodyPages(pages) => {
+                self.side_panel
+                    .github_issues
+                    .scroll_preview_lines(*pages * 6);
+                KeyOutcome::Redraw
+            }
+            KeyInput::ScrollBodyToTop => {
+                self.side_panel.github_issues.preview_scroll = 0;
+                KeyOutcome::Redraw
+            }
+            KeyInput::ScrollBodyToBottom => {
+                self.side_panel
+                    .github_issues
+                    .scroll_preview_lines(i32::MIN + 1);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "j" => {
+                self.side_panel.github_issues.scroll_preview_lines(-1);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "k" => {
+                self.side_panel.github_issues.scroll_preview_lines(1);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "h" => {
+                self.side_panel.focus = DesktopSidePanelFocus::IssueList;
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "l" => {
+                self.side_panel.focus = DesktopSidePanelFocus::Chat;
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text.eq_ignore_ascii_case("q") => {
+                self.toggle_issue_browser(Some(false))
+            }
+            KeyInput::ModelPickerMove(delta) => {
+                self.side_panel.github_issues.move_selection(*delta);
+                KeyOutcome::Redraw
+            }
+            _ => KeyOutcome::None,
+        }
+    }
+
+    fn investigate_selected_issue(&mut self) -> KeyOutcome {
+        let Some(message) = self
+            .side_panel
+            .github_issues
+            .selected_issue_context_prompt()
+        else {
+            return KeyOutcome::None;
+        };
+        self.side_panel.github_issues.mark_selected_active();
+        self.side_panel.focus = DesktopSidePanelFocus::Chat;
+        self.record_user_submit(&message, &[]);
+        if let Some(session) = &self.session {
+            KeyOutcome::SendDraft {
+                session_id: session.session_id.clone(),
+                title: session.title.clone(),
+                message,
+                images: Vec::new(),
+            }
+        } else {
+            KeyOutcome::StartFreshSession {
+                message,
+                images: Vec::new(),
+            }
+        }
     }
 
     pub(crate) fn status_title(&self) -> String {
@@ -1749,7 +2442,29 @@ impl SingleSessionApp {
     }
 
     pub(crate) fn render_inline_widget_line_count(&self) -> usize {
-        self.render_inline_widget_styled_lines().len()
+        if let Some(kind) = self.active_inline_widget() {
+            return self.active_inline_widget_line_count(kind);
+        }
+        if self.render_inline_widget_reveal_progress() <= 0.001 {
+            return 0;
+        }
+        self.view
+            .closing_inline_widget
+            .as_ref()
+            .map(|closing| closing.lines.len())
+            .unwrap_or(0)
+    }
+
+    fn active_inline_widget_line_count(&self, kind: InlineWidgetKind) -> usize {
+        match kind {
+            InlineWidgetKind::HotkeyHelp => hotkey_help_inline_line_count(),
+            InlineWidgetKind::ModelPicker => model_picker_inline_line_count(&self.model_picker),
+            InlineWidgetKind::SessionSwitcher => {
+                session_switcher_line_count(&self.session_switcher, self.current_session_id())
+            }
+            InlineWidgetKind::SessionInfo => session_info_inline_line_count(self),
+            InlineWidgetKind::SlashSuggestions => self.slash_suggestion_line_count(),
+        }
     }
 
     pub(crate) fn render_inline_widget_visible_line_count(&self) -> usize {
@@ -1906,6 +2621,13 @@ impl SingleSessionApp {
             return self.handle_stdin_response_key(key);
         }
 
+        if self.session_switcher.open
+            && self.session_switcher.preview
+            && let Some(outcome) = self.handle_session_switcher_preview_key(&key)
+        {
+            return outcome;
+        }
+
         if self.session_switcher.open {
             return self.handle_session_switcher_key(key);
         }
@@ -1928,6 +2650,10 @@ impl SingleSessionApp {
         if self.active_inline_widget() == Some(InlineWidgetKind::SlashSuggestions)
             && let Some(outcome) = self.handle_slash_suggestion_key(&key)
         {
+            return outcome;
+        }
+
+        if let Some(outcome) = self.handle_issue_browser_key(&key) {
             return outcome;
         }
 
@@ -2147,6 +2873,20 @@ impl SingleSessionApp {
         KeyOutcome::LoadModelCatalog
     }
 
+    fn open_session_switcher_preview(&mut self, filter: String) -> KeyOutcome {
+        let was_open = self.session_switcher.open;
+        self.close_inline_widgets();
+        let current_session_id = self.current_session_id().map(str::to_string);
+        self.session_switcher
+            .open_preview_loading(current_session_id.as_deref(), filter);
+        if !was_open {
+            self.mark_inline_widget_opened();
+        }
+        self.set_status(SingleSessionStatus::LoadingRecentSessions);
+        self.scroll_body_to_bottom();
+        KeyOutcome::LoadSessionSwitcher
+    }
+
     fn sync_model_picker_preview_from_draft(&mut self) -> Option<KeyOutcome> {
         let Some(filter) = model_picker_preview_filter(&self.draft) else {
             if self.model_picker.open && self.model_picker.preview {
@@ -2165,9 +2905,37 @@ impl SingleSessionApp {
         }
     }
 
+    fn sync_session_switcher_preview_from_draft(&mut self) -> Option<KeyOutcome> {
+        if !self.pending_images.is_empty() {
+            if self.session_switcher.open && self.session_switcher.preview {
+                self.capture_inline_widget_exit();
+                self.session_switcher.close();
+                return Some(KeyOutcome::Redraw);
+            }
+            return None;
+        }
+
+        let Some(filter) = session_switcher_preview_filter(&self.draft) else {
+            if self.session_switcher.open && self.session_switcher.preview {
+                self.capture_inline_widget_exit();
+                self.session_switcher.close();
+                return Some(KeyOutcome::Redraw);
+            }
+            return None;
+        };
+
+        if self.session_switcher.open && self.session_switcher.preview {
+            self.session_switcher.set_filter(filter);
+            Some(KeyOutcome::Redraw)
+        } else {
+            Some(self.open_session_switcher_preview(filter))
+        }
+    }
+
     fn sync_inline_previews_from_draft(&mut self) -> Option<KeyOutcome> {
         self.sync_slash_suggestions_from_draft();
         self.sync_model_picker_preview_from_draft()
+            .or_else(|| self.sync_session_switcher_preview_from_draft())
     }
 
     fn sync_slash_suggestions_from_draft(&mut self) {
@@ -2274,6 +3042,30 @@ impl SingleSessionApp {
 
     fn handle_model_picker_preview_key(&mut self, key: &KeyInput) -> Option<KeyOutcome> {
         match key {
+            KeyInput::Character(text) if text == "j" => {
+                self.model_picker.move_selection(1);
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "k" => {
+                self.model_picker.move_selection(-1);
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "g" => {
+                self.model_picker.select_first();
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "G" => {
+                self.model_picker.select_last();
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "q" => {
+                self.capture_inline_widget_exit();
+                self.model_picker.close();
+                self.draft.clear();
+                self.draft_cursor = 0;
+                self.composer.input_undo_stack.clear();
+                Some(KeyOutcome::Redraw)
+            }
             KeyInput::Escape => {
                 self.capture_inline_widget_exit();
                 self.model_picker.close();
@@ -2325,6 +3117,144 @@ impl SingleSessionApp {
         }
     }
 
+    fn handle_session_switcher_preview_key(&mut self, key: &KeyInput) -> Option<KeyOutcome> {
+        match key {
+            KeyInput::Character(text) if text == "j" => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.scroll_preview(1);
+                } else {
+                    self.session_switcher.move_selection(1);
+                }
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "k" => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.scroll_preview(-1);
+                } else {
+                    self.session_switcher.move_selection(-1);
+                }
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "h" => {
+                self.session_switcher.focus_sessions();
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "l" => {
+                self.session_switcher.focus_preview();
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "g" => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.preview_scroll = 0;
+                } else {
+                    self.session_switcher.select_first();
+                }
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "G" => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.preview_scroll =
+                        self.session_switcher.preview_line_count().saturating_sub(1);
+                } else {
+                    self.session_switcher.select_last();
+                }
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Character(text) if text == "q" => {
+                self.capture_inline_widget_exit();
+                self.session_switcher.close();
+                self.draft.clear();
+                self.draft_cursor = 0;
+                self.composer.input_undo_stack.clear();
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Escape => {
+                self.capture_inline_widget_exit();
+                self.session_switcher.close();
+                self.draft.clear();
+                self.draft_cursor = 0;
+                self.composer.input_undo_stack.clear();
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::ModelPickerMove(delta) => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.scroll_preview(*delta);
+                } else {
+                    self.session_switcher.move_selection(*delta);
+                }
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::ScrollBodyPages(pages) => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher
+                        .scroll_preview(if *pages > 0 { -8 } else { 8 });
+                } else {
+                    self.session_switcher
+                        .move_selection(if *pages > 0 { -5 } else { 5 });
+                }
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::Autocomplete => {
+                self.session_switcher.toggle_focus();
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::MoveCursorLeft => {
+                self.session_switcher.focus_sessions();
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::MoveCursorRight => {
+                self.session_switcher.focus_preview();
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::MoveToLineStart => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.preview_scroll = 0;
+                } else {
+                    self.session_switcher.select_first();
+                }
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::MoveToLineEnd => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.preview_scroll =
+                        self.session_switcher.preview_line_count().saturating_sub(1);
+                } else {
+                    self.session_switcher.select_last();
+                }
+                Some(KeyOutcome::Redraw)
+            }
+            KeyInput::SubmitDraft => {
+                self.draft.clear();
+                self.draft_cursor = 0;
+                self.composer.input_undo_stack.clear();
+                Some(self.resume_selected_switcher_session())
+            }
+            KeyInput::QueueDraft => {
+                let Some(session) = self.session_switcher.selected_session() else {
+                    return Some(KeyOutcome::None);
+                };
+                self.capture_inline_widget_exit();
+                self.session_switcher.close();
+                self.draft.clear();
+                self.draft_cursor = 0;
+                self.composer.input_undo_stack.clear();
+                Some(KeyOutcome::OpenSession {
+                    session_id: session.session_id,
+                    title: session.title,
+                })
+            }
+            KeyInput::RefreshSessions => {
+                let current_session_id = self.current_session_id().map(str::to_string);
+                let filter = self.session_switcher.filter.clone();
+                self.session_switcher
+                    .open_preview_loading(current_session_id.as_deref(), filter);
+                self.set_status(SingleSessionStatus::LoadingRecentSessions);
+                Some(KeyOutcome::LoadSessionSwitcher)
+            }
+            _ => None,
+        }
+    }
+
     fn open_session_switcher(&mut self) -> KeyOutcome {
         self.close_inline_widgets();
         let current_session_id = self.current_session_id().map(str::to_string);
@@ -2338,6 +3268,35 @@ impl SingleSessionApp {
 
     fn handle_model_picker_key(&mut self, key: KeyInput) -> KeyOutcome {
         match key {
+            KeyInput::Character(text) if text == "j" => {
+                self.model_picker.move_selection(1);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "k" => {
+                self.model_picker.move_selection(-1);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "h" => {
+                self.model_picker.column = self.model_picker.column.saturating_sub(1);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "l" => {
+                self.model_picker.column = (self.model_picker.column + 1).min(2);
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "g" => {
+                self.model_picker.select_first();
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "G" => {
+                self.model_picker.select_last();
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "q" => {
+                self.capture_inline_widget_exit();
+                self.model_picker.close();
+                KeyOutcome::Redraw
+            }
             KeyInput::Escape if !self.model_picker.filter.is_empty() => {
                 self.model_picker.set_filter(String::new());
                 KeyOutcome::Redraw
@@ -2405,6 +3364,52 @@ impl SingleSessionApp {
 
     fn handle_session_switcher_key(&mut self, key: KeyInput) -> KeyOutcome {
         match key {
+            KeyInput::Character(text) if text == "j" => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.scroll_preview(1);
+                } else {
+                    self.session_switcher.move_selection(1);
+                }
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "k" => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.scroll_preview(-1);
+                } else {
+                    self.session_switcher.move_selection(-1);
+                }
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "h" => {
+                self.session_switcher.focus_sessions();
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "l" => {
+                self.session_switcher.focus_preview();
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "g" => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.preview_scroll = 0;
+                } else {
+                    self.session_switcher.select_first();
+                }
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "G" => {
+                if self.session_switcher.focus == SessionSwitcherPane::Preview {
+                    self.session_switcher.preview_scroll =
+                        self.session_switcher.preview_line_count().saturating_sub(1);
+                } else {
+                    self.session_switcher.select_last();
+                }
+                KeyOutcome::Redraw
+            }
+            KeyInput::Character(text) if text == "q" => {
+                self.capture_inline_widget_exit();
+                self.session_switcher.close();
+                KeyOutcome::Redraw
+            }
             KeyInput::Escape | KeyInput::OpenSessionSwitcher => {
                 self.capture_inline_widget_exit();
                 self.session_switcher.close();
@@ -2677,6 +3682,19 @@ impl SingleSessionApp {
         lines
     }
 
+    fn slash_suggestion_line_count(&self) -> usize {
+        let candidate_count = self.slash_suggestion_candidate_count();
+        if candidate_count == 0 {
+            0
+        } else {
+            1 + candidate_count
+        }
+    }
+
+    fn slash_suggestion_candidate_count(&self) -> usize {
+        self.slash_suggestion_candidates().len()
+    }
+
     fn slash_suggestion_candidates(&self) -> Vec<(&'static str, &'static str)> {
         if self
             .slash_suggestions
@@ -2751,7 +3769,7 @@ impl SingleSessionApp {
         if self.session_switcher.open {
             return SingleSessionOverlay::Inline {
                 kind: InlineWidgetKind::SessionSwitcher,
-                mode: InlineWidgetMode::Interactive,
+                mode: InlineWidgetKind::SessionSwitcher.mode(self),
             };
         }
         if self.model_picker.open {
@@ -2937,11 +3955,7 @@ impl SingleSessionApp {
             .hash(&mut hasher);
         hash_messages_cache_fingerprint(&self.messages, &mut hasher);
         hash_text_cache_fingerprint(&self.streaming_response, &mut hasher);
-        self.tool.active_message_index.hash(&mut hasher);
-        self.tool.active_call_id.hash(&mut hasher);
-        hash_text_cache_fingerprint(&self.tool.input_buffer, &mut hasher);
-        self.tool.event_sequence.hash(&mut hasher);
-        self.tool.runs.hash(&mut hasher);
+        hash_tool_cache_fingerprint(&self.tool, &mut hasher);
         self.status.hash(&mut hasher);
         self.error.hash(&mut hasher);
         self.show_help.hash(&mut hasher);
@@ -2976,11 +3990,7 @@ impl SingleSessionApp {
             })
             .hash(&mut hasher);
         hash_messages_cache_fingerprint(&self.messages, &mut hasher);
-        self.tool.active_message_index.hash(&mut hasher);
-        self.tool.active_call_id.hash(&mut hasher);
-        hash_text_cache_fingerprint(&self.tool.input_buffer, &mut hasher);
-        self.tool.event_sequence.hash(&mut hasher);
-        self.tool.runs.hash(&mut hasher);
+        hash_tool_cache_fingerprint(&self.tool, &mut hasher);
         self.status.hash(&mut hasher);
         self.error.hash(&mut hasher);
         self.show_help.hash(&mut hasher);
@@ -3668,6 +4678,22 @@ impl SingleSessionApp {
                 self.draft_cursor = 0;
                 self.composer.input_undo_stack.clear();
                 KeyOutcome::SpawnSession
+            }
+            "/issues" => {
+                if matches!(args, "refresh" | "sync") {
+                    return Some(self.toggle_issue_browser(Some(true)));
+                }
+                if args == "preview" {
+                    let outcome = self.toggle_issue_browser(Some(true));
+                    self.side_panel.focus = DesktopSidePanelFocus::IssuePreview;
+                    return Some(outcome);
+                }
+                let visible = match args {
+                    "on" | "open" | "show" => Some(true),
+                    "off" | "close" | "hide" => Some(false),
+                    _ => None,
+                };
+                self.toggle_issue_browser(visible)
             }
             "/sessions" | "/session" | "/resume" => {
                 self.draft.clear();
@@ -4719,6 +5745,10 @@ impl SingleSessionApp {
             self.capture_inline_widget_exit();
             self.model_picker.close();
         }
+        if self.session_switcher.open && self.session_switcher.preview {
+            self.capture_inline_widget_exit();
+            self.session_switcher.close();
+        }
         self.set_status(SingleSessionStatus::Info(
             "Input cleared - Ctrl+Z to restore".to_string(),
         ));
@@ -4978,7 +6008,7 @@ fn session_switcher_styled_lines(
     let filter_label = if switcher.filter.trim().is_empty() {
         "all".to_string()
     } else {
-        format!("🔍 {}", switcher.filter.trim())
+        format!("filter {}", switcher.filter.trim())
     };
     let selected_label = switcher
         .selected_session()
@@ -4986,26 +6016,23 @@ fn session_switcher_styled_lines(
         .unwrap_or_else(|| "no session selected".to_string());
     let mut lines = vec![
         styled_line(
-            format!(
-                "desktop session switcher · {} sessions · {} · {}",
-                session_count, filter_label, selected_label
-            ),
+            format!("Resume sessions · {session_count} sessions · {filter_label}"),
             SingleSessionLineStyle::OverlayTitle,
         ),
         styled_line(
-            "↑/↓ select · type to filter · Tab/←/→ preview · PgUp/PgDn scroll · Enter resume here · Ctrl+Enter terminal · Ctrl+R reload · Esc close",
+            "Type to filter · Up/Down select · Tab or Left/Right preview · PageUp/PageDown scroll · Enter resume here · Ctrl+Enter open terminal · Esc close",
             SingleSessionLineStyle::Overlay,
         ),
         styled_line(
             format!(
-                "filter: {} · focus: {} · sessions: {}",
+                "selected: {} · filter: {} · focus: {}",
+                selected_label,
                 if switcher.filter.is_empty() {
                     "<none>"
                 } else {
                     switcher.filter.as_str()
                 },
                 session_switcher_focus_label(switcher.focus),
-                session_count
             ),
             SingleSessionLineStyle::Meta,
         ),
@@ -5033,58 +6060,63 @@ fn session_switcher_styled_lines(
         return lines;
     }
 
-    const CARD_LIMIT: usize = 4;
-    const BODY_ROW_LIMIT: usize = 16;
-    const LIST_COLUMNS: usize = 62;
-    const PREVIEW_COLUMNS: usize = 88;
+    const CARD_LIMIT: usize = 5;
+    const BODY_ROW_LIMIT: usize = 9;
+    const CONTENT_COLUMNS: usize = 92;
 
-    let list_header = if switcher.focus == SessionSwitcherPane::Sessions {
-        "sessions ›"
+    let sessions_header = if switcher.focus == SessionSwitcherPane::Sessions {
+        "Recent sessions · focused"
     } else {
-        "sessions"
-    };
-    let preview_header = if switcher.focus == SessionSwitcherPane::Preview {
-        "preview ›"
-    } else {
-        "preview"
+        "Recent sessions"
     };
     lines.push(styled_line(
-        format!(
-            "╭{}╮ ╭{}╮",
-            "─".repeat(LIST_COLUMNS + 2),
-            "─".repeat(PREVIEW_COLUMNS.min(86) + 2)
-        ),
-        SingleSessionLineStyle::OverlayTitle,
-    ));
-    lines.push(styled_line(
-        format!(
-            "│ {} │ {} │",
-            pad_columns(
-                &format!("{list_header} · recent sessions, newest first"),
-                LIST_COLUMNS
-            ),
-            pad_columns(
-                &format!("{preview_header} · full selected-session preview"),
-                PREVIEW_COLUMNS.min(86)
-            )
-        ),
+        format!("{sessions_header} · newest first"),
         SingleSessionLineStyle::OverlayTitle,
     ));
 
     let (window_start, row_indices) = switcher.visible_row_window(CARD_LIMIT);
-    let mut list_rows = Vec::new();
+    let row_count = row_indices.len();
     for (offset, index) in row_indices.iter().enumerate() {
         if let Some(session) = switcher.sessions.get(*index) {
             let position = window_start + offset;
-            list_rows.extend(session_switcher_list_card_lines(
-                switcher,
-                current_session_id,
-                position,
-                session,
-                LIST_COLUMNS,
-            ));
+            lines.extend(
+                session_switcher_list_card_lines(
+                    switcher,
+                    current_session_id,
+                    position,
+                    session,
+                    CONTENT_COLUMNS,
+                )
+                .into_iter()
+                .map(|line| styled_line(line.text, line.style)),
+            );
+            if offset + 1 < row_count {
+                lines.push(blank_styled_line());
+            }
         }
     }
+
+    if window_start + row_indices.len() < visible.len() {
+        lines.push(styled_line(
+            format!(
+                "{} more sessions · keep pressing ↓ or type to filter",
+                visible.len() - window_start - row_indices.len()
+            ),
+            SingleSessionLineStyle::Overlay,
+        ));
+    }
+
+    lines.push(blank_styled_line());
+    let preview_header = if switcher.focus == SessionSwitcherPane::Preview {
+        "Preview · focused"
+    } else {
+        "Preview"
+    };
+    lines.push(styled_line(
+        format!("{preview_header} · selected session transcript"),
+        SingleSessionLineStyle::OverlayTitle,
+    ));
+
     let preview_lines = switcher
         .selected_session()
         .map(|session| session_switcher_preview_lines_for_session(&session))
@@ -5103,68 +6135,18 @@ fn session_switcher_styled_lines(
         .take(BODY_ROW_LIMIT)
         .cloned()
         .collect::<Vec<_>>();
-    let row_count = list_rows.len().max(preview_visible.len()).max(1);
-
-    for row in 0..row_count {
-        let list_row = list_rows.get(row).cloned().unwrap_or_else(|| {
-            SessionSwitcherRenderedLine::new(
-                " ".repeat(LIST_COLUMNS),
-                SingleSessionLineStyle::Overlay,
-            )
-        });
-        let preview_cell = preview_visible.get(row).cloned().unwrap_or_else(|| {
-            SessionSwitcherRenderedLine::new(String::new(), SingleSessionLineStyle::Overlay)
-        });
-        let preview_has_semantic_style = matches!(
-            preview_cell.style,
-            SingleSessionLineStyle::User
-                | SingleSessionLineStyle::Assistant
-                | SingleSessionLineStyle::Tool
-                | SingleSessionLineStyle::Status
-                | SingleSessionLineStyle::OverlayTitle
-                | SingleSessionLineStyle::Error
-        );
-        let style = if list_row.style == SingleSessionLineStyle::OverlaySelection {
-            SingleSessionLineStyle::OverlaySelection
-        } else if preview_has_semantic_style || row >= list_rows.len() {
-            preview_cell.style
-        } else {
-            list_row.style
-        };
-        lines.push(styled_line(
-            format!(
-                "│ {} │ {} │",
-                pad_columns(&list_row.text, LIST_COLUMNS),
-                pad_columns(&preview_cell.text, PREVIEW_COLUMNS.min(86))
-            ),
-            style,
-        ));
-    }
-
-    lines.push(styled_line(
-        format!(
-            "╰{}╯ ╰{}╯",
-            "─".repeat(LIST_COLUMNS + 2),
-            "─".repeat(PREVIEW_COLUMNS.min(86) + 2)
-        ),
-        SingleSessionLineStyle::Meta,
-    ));
-
-    if window_start + row_indices.len() < visible.len() {
-        lines.push(styled_line(
-            format!(
-                "… {} more sessions · keep pressing ↓ or type to filter",
-                visible.len() - window_start - row_indices.len()
-            ),
-            SingleSessionLineStyle::Overlay,
-        ));
-    }
-    if preview_scroll > 0 || preview_scroll + preview_visible.len() < preview_lines.len() {
+    let preview_visible_len = preview_visible.len();
+    lines.extend(
+        preview_visible
+            .into_iter()
+            .map(|line| styled_line(truncate_chars(&line.text, CONTENT_COLUMNS), line.style)),
+    );
+    if preview_scroll > 0 || preview_scroll + preview_visible_len < preview_lines.len() {
         lines.push(styled_line(
             format!(
                 "preview lines {}-{} of {}",
                 preview_scroll + 1,
-                preview_scroll + preview_visible.len(),
+                preview_scroll + preview_visible_len,
                 preview_lines.len()
             ),
             SingleSessionLineStyle::Meta,
@@ -5172,6 +6154,48 @@ fn session_switcher_styled_lines(
     }
 
     lines
+}
+
+fn session_switcher_line_count(
+    switcher: &SessionSwitcherState,
+    current_session_id: Option<&str>,
+) -> usize {
+    let visible_len = switcher.filtered_indices().len();
+    let mut count = 4;
+
+    if switcher.loading {
+        count += 1;
+    }
+
+    if visible_len == 0 && !switcher.loading {
+        return count + 2;
+    }
+
+    const CARD_LIMIT: usize = 5;
+    const BODY_ROW_LIMIT: usize = 9;
+    count += 1; // Recent sessions header.
+    let (window_start, window_len) = row_window_bounds(visible_len, switcher.selected, CARD_LIMIT);
+    count += window_len * 4 + window_len.saturating_sub(1);
+    if window_start + window_len < visible_len {
+        count += 1;
+    }
+
+    count += 2; // Blank spacer and preview header.
+    let preview_len = switcher
+        .selected_session_ref()
+        .map(session_switcher_preview_line_count_for_session)
+        .unwrap_or(1);
+    let preview_scroll = switcher.preview_scroll.min(preview_len.saturating_sub(1));
+    let preview_visible_len = preview_len
+        .saturating_sub(preview_scroll)
+        .min(BODY_ROW_LIMIT);
+    count += preview_visible_len;
+    if preview_scroll > 0 || preview_scroll + preview_visible_len < preview_len {
+        count += 1;
+    }
+
+    let _ = current_session_id;
+    count
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5203,15 +6227,10 @@ fn session_switcher_list_card_lines(
     session: &workspace::SessionCard,
     width: usize,
 ) -> Vec<SessionSwitcherRenderedLine> {
-    let selector = if position == switcher.selected {
-        "›"
-    } else {
-        " "
-    };
     let current_marker = if Some(session.session_id.as_str()) == current_session_id {
-        "✓"
+        "current · "
     } else {
-        " "
+        ""
     };
     let selected = position == switcher.selected;
     let primary_style = if selected {
@@ -5237,30 +6256,24 @@ fn session_switcher_list_card_lines(
         .or_else(|| session.detail_lines.last())
         .map(|line| session_switcher_compact_transcript_line(line, width.saturating_sub(8)))
         .unwrap_or_else(|| "no transcript preview yet".to_string());
+    let card_text = |text: String| -> String {
+        format!("      {}", truncate_chars(&text, width.saturating_sub(6)))
+    };
     vec![
         SessionSwitcherRenderedLine::new(
-            truncate_chars(
-                &format!(
-                    "{selector} {current_marker} {} {}",
-                    session_status_icon(session),
-                    session.title
-                ),
-                width,
-            ),
+            card_text(format!(
+                "{} session · {current_marker}{}",
+                session_status_label(session),
+                session.title
+            )),
             primary_style,
         ),
         SessionSwitcherRenderedLine::new(
-            truncate_chars(&format!("    {status} · {model}"), width),
+            card_text(format!("Status {status} · Model {model}")),
             meta_style,
         ),
-        SessionSwitcherRenderedLine::new(
-            truncate_chars(&format!("    {}", session.detail), width),
-            meta_style,
-        ),
-        SessionSwitcherRenderedLine::new(
-            truncate_chars(&format!("    {preview}"), width),
-            preview_style,
-        ),
+        SessionSwitcherRenderedLine::new(card_text(session.detail.clone()), meta_style),
+        SessionSwitcherRenderedLine::new(card_text(preview), preview_style),
     ]
 }
 
@@ -5269,7 +6282,7 @@ fn session_switcher_preview_lines_for_session(
 ) -> Vec<SessionSwitcherRenderedLine> {
     let mut lines = vec![
         SessionSwitcherRenderedLine::new(
-            format!("{} {}", session_status_icon(session), session.title),
+            session.title.clone(),
             SingleSessionLineStyle::OverlayTitle,
         ),
         SessionSwitcherRenderedLine::new(
@@ -5289,10 +6302,6 @@ fn session_switcher_preview_lines_for_session(
             SingleSessionLineStyle::Meta,
         ));
     }
-    lines.push(SessionSwitcherRenderedLine::new(
-        "─".repeat(48),
-        SingleSessionLineStyle::Meta,
-    ));
     let transcript = if session.detail_lines.is_empty() {
         &session.preview_lines
     } else {
@@ -5319,10 +6328,29 @@ fn session_switcher_preview_lines_for_session(
     lines
 }
 
+fn session_switcher_preview_line_count_for_session(session: &workspace::SessionCard) -> usize {
+    let mut count = 2;
+    if !session.subtitle.is_empty() {
+        count += 1;
+    }
+    if !session.detail.is_empty() {
+        count += 1;
+    }
+    let transcript_len = if session.detail_lines.is_empty() {
+        session.preview_lines.len()
+    } else {
+        session.detail_lines.len()
+    };
+    if transcript_len == 0 {
+        count + 1
+    } else {
+        count + 1 + transcript_len
+    }
+}
+
 fn session_status_badge(session: &workspace::SessionCard) -> String {
     let status = session_status_label(session);
-    let icon = session_status_icon_for_label(status);
-    format!("{icon} {status}")
+    status.to_string()
 }
 
 fn session_status_label(session: &workspace::SessionCard) -> &str {
@@ -5333,22 +6361,6 @@ fn session_status_label(session: &workspace::SessionCard) -> &str {
         .map(str::trim)
         .filter(|status| !status.is_empty())
         .unwrap_or("unknown")
-}
-
-fn session_status_icon(session: &workspace::SessionCard) -> &'static str {
-    session_status_icon_for_label(session_status_label(session))
-}
-
-fn session_status_icon_for_label(status: &str) -> &'static str {
-    match status {
-        "active" => "▶",
-        "closed" => "✓",
-        "crashed" => "💥",
-        "reloaded" => "↻",
-        "compacted" => "📦",
-        status if status.contains("error") => "✕",
-        _ => "•",
-    }
 }
 
 fn session_model_label(session: &workspace::SessionCard) -> Option<String> {
@@ -5382,28 +6394,28 @@ fn session_switcher_transcript_preview_line(
     let (role, content) = session_switcher_split_preview_role(line);
     match role {
         Some("user") => {
-            let rendered = format!("{}› {}", *user_turn, content);
+            let rendered = format!("Prompt {}  {}", *user_turn, content);
             *user_turn = (*user_turn).saturating_add(1);
             SessionSwitcherRenderedLine::new(rendered, SingleSessionLineStyle::User)
         }
         Some("asst" | "assistant") => SessionSwitcherRenderedLine::new(
-            format!("assistant {content}"),
+            format!("Assistant  {content}"),
             SingleSessionLineStyle::Assistant,
         ),
         Some("tool") => SessionSwitcherRenderedLine::new(
-            format!("tool {content}"),
+            format!("Tool  {content}"),
             SingleSessionLineStyle::Tool,
         ),
         Some("sys" | "system") => SessionSwitcherRenderedLine::new(
-            format!("system {content}"),
+            format!("System  {content}"),
             SingleSessionLineStyle::Meta,
         ),
         Some("task" | "background_task") => SessionSwitcherRenderedLine::new(
-            format!("task {content}"),
+            format!("Task  {content}"),
             SingleSessionLineStyle::Meta,
         ),
         Some("meta") => SessionSwitcherRenderedLine::new(
-            format!("meta {content}"),
+            format!("Meta  {content}"),
             SingleSessionLineStyle::Meta,
         ),
         _ => SessionSwitcherRenderedLine::new(
@@ -5422,16 +6434,6 @@ fn session_switcher_split_preview_role(line: &str) -> (Option<&str>, &str) {
         "user" | "asst" | "assistant" | "tool" | "sys" | "system" | "task" | "background_task"
         | "meta" => (Some(role), content.trim()),
         _ => (None, trimmed),
-    }
-}
-
-fn pad_columns(text: &str, width: usize) -> String {
-    let text = truncate_chars(text, width);
-    let len = text.chars().count();
-    if len >= width {
-        text
-    } else {
-        format!("{text}{}", " ".repeat(width - len))
     }
 }
 
@@ -5631,6 +6633,18 @@ fn session_info_inline_styled_lines(app: &SingleSessionApp) -> Vec<SingleSession
     lines
 }
 
+fn session_info_inline_line_count(app: &SingleSessionApp) -> usize {
+    12 + usize::from(
+        app.session
+            .as_ref()
+            .is_some_and(|session| !session.subtitle.trim().is_empty()),
+    ) + usize::from(
+        app.session
+            .as_ref()
+            .is_some_and(|session| !session.detail.trim().is_empty()),
+    ) + usize::from(app.error.is_some())
+}
+
 fn session_message_role_counts(
     messages: &[SingleSessionMessage],
 ) -> (usize, usize, usize, usize, usize) {
@@ -5713,11 +6727,6 @@ fn model_picker_inline_styled_lines(picker: &ModelPickerState) -> Vec<SingleSess
             continue;
         };
         let visible_position = window_start + row_offset;
-        let selector = if visible_position == picker.selected {
-            "›"
-        } else {
-            " "
-        };
         let provider = choice.provider.as_deref().unwrap_or("auto");
         let method = choice.api_method.as_deref().unwrap_or("auto");
         let current_badge = if Some(choice.model.as_str()) == current {
@@ -5741,11 +6750,7 @@ fn model_picker_inline_styled_lines(picker: &ModelPickerState) -> Vec<SingleSess
             SingleSessionLineStyle::Overlay
         };
         lines.push(styled_line(
-            format!(
-                "{selector} {}{}",
-                truncate_chars(&choice.model, 54),
-                current_badge,
-            ),
+            format!("{}{}", truncate_chars(&choice.model, 54), current_badge,),
             row_style,
         ));
         lines.push(styled_line(
@@ -5761,20 +6766,53 @@ fn model_picker_inline_styled_lines(picker: &ModelPickerState) -> Vec<SingleSess
     if visible.len() > window_start + window.len() {
         lines.push(styled_line(
             format!(
-                "… {} more models",
+                "{} more models",
                 visible.len() - window_start - window.len()
             ),
             SingleSessionLineStyle::Overlay,
         ));
     }
     let footer = if picker.preview {
-        "↑↓/PgUp/PgDn select   Home/End top/bottom   Enter use model   Esc clear /model"
+        "Up/Down/PageUp/PageDown select   Home/End top/bottom   Enter use model   Esc clear /model"
     } else {
-        "↑↓/PgUp/PgDn select   Home/End top/bottom   Type filter   Enter use   Esc close"
+        "Up/Down/PageUp/PageDown select   Home/End top/bottom   Type filter   Enter use   Esc close"
     };
     lines.push(styled_line(footer, SingleSessionLineStyle::Overlay));
 
     lines
+}
+
+fn model_picker_inline_line_count(picker: &ModelPickerState) -> usize {
+    let visible_len = picker.filtered_indices().len();
+    let mut count = 2;
+    if picker.loading {
+        count += 1;
+    }
+    if picker.error.is_some() {
+        count += 1;
+    }
+    if visible_len == 0 && !picker.loading {
+        return count + 2;
+    }
+
+    let (window_start, window_len) =
+        row_window_bounds(visible_len, picker.selected, MODEL_PICKER_INLINE_ROW_LIMIT);
+    count += window_len * 2;
+    if visible_len > window_start + window_len {
+        count += 1;
+    }
+    count + 1
+}
+
+fn row_window_bounds(visible_len: usize, selected: usize, limit: usize) -> (usize, usize) {
+    if visible_len == 0 || limit == 0 {
+        return (0, 0);
+    }
+    let max_start = visible_len.saturating_sub(limit);
+    let selected = selected.min(visible_len - 1);
+    let start = selected.saturating_sub(limit / 2).min(max_start);
+    let end = (start + limit).min(visible_len);
+    (start, end - start)
 }
 
 fn model_picker_preview_filter(input: &str) -> Option<String> {
@@ -5782,6 +6820,21 @@ fn model_picker_preview_filter(input: &str) -> Option<String> {
     let rest = trimmed
         .strip_prefix("/model")
         .or_else(|| trimmed.strip_prefix("/models"))?;
+    if rest.is_empty() {
+        return Some(String::new());
+    }
+    rest.chars()
+        .next()
+        .filter(|ch| ch.is_whitespace())
+        .map(|_| rest.trim_start().to_string())
+}
+
+fn session_switcher_preview_filter(input: &str) -> Option<String> {
+    let trimmed = input.trim_start();
+    let rest = trimmed
+        .strip_prefix("/resume")
+        .or_else(|| trimmed.strip_prefix("/sessions"))
+        .or_else(|| trimmed.strip_prefix("/session"))?;
     if rest.is_empty() {
         return Some(String::new());
     }
@@ -5922,14 +6975,16 @@ fn desktop_slash_fuzzy_score(needle: &str, haystack: &str) -> Option<usize> {
 }
 
 fn dedupe_model_choices(choices: Vec<DesktopModelChoice>) -> Vec<DesktopModelChoice> {
-    let mut deduped: Vec<DesktopModelChoice> = Vec::new();
+    let mut seen = HashSet::with_capacity(choices.len());
+    let mut deduped: Vec<DesktopModelChoice> = Vec::with_capacity(choices.len());
     for choice in choices {
-        if deduped.iter().any(|existing| {
-            existing.model == choice.model
-                && existing.provider == choice.provider
-                && existing.api_method == choice.api_method
-                && existing.detail == choice.detail
-        }) {
+        let key = (
+            choice.model.clone(),
+            choice.provider.clone(),
+            choice.api_method.clone(),
+            choice.detail.clone(),
+        );
+        if !seen.insert(key) {
             continue;
         }
         deduped.push(choice);
@@ -6045,6 +7100,19 @@ fn single_session_help_styled_lines() -> Vec<SingleSessionStyledLine> {
 
 fn hotkey_help_inline_widget() -> ReadOnlyInlineWidget {
     ReadOnlyInlineWidget::new("desktop shortcuts", single_session_help_styled_lines())
+}
+
+fn hotkey_help_inline_line_count() -> usize {
+    single_session_help_styled_line_count() + 2
+}
+
+fn single_session_help_styled_line_count() -> usize {
+    DESKTOP_SLASH_COMMANDS.len()
+        + 1
+        + SINGLE_SESSION_HELP_SECTIONS
+            .iter()
+            .map(|section| 2 + section.shortcuts.len())
+            .sum::<usize>()
 }
 
 fn append_chat_message_lines(
@@ -7383,6 +8451,10 @@ fn formatted_tool_input_lines(tool_name: &str, raw_input: &str) -> Vec<String> {
         return vec!["input: <empty>".to_string()];
     }
 
+    if !looks_like_json_value(raw_input) {
+        return vec![format!("input: {}", compact_tool_text(raw_input, 132))];
+    }
+
     let Ok(value) = serde_json::from_str::<serde_json::Value>(raw_input) else {
         return vec![format!("input: {}", compact_tool_text(raw_input, 132))];
     };
@@ -7422,6 +8494,13 @@ fn formatted_tool_input_lines(tool_name: &str, raw_input: &str) -> Vec<String> {
         rendered.push(format!("… {} more", total - MAX_INPUT_LINES));
     }
     rendered
+}
+
+fn looks_like_json_value(text: &str) -> bool {
+    matches!(
+        text.as_bytes().first().copied(),
+        Some(b'{' | b'[' | b'"' | b'-' | b'0'..=b'9' | b't' | b'f' | b'n')
+    )
 }
 
 fn formatted_tool_input_summary(
@@ -7615,12 +8694,32 @@ fn is_sensitive_tool_input_key(key: &str) -> bool {
 }
 
 fn compact_tool_text(text: &str, max_chars: usize) -> String {
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.chars().count() > max_chars {
-        format!("{}…", text.chars().take(max_chars).collect::<String>())
-    } else {
-        text
+    let mut compacted = String::new();
+    let mut chars = 0usize;
+    let mut first_word = true;
+
+    for word in text.split_whitespace() {
+        if first_word {
+            first_word = false;
+        } else if chars == max_chars {
+            compacted.push('…');
+            return compacted;
+        } else {
+            compacted.push(' ');
+            chars += 1;
+        }
+
+        for ch in word.chars() {
+            if chars == max_chars {
+                compacted.push('…');
+                return compacted;
+            }
+            compacted.push(ch);
+            chars += 1;
+        }
     }
+
+    compacted
 }
 
 fn normalized_tool_call_id(id: Option<String>) -> Option<String> {
@@ -7829,6 +8928,7 @@ pub(crate) fn single_session_surface(
             .unwrap_or_else(|| "new jcode session".to_string()),
         body_lines: lines.clone(),
         detail_lines: lines,
+        transcript_messages: Vec::new(),
         session_id: session.map(|session| session.session_id.clone()),
         lane: 0,
         column: 0,
@@ -7921,6 +9021,74 @@ mod tests {
             .into_iter()
             .map(|line| line.text)
             .collect()
+    }
+
+    fn test_model_choice(model: &str) -> DesktopModelChoice {
+        DesktopModelChoice {
+            model: model.to_string(),
+            provider: Some("test-provider".to_string()),
+            api_method: Some("chat".to_string()),
+            detail: Some("available".to_string()),
+            available: true,
+        }
+    }
+
+    fn test_session_card(session_id: &str, title: &str) -> workspace::SessionCard {
+        workspace::SessionCard {
+            session_id: session_id.to_string(),
+            title: title.to_string(),
+            subtitle: "active · test-model".to_string(),
+            detail: "4 msgs · just now · test".to_string(),
+            preview_lines: vec!["user latest compact prompt".to_string()],
+            detail_lines: vec![
+                "user first question".to_string(),
+                "assistant first answer".to_string(),
+                "tool bash completed".to_string(),
+            ],
+            transcript_messages: Vec::new(),
+        }
+    }
+
+    fn assert_render_line_count_matches(app: &SingleSessionApp) {
+        assert_eq!(
+            app.render_inline_widget_line_count(),
+            app.render_inline_widget_styled_lines().len(),
+            "render line count should match styled-line rendering"
+        );
+    }
+
+    #[test]
+    fn inline_widget_line_count_matches_rendered_lines_for_active_widgets() {
+        let mut help = SingleSessionApp::new(None);
+        help.show_help = true;
+        assert_render_line_count_matches(&help);
+
+        let mut info = SingleSessionApp::new(None);
+        info.show_session_info = true;
+        info.error = Some("test error".to_string());
+        info.session = Some(test_session_card("session_info", "Info Session"));
+        assert_render_line_count_matches(&info);
+
+        let mut slash = SingleSessionApp::new(None);
+        slash.handle_key(KeyInput::Character("/re".to_string()));
+        assert_render_line_count_matches(&slash);
+
+        let mut model = SingleSessionApp::new(None);
+        model.model_picker.open = true;
+        model.model_picker.choices = vec![test_model_choice("alpha"), test_model_choice("beta")];
+        model.model_picker.selected = 1;
+        model.model_picker.refresh_visible_indices();
+        assert_render_line_count_matches(&model);
+
+        let mut switcher = SingleSessionApp::new(None);
+        switcher.session_switcher.open = true;
+        switcher.session_switcher.sessions = vec![
+            test_session_card("session_alpha", "Alpha"),
+            test_session_card("session_beta", "Beta"),
+        ];
+        switcher.session_switcher.selected = 1;
+        switcher.session_switcher.refresh_visible_indices();
+        assert_render_line_count_matches(&switcher);
     }
 
     #[test]
@@ -8064,6 +9232,59 @@ mod tests {
             "{\"intent\":\"describe action\",\"query\":\"tool calls\"}",
         );
         assert_eq!(lines, vec!["query: tool calls", "intent: describe action"]);
+    }
+
+    #[test]
+    fn plain_tool_input_skips_json_probe_and_renders_compactly() {
+        let lines = formatted_tool_input_lines("bash", " chunk-0 chunk-1 chunk-2");
+        assert_eq!(lines, vec!["input: chunk-0 chunk-1 chunk-2"]);
+        assert!(!looks_like_json_value("chunk-0"));
+        assert!(looks_like_json_value("{\"command\":\"cargo test\"}"));
+    }
+
+    #[test]
+    fn active_tool_cache_key_ignores_input_suffix_after_visible_preview_stabilizes() {
+        let mut app = SingleSessionApp::new(None);
+        app.apply_session_event(DesktopSessionEvent::ToolStarted {
+            id: Some("tool-a".to_string()),
+            name: "bash".to_string(),
+        });
+        app.apply_session_event(DesktopSessionEvent::ToolExecuting {
+            id: Some("tool-a".to_string()),
+            name: "bash".to_string(),
+        });
+        app.apply_session_event(DesktopSessionEvent::ToolInput {
+            id: Some("tool-a".to_string()),
+            delta: "a".repeat(160),
+        });
+
+        let body_before = app.body_lines();
+        let body_key_before = app.rendered_body_cache_key((900, 700));
+        let static_key_before = app.rendered_body_static_cache_key((900, 700));
+
+        app.apply_session_event(DesktopSessionEvent::ToolInput {
+            id: Some("tool-a".to_string()),
+            delta: "b".repeat(40),
+        });
+
+        assert_eq!(app.body_lines(), body_before);
+        assert_eq!(app.rendered_body_cache_key((900, 700)), body_key_before);
+        assert_eq!(
+            app.rendered_body_static_cache_key((900, 700)),
+            static_key_before
+        );
+    }
+
+    #[test]
+    fn compact_tool_text_collapses_whitespace_and_stops_after_visible_prefix() {
+        assert_eq!(
+            compact_tool_text("  alpha\n\tbeta   gamma  ", 32),
+            "alpha beta gamma"
+        );
+        assert_eq!(compact_tool_text("alpha beta gamma", 10), "alpha beta…");
+        assert_eq!(compact_tool_text("你好 世界 again", 5), "你好 世界…");
+        assert_eq!(compact_tool_text("alpha", 0), "…");
+        assert_eq!(compact_tool_text("   ", 0), "");
     }
 
     #[test]
