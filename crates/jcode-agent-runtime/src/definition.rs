@@ -199,6 +199,35 @@ pub enum DefinitionError {
     DuplicateSpawnable { id: String, spawn: String },
 }
 
+/// Errors returned when cross-referencing an agent against the runtime
+/// tool/agent universe (i.e. checking that `tool_names` actually exist).
+///
+/// These are **separate from `DefinitionError`** because the runtime
+/// universe isn't known at TOML-load time — it depends on feature flags,
+/// MCP server connections, and the resolved agent registry. Callers
+/// invoke `validate_tool_references` / `validate_spawn_references` at
+/// agent spawn time.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum ReferenceError {
+    #[error(
+        "agent `{id}` references unknown tool(s): {unknown}. Available tools: {available}"
+    )]
+    UnknownTools {
+        id: String,
+        unknown: String,
+        available: String,
+    },
+
+    #[error(
+        "agent `{id}` references unknown sub-agent(s): {unknown}. Available agents: {available}"
+    )]
+    UnknownSpawnableAgents {
+        id: String,
+        unknown: String,
+        available: String,
+    },
+}
+
 impl AgentDefinition {
     /// Validate id format + cross-field invariants. Returns `Ok(())` when
     /// the definition is well-formed.
@@ -264,6 +293,88 @@ impl AgentDefinition {
             self.prefer_tier,
             current_session_model,
         )
+    }
+
+    /// Check that every entry in `tool_names` exists in the caller-provided
+    /// universe of tool names. Returns the list of unknown tools when any
+    /// fail. Caller decides whether unknown tools are fatal (likely yes
+    /// for production agents, no for under-development agents).
+    ///
+    /// Empty `tool_names` always validates — agents with no tools are
+    /// legal (e.g. pure-prompt summarizer).
+    pub fn validate_tool_references<I, S>(&self, available: I) -> Result<(), ReferenceError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let available: std::collections::HashSet<String> = available
+            .into_iter()
+            .map(|s| s.as_ref().to_string())
+            .collect();
+        let unknown: Vec<&String> = self
+            .tool_names
+            .iter()
+            .filter(|name| !available.contains(name.as_str()))
+            .collect();
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        let mut sorted_unknown: Vec<&String> = unknown;
+        sorted_unknown.sort();
+        let mut sorted_available: Vec<&String> = available.iter().collect();
+        sorted_available.sort();
+        Err(ReferenceError::UnknownTools {
+            id: self.id.clone(),
+            unknown: sorted_unknown
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            available: sorted_available
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        })
+    }
+
+    /// Check that every entry in `spawnable_agents` exists in the caller-
+    /// provided universe of agent ids. Returns unknown agents when any
+    /// fail. Same semantics as `validate_tool_references`.
+    pub fn validate_spawn_references<I, S>(&self, available: I) -> Result<(), ReferenceError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let available: std::collections::HashSet<String> = available
+            .into_iter()
+            .map(|s| s.as_ref().to_string())
+            .collect();
+        let unknown: Vec<&String> = self
+            .spawnable_agents
+            .iter()
+            .filter(|name| !available.contains(name.as_str()))
+            .collect();
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        let mut sorted_unknown: Vec<&String> = unknown;
+        sorted_unknown.sort();
+        let mut sorted_available: Vec<&String> = available.iter().collect();
+        sorted_available.sort();
+        Err(ReferenceError::UnknownSpawnableAgents {
+            id: self.id.clone(),
+            unknown: sorted_unknown
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            available: sorted_available
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        })
     }
 }
 
@@ -491,5 +602,89 @@ mod tests {
         "#;
         let d: AgentDefinition = toml::from_str(src).expect("parse");
         d.validate().expect("validate");
+    }
+
+    // -----------------------------------------------------------------
+    // Cross-reference validation (Phase 0.4)
+    // -----------------------------------------------------------------
+    #[test]
+    fn validate_tool_references_passes_when_all_known() {
+        let mut d = minimal_definition("editor");
+        d.tool_names = vec!["read".to_string(), "write_file".to_string()];
+        d.validate_tool_references(["read", "write_file", "str_replace"])
+            .expect("all tools known");
+    }
+
+    #[test]
+    fn validate_tool_references_fails_with_unknown_tools() {
+        let mut d = minimal_definition("editor");
+        d.tool_names = vec!["read".to_string(), "magic".to_string()];
+        let err = d
+            .validate_tool_references(["read", "write_file"])
+            .expect_err("magic is unknown");
+        match err {
+            ReferenceError::UnknownTools {
+                id,
+                unknown,
+                available,
+            } => {
+                assert_eq!(id, "editor");
+                assert_eq!(unknown, "magic");
+                assert!(available.contains("read"));
+                assert!(available.contains("write_file"));
+            }
+            other => panic!("expected UnknownTools, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn validate_tool_references_empty_tool_names_always_ok() {
+        let d = minimal_definition("ask");
+        // tool_names is empty by default; supplying empty universe is also fine.
+        d.validate_tool_references(Vec::<String>::new())
+            .expect("empty tool list always valid");
+    }
+
+    #[test]
+    fn validate_spawn_references_passes_when_all_known() {
+        let mut d = minimal_definition("base");
+        d.spawnable_agents = vec!["file-picker".to_string(), "editor".to_string()];
+        d.validate_spawn_references(["file-picker", "editor", "reviewer"])
+            .expect("all known");
+    }
+
+    #[test]
+    fn validate_spawn_references_fails_with_unknown_agents() {
+        let mut d = minimal_definition("base");
+        d.spawnable_agents = vec!["file-picker".to_string(), "ghost".to_string()];
+        let err = d
+            .validate_spawn_references(["file-picker", "editor"])
+            .expect_err("ghost unknown");
+        match err {
+            ReferenceError::UnknownSpawnableAgents {
+                id,
+                unknown,
+                available: _,
+            } => {
+                assert_eq!(id, "base");
+                assert_eq!(unknown, "ghost");
+            }
+            other => panic!("expected UnknownSpawnableAgents, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn validate_references_unknown_list_is_sorted_and_comma_joined() {
+        let mut d = minimal_definition("agent");
+        d.tool_names = vec!["zeta".to_string(), "alpha".to_string(), "mid".to_string()];
+        let err = d
+            .validate_tool_references(Vec::<&str>::new())
+            .expect_err("none known");
+        match err {
+            ReferenceError::UnknownTools { unknown, .. } => {
+                assert_eq!(unknown, "alpha, mid, zeta", "alphabetical order");
+            }
+            _ => unreachable!(),
+        }
     }
 }

@@ -139,6 +139,22 @@ impl AgentRegistry {
         v
     }
 
+    /// Look up an agent referenced by a Skill MAS field (#94).
+    ///
+    /// `SKILL.md` front-matter has an optional `agent: <id>` field that
+    /// routes skill activation to a specific sub-agent rather than the
+    /// main agent. The id format is identical to `AgentDefinition::id`,
+    /// so this is functionally `get(id)` — the named alias exists to
+    /// document the integration point and keep future skill-routing
+    /// logic discoverable.
+    ///
+    /// Returns `None` if the skill references an unknown agent. The
+    /// caller (skill activation site) decides whether to log a warning
+    /// or fall back to the main agent.
+    pub fn lookup_for_skill_routing(&self, skill_agent_id: &str) -> Option<&LoadedAgent> {
+        self.get(skill_agent_id)
+    }
+
     /// Non-fatal errors accumulated during discovery.
     pub fn load_errors(&self) -> &[LoadError] {
         &self.load_errors
@@ -499,6 +515,32 @@ display_name = "{id}"
         reg.load_directory(&dir, SourceKind::UserGlobal).unwrap();
         let ids: Vec<_> = reg.iter_sorted().iter().map(|a| a.definition.id.clone()).collect();
         assert_eq!(ids, vec!["alpha", "mid", "zeta"]);
+    }
+
+    #[test]
+    fn lookup_for_skill_routing_finds_agent() {
+        let dir = temp_dir("skill-mas-hit");
+        write_toml(
+            &dir,
+            "code-reviewer.toml",
+            r#"id = "code-reviewer"
+display_name = "Reviewer"
+"#,
+        );
+        let mut reg = AgentRegistry::new();
+        reg.load_directory(&dir, SourceKind::ProjectLocal).unwrap();
+        // Skill front-matter `agent: code-reviewer` → registry lookup.
+        let found = reg.lookup_for_skill_routing("code-reviewer");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().definition.id, "code-reviewer");
+    }
+
+    #[test]
+    fn lookup_for_skill_routing_returns_none_for_unknown_agent() {
+        let reg = AgentRegistry::new();
+        // Caller (skill activation site) decides how to handle a missing
+        // routing target — we just report None.
+        assert!(reg.lookup_for_skill_routing("nonexistent").is_none());
     }
 
     #[test]
