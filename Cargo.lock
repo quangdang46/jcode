@@ -3609,6 +3609,7 @@ dependencies = [
  "dirs",
  "ffs-search",
  "flate2",
+ "ftui-style",
  "futures",
  "glob",
  "global-hotkey",
@@ -4164,7 +4165,6 @@ name = "jcode-tui-usage-overlay"
 version = "0.1.0"
 dependencies = [
  "ftui-style",
- "ratatui",
  "serde",
 ]
 

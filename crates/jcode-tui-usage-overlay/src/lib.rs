@@ -1,4 +1,4 @@
-use ratatui::style::Color;
+use ftui_style::Color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -27,10 +27,8 @@ impl UsageOverlayStatus {
         }
     }
 
-    /// Source-of-truth RGB triplet for each status. Both [`Self::color`] (the
-    /// ratatui-shaped backend) and the optional frankentui backend exposed via
-    /// [`Self::color_ftui`] under the `frankentui` cargo feature delegate here,
-    /// so the two views can never drift apart.
+    /// Source-of-truth RGB triplet for each status. [`Self::color`] delegates
+    /// here so the constants stay in one place.
     pub const fn rgb(self) -> (u8, u8, u8) {
         match self {
             Self::Loading => (129, 184, 255),
@@ -42,21 +40,13 @@ impl UsageOverlayStatus {
         }
     }
 
-    /// Status color in the ratatui color model. This is the public API used by
-    /// the rest of jcode (it feeds directly into `ratatui::Style::fg`); keep
-    /// the return type stable until consumers of this crate are migrated too.
+    /// Status color as a frankentui `ftui_style::Color`. Consumers that still
+    /// drive ratatui rendering should convert at the call site via
+    /// `jcode::tui::ftui_compat::ftui_color_to_rata` (or any other one-line
+    /// shim) — see branch experimental/ratatui-to-frankentui.
     pub fn color(self) -> Color {
         let (r, g, b) = self.rgb();
-        Color::Rgb(r, g, b)
-    }
-
-    /// Status color in the frankentui color model. Available only when the
-    /// `frankentui` cargo feature is enabled. Returns the same RGB triplet as
-    /// [`Self::color`], wrapped in `ftui_style::Color::Rgb`.
-    #[cfg(feature = "frankentui")]
-    pub fn color_ftui(self) -> ftui_style::Color {
-        let (r, g, b) = self.rgb();
-        ftui_style::Color::rgb(r, g, b)
+        Color::rgb(r, g, b)
     }
 
     pub fn icon(self) -> &'static str {
@@ -153,8 +143,6 @@ mod tests {
         assert!(!item_matches_filter(&item, "openai"));
     }
 
-    /// Lock in the rgb() source-of-truth so any later refactor that splits
-    /// color() / color_ftui() into independent constants will fail this test.
     #[test]
     fn rgb_values_are_stable() {
         assert_eq!(UsageOverlayStatus::Loading.rgb(), (129, 184, 255));
@@ -166,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn ratatui_color_matches_rgb_source_of_truth() {
+    fn color_round_trips_through_rgb_via_ftui_to_rgb() {
         for status in [
             UsageOverlayStatus::Loading,
             UsageOverlayStatus::Good,
@@ -176,29 +164,10 @@ mod tests {
             UsageOverlayStatus::Info,
         ] {
             let (r, g, b) = status.rgb();
-            assert_eq!(status.color(), Color::Rgb(r, g, b));
-        }
-    }
-
-    #[cfg(feature = "frankentui")]
-    #[test]
-    fn frankentui_color_matches_rgb_source_of_truth() {
-        for status in [
-            UsageOverlayStatus::Loading,
-            UsageOverlayStatus::Good,
-            UsageOverlayStatus::Warning,
-            UsageOverlayStatus::Critical,
-            UsageOverlayStatus::Error,
-            UsageOverlayStatus::Info,
-        ] {
-            let (r, g, b) = status.rgb();
-            // ftui_style::Color::rgb() is a const fn that wraps Rgb::new.
-            assert_eq!(status.color_ftui(), ftui_style::Color::rgb(r, g, b));
-            // And both backends round-trip to the same RGB triplet.
-            let rata = status.color();
-            let ftui = status.color_ftui();
-            let ftui_rgb = ftui.to_rgb();
-            assert_eq!(rata, Color::Rgb(ftui_rgb.r, ftui_rgb.g, ftui_rgb.b));
+            let c = status.color();
+            // ftui_style::Color::to_rgb() always normalizes to its Rgb wrapper.
+            let rgb = c.to_rgb();
+            assert_eq!((rgb.r, rgb.g, rgb.b), (r, g, b));
         }
     }
 }

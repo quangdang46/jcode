@@ -6,6 +6,15 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
+use crate::tui::ftui_compat::ftui_color_to_rata;
+
+/// Local convenience: convert the frankentui `Color` returned by
+/// `UsageOverlayStatus::color()` into the ratatui `Color` that `Style::fg` /
+/// `Style::bg` consume. Inlined at the call sites below for grep-ability.
+fn status_color_rata(status: UsageOverlayStatus) -> Color {
+    ftui_color_to_rata(status.color())
+}
+
 const PANEL_BG: Color = Color::Rgb(24, 28, 40);
 const PANEL_BORDER: Color = Color::Rgb(90, 95, 110);
 const PANEL_BORDER_ACTIVE: Color = Color::Rgb(120, 140, 190);
@@ -445,14 +454,14 @@ impl UsageOverlay {
                 Style::default().fg(MUTED)
             };
             let badge_style = Style::default()
-                .fg(item.status.color())
+                .fg(status_color_rata(item.status))
                 .bg(if selected { SELECTED_BG } else { PANEL_BG })
                 .bold();
             let marker = if selected { "›" } else { " " };
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("{} {} ", marker, item.status.icon()),
-                    Style::default().fg(item.status.color()).bg(if selected {
+                    Style::default().fg(status_color_rata(item.status)).bg(if selected {
                         SELECTED_BG
                     } else {
                         PANEL_BG
@@ -488,7 +497,7 @@ impl UsageOverlay {
             .map(|item| format!(" {} · {} ", item.title, item.status.label()))
             .unwrap_or_else(|| " Usage details ".to_string());
         let border_color = selected
-            .map(|item| item.status.color())
+            .map(|item| status_color_rata(item.status))
             .unwrap_or(PANEL_BORDER_ACTIVE);
         let block = Block::default()
             .title(Span::styled(

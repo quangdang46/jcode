@@ -3,6 +3,10 @@ mod app;
 pub mod backend;
 pub(crate) mod color_support;
 mod core;
+// Conversion shims between ftui_style and ratatui types. Used during the
+// experimental/ratatui-to-frankentui migration; remove once the rendering
+// layer no longer depends on ratatui.
+pub(crate) mod ftui_compat;
 mod generated_image;
 pub mod image;
 mod image_metadata;

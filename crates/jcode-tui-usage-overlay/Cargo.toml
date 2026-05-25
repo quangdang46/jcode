@@ -5,19 +5,13 @@ edition = "2024"
 publish = false
 
 [dependencies]
-ratatui = "0.30"
 serde = { version = "1", features = ["derive"], optional = true }
-# Optional frankentui backend (experimental ratatui → frankentui migration).
+# Migrated to frankentui's ftui-style on branch experimental/ratatui-to-frankentui.
 # Pinned to a specific commit on quangdang46/frankentui main so dependency
-# resolution stays reproducible across machines that do not have the local
+# resolution stays reproducible across machines that do not have a local
 # /data/projects/frankentui checkout.
-ftui-style = { git = "https://github.com/quangdang46/frankentui", rev = "33ad1c57d545292242e41a477c8278c70ed7e0d6", optional = true }
+ftui-style = { git = "https://github.com/quangdang46/frankentui", rev = "33ad1c57d545292242e41a477c8278c70ed7e0d6" }
 
 [features]
 default = []
 serde = ["dep:serde"]
-# Expose a parallel ftui_style::Color view of UsageOverlayStatus colors.
-# Does not remove the ratatui-shaped color() API — both backends are produced
-# from the same rgb() source of truth. Used by the experimental
-# ratatui → frankentui migration on branch experimental/ratatui-to-frankentui.
-frankentui = ["dep:ftui-style"]
