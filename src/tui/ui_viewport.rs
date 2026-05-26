@@ -66,6 +66,10 @@ fn highlight_line_selection(
     };
 
     for span in &line.spans {
+        let mut selected_style = span.style.bg(selection_bg_for(span.style.bg));
+        if let Some(fg) = selection_fg_for(span.style.fg) {
+            selected_style = selected_style.fg(fg);
+        }
         for ch in span.content.chars() {
             let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
             let selected = if width == 0 {
@@ -74,13 +78,7 @@ fn highlight_line_selection(
                 col < end_col && col.saturating_add(width) > start_col
             };
 
-            let mut style = span.style;
-            if selected {
-                style = style.bg(selection_bg_for(style.bg));
-                if let Some(fg) = selection_fg_for(style.fg) {
-                    style = style.fg(fg);
-                }
-            }
+            let style = if selected { selected_style } else { span.style };
 
             if current_style == Some(style) {
                 current_text.push(ch);
@@ -375,10 +373,12 @@ pub(super) fn draw_messages(
 
     let mut visible_copy_targets: Vec<VisibleCopyTarget> = Vec::new();
     let mut badge_assignments: Vec<(usize, char)> = Vec::new();
-    for (slot, target) in prepared
+    let first_visible_copy_target = prepared
         .copy_targets
+        .partition_point(|target| target.end_line <= scroll);
+    for (slot, target) in prepared.copy_targets[first_visible_copy_target..]
         .iter()
-        .filter(|target| target.end_line > scroll && target.start_line < visible_end)
+        .take_while(|target| target.start_line < visible_end)
         .take(COPY_BADGE_KEYS.len())
         .enumerate()
     {

@@ -432,6 +432,25 @@ pub fn render_html(session: &crate::session::Session) -> String {
                         encrypted_content.len()
                     ));
                 }
+                ContentBlock::AnthropicThinking { thinking, .. } => {
+                    let trimmed = thinking.trim();
+                    if !trimmed.is_empty() {
+                        out.push_str(&format!(
+                            "<details><summary>thinking</summary>\n<div class=\"text\">{}</div>\n</details>\n",
+                            html_escape(trimmed)
+                        ));
+                    }
+                }
+                ContentBlock::OpenAIReasoning { summary, .. } => {
+                    let joined = summary.join("\n");
+                    let trimmed = joined.trim();
+                    if !trimmed.is_empty() {
+                        out.push_str(&format!(
+                            "<details><summary>reasoning</summary>\n<div class=\"text\">{}</div>\n</details>\n",
+                            html_escape(trimmed)
+                        ));
+                    }
+                }
             }
         }
         out.push_str("</section>\n");
@@ -501,6 +520,23 @@ fn render_stored_message(out: &mut String, idx: usize, msg: &crate::session::Sto
                     "_[OpenAI native compaction artifact: {} chars]_\n\n",
                     encrypted_content.len()
                 ));
+            }
+            ContentBlock::AnthropicThinking { thinking, .. } => {
+                let trimmed = thinking.trim();
+                if !trimmed.is_empty() {
+                    out.push_str("<details><summary>thinking</summary>\n\n");
+                    out.push_str(trimmed);
+                    out.push_str("\n\n</details>\n\n");
+                }
+            }
+            ContentBlock::OpenAIReasoning { summary, .. } => {
+                let joined = summary.join("\n");
+                let trimmed = joined.trim();
+                if !trimmed.is_empty() {
+                    out.push_str("<details><summary>reasoning</summary>\n\n");
+                    out.push_str(trimmed);
+                    out.push_str("\n\n</details>\n\n");
+                }
             }
         }
     }
