@@ -8,15 +8,16 @@
 //! unified diff against the parent commit.
 //!
 //! Design source: `/tmp/codebuff/evals/buffbench/agent-runner.ts`.
-//!
-//! Implementation lands in Phase 5.3; for now both entry points are
-//! `unimplemented!()` stubs whose signatures fix the contract the rest
-//! of the harness will rely on.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::types::EvalRun;
 
@@ -38,33 +39,131 @@ pub struct AgentRunConfig {
     /// Hard cap on the number of agent turns before the run is
     /// aborted; mirrors BuffBench's per-task turn budget.
     pub max_turns: u32,
+    /// Timeout for the entire run in seconds (defaults to 60 minutes).
+    pub timeout_secs: u64,
     /// Extra environment variables applied to the agent subprocess on
     /// top of the calling process's environment.
     pub env: HashMap<String, String>,
+    /// Path to the `jcode` binary. Defaults to searching $PATH.
+    pub jcode_binary: Option<PathBuf>,
+}
+
+impl Default for AgentRunConfig {
+    fn default() -> Self {
+        Self {
+            agent_id: String::new(),
+            prompt: String::new(),
+            repo_path: PathBuf::new(),
+            max_turns: 100,
+            timeout_secs: 60 * 60,
+            env: HashMap::new(),
+            jcode_binary: None,
+        }
+    }
 }
 
 /// Spawn the configured agent in `config.repo_path`, run it to
 /// completion (or the turn / time budget), and return an [`EvalRun`]
 /// populated with the agent's diff, judging placeholder, cost, and
 /// duration.
-///
-/// The runner is responsible for:
-/// - Capturing the agent's full trace for later analysis.
-/// - Calling [`extract_diff_from_repo`] once the agent finishes.
-/// - Invoking the judging pipeline (or leaving that to the caller —
-///   the final wiring is decided in Phase 5.3).
 pub async fn run_agent_in_repo(config: AgentRunConfig) -> Result<EvalRun> {
-    let _ = config;
-    unimplemented!("Phase 5.3: spawn jcode subprocess in repo, capture trace")
+    let start = Instant::now();
+    let timeout_duration = Duration::from_secs(config.timeout_secs);
+
+    let jcode_bin = config
+        .jcode_binary
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("jcode"));
+
+    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
+    env_vars.extend(config.env);
+    env_vars.insert("JCODE_AGENT_ID".to_owned(), config.agent_id.clone());
+
+    let mut child = Command::new(&jcode_bin)
+        .current_dir(&config.repo_path)
+        .envs(&env_vars)
+        .args([
+            "agent", "run",
+            "--agent", &config.agent_id,
+            "--output-mode", "stream",
+            "--no-interactive",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to spawn jcode binary at {:?}", jcode_bin))?;
+
+    let mut child_stdin = child.stdin.take().expect("stdin captured");
+    let stdout = child.stdout.take().expect("stdout captured");
+
+    // Write the prompt to stdin
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut stdin = tokio::io::BufWriter::new(&mut child_stdin);
+        stdin.write_all(config.prompt.as_bytes()).await?;
+        stdin.flush().await?;
+        drop(stdin);
+    }
+
+    let mut trace_lines = Vec::new();
+    let reader = BufReader::new(stdout);
+    let mut lines_stream = reader.lines();
+    loop {
+        let line = timeout(timeout_duration, lines_stream.next_line()).await;
+        match line {
+            Ok(Ok(Some(l))) => trace_lines.push(l),
+            _ => break,
+        }
+    }
+
+    let status = child
+        .wait()
+        .await
+        .context("failed to wait for jcode subprocess")?;
+
+    let diff = extract_diff_from_repo(&config.repo_path)?;
+    let error = if !status.success() {
+        Some(format!("jcode exited with status {:?}", status))
+    } else {
+        None
+    };
+
+    Ok(EvalRun {
+        commit_sha: String::new(),
+        prompt: config.prompt,
+        diff,
+        judging: Default::default(),
+        cost_usd: 0.0,
+        duration_ms: start.elapsed().as_millis() as u64,
+        error,
+    })
 }
 
 /// Produce a unified diff describing all uncommitted changes in
 /// `repo_path` against its currently-checked-out HEAD.
-///
-/// Used after the agent finishes editing to capture the "agent's
-/// changes" half of the judging input. The exact git invocation
-/// (likely `git diff --no-color HEAD`) is finalized in Phase 5.3.
 pub fn extract_diff_from_repo(repo_path: &Path) -> Result<String> {
-    let _ = repo_path;
-    unimplemented!("Phase 5.3: shell out to git diff and return the unified diff")
+    let output = std::process::Command::new("git")
+        .args(["diff", "--no-color", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .context("git diff failed")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git diff exited with error: {stderr}");
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn extract_diff_from_repo_nonexistent() {
+        let result = extract_diff_from_repo(Path::new("/tmp/does-not-exist"));
+        assert!(result.is_err());
+    }
 }

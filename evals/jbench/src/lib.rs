@@ -17,3 +17,8 @@ pub mod agent_runner;
 pub mod judge;
 pub mod lessons;
 pub mod types;
+
+pub use types::{EvalCommit, EvalDataV2, EvalRun, JudgingResult, AgentEvalResults};
+pub use agent_runner::AgentRunConfig;
+pub use judge::JudgeConfig;
+pub use lessons::LessonsConfig;

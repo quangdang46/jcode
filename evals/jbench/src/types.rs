@@ -128,6 +128,19 @@ pub struct JudgingResult {
     pub overall_score: f64,
 }
 
+impl Default for JudgingResult {
+    fn default() -> Self {
+        Self {
+            analysis: String::new(),
+            strengths: Vec::new(),
+            weaknesses: Vec::new(),
+            completion_score: 0.0,
+            code_quality_score: 0.0,
+            overall_score: 0.0,
+        }
+    }
+}
+
 /// Outcome of running one agent on one eval commit.
 ///
 /// `error` is `Some` when the agent crashed, timed out, or otherwise
