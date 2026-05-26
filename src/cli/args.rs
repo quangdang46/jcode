@@ -582,6 +582,10 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: RestartCommand,
     },
+
+    /// Manage hooks configuration
+    #[command(subcommand)]
+    Hooks(HooksCommand),
 }
 
 #[derive(Subcommand, Debug)]
@@ -598,6 +602,45 @@ pub(crate) enum RestartCommand {
     Status,
     /// Remove the currently saved reboot snapshot
     Clear,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum HooksCommand {
+    /// List all configured hooks, optionally filtered by event
+    List {
+        #[arg(value_name = "EVENT")]
+        event: Option<String>,
+    },
+    /// Add a new hook
+    Add {
+        #[arg(value_name = "EVENT")]
+        event: String,
+        #[arg(value_name = "TYPE")]
+        handler_type: String,
+        #[arg(value_name = "CONFIG")]
+        config: String,
+    },
+    /// Remove a hook by index
+    Remove {
+        #[arg(value_name = "EVENT")]
+        event: String,
+        #[arg(value_name = "INDEX")]
+        index: usize,
+    },
+    /// Enable a disabled hook
+    Enable {
+        #[arg(value_name = "EVENT")]
+        event: String,
+        #[arg(value_name = "INDEX")]
+        index: usize,
+    },
+    /// Disable a hook
+    Disable {
+        #[arg(value_name = "EVENT")]
+        event: String,
+        #[arg(value_name = "INDEX")]
+        index: usize,
+    },
 }
 
 #[derive(Subcommand, Debug)]

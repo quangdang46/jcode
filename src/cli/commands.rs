@@ -6,7 +6,15 @@ use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::net::ToSocketAddrs;
 
-use crate::{browser, gateway, memory, session, storage, tui};
+use crate::{
+    browser,
+    gateway,
+    hooks::config::{load_hooks_config, HookHandlerConfig, HooksConfig},
+    memory,
+    session,
+    storage,
+    tui,
+};
 
 use super::terminal::{cleanup_tui_runtime, init_tui_runtime};
 
@@ -347,6 +355,149 @@ pub fn run_mcp_list_command(json: bool) -> Result<()> {
     for (path, sha) in &store.entries {
         println!("  {}  (sha256={})", path, &sha[..16]);
     }
+    Ok(())
+}
+
+// ============================================================================
+// Hooks command handlers
+// ============================================================================
+
+/// Dispatcher for hooks subcommands
+pub async fn run_hooks_command(args: HooksCommand) -> Result<()> {
+    match args {
+        HooksCommand::List { event } => run_hooks_list(event).await,
+        HooksCommand::Add {
+            event,
+            handler_type,
+            config,
+        } => run_hooks_add(event, handler_type, config).await,
+        HooksCommand::Remove { event, index } => run_hooks_remove(event, index).await,
+        HooksCommand::Enable { event, index } => run_hooks_enable(event, index).await,
+        HooksCommand::Disable { event, index } => run_hooks_disable(event, index).await,
+    }
+}
+
+async fn run_hooks_list(event: Option<String>) -> Result<()> {
+    let config = load_hooks_config();
+    let events = if let Some(evt) = event {
+        vec![evt]
+    } else {
+        config.events.keys().cloned().collect()
+    };
+
+    for event_name in events {
+        if let Some(handler) = config.events.get(&event_name) {
+            println!(
+                "[{}] command=\"{}\" timeout={:?}",
+                event_name, handler.command, handler.timeout_secs
+            );
+        }
+    }
+    Ok(())
+}
+    let content = std::fs::read_to_string(&path)?;
+    let config = toml::from_str::<HooksConfig>(&content)
+        .with_context(|| format!("Failed to parse {}", path.display()))?;
+    Ok(config)
+}
+
+/// Save hooks config to user-level hooks.toml (~/.jcode/hooks.toml)
+fn save_user_hooks_config(config: &HooksConfig) -> Result<()> {
+    let path = crate::storage::jcode_dir()?.join("hooks.toml");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let content = toml::to_string_pretty(config)
+        .with_context(|| "Failed to serialize hooks config to TOML")?;
+    std::fs::write(&path, content).with_context(|| format!("Failed to write {}", path.display()))?;
+    Ok(())
+}
+
+/// Parse event string to HookEvent enum
+fn parse_hook_event(event_str: &str) -> Result<HookEvent> {
+    HookEvent::parse(event_str)
+        .ok_or_else(|| anyhow::anyhow!("Invalid event name '{}'. Valid events: pre_tool_use, post_tool_use, pre_session, post_session, error, custom:<name>", event_str))
+}
+
+/// Parse handler type string to handler config variant
+fn parse_handler_type(handler_type: &str) -> Result<HookHandlerConfig> {
+    match handler_type.to_ascii_lowercase().as_str() {
+        "command" => Ok(HookHandlerConfig::default()),
+        "prompt" => Ok(HookHandlerConfig::default()),
+        "agent" => Ok(HookHandlerConfig::default()),
+        "http" => Ok(HookHandlerConfig::default()),
+        _ => anyhow::bail!(
+            "Invalid handler type '{}'. Valid types: command, prompt, agent, http",
+            handler_type
+        ),
+    }
+}
+
+/// List configured hooks, optionally filtered by event
+async fn run_hooks_list(event_filter: Option<String>) -> Result<()> {
+    let config = load_user_hooks_config()?;
+    
+    if config.events.is_empty() {
+        println!("No hooks configured. Use 'jcode hooks add' to add a hook.");
+        return Ok(());
+    }
+    
+    let mut events: Vec<_> = config.events.iter().collect();
+    events.sort_by(|a, b| a.0.cmp(b.0));
+    
+    let mut printed_header = false;
+    for (event_name, handler) in events {
+        // Apply filter if provided
+        if let Some(ref filter) = event_filter {
+            if event_name != filter {
+                continue;
+            }
+        }
+        
+        if !printed_header {
+            println!("Configured hooks:");
+            printed_header = true;
+        }
+        
+        let enabled_marker = " ";
+        println!(
+            "[{}]{} matcher=\"{}\" type=command command=\"{}\"",
+            event_name,
+            enabled_marker,
+            event_name,
+            handler.command
+        );
+    }
+    
+    if !printed_header && event_filter.is_some() {
+        println!("No hooks found for event '{}'.", event_filter.unwrap());
+    }
+    
+    Ok(())
+}
+
+async fn run_hooks_add(_event: String, handler_type: String, _config: String) -> Result<()> {
+    if handler_type != "command" {
+        anyhow::bail!("Only 'command' handler type is supported");
+    }
+    println!("Not yet implemented");
+    Ok(())
+}
+
+async fn run_hooks_remove(_event: String, _index: usize) -> Result<()> {
+    println!("Not yet implemented");
+    Ok(())
+}
+
+/// Enable a hook
+async fn run_hooks_enable(_event: String, _index: usize) -> Result<()> {
+    println!("Not yet implemented");
+    Ok(())
+}
+
+/// Disable a hook
+async fn run_hooks_disable(_event: String, _index: usize) -> Result<()> {
+    println!("Not yet implemented");
     Ok(())
 }
 

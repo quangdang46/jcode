@@ -39,6 +39,7 @@ pub mod floating_diagram;
 pub mod gateway;
 pub mod gmail;
 pub mod goal;
+pub mod hooks;
 pub mod id;
 pub mod import;
 pub mod live_tests;

@@ -5,7 +5,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::time::Instant;
 
 use super::args::{
-    AmbientCommand, Args, AuthCommand, Command, ExportFormatArg, McpCommand, MemoryCommand,
+    AmbientCommand, Args, AuthCommand, Command, ExportFormatArg, HooksCommand, McpCommand, MemoryCommand,
     ModelCommand, PromptsCommand, ProviderCommand, RestartCommand, SessionCommand, SkillsCommand,
     TranscriptModeArg,
 };
@@ -419,6 +419,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             RestartCommand::Status => commands::run_restart_status_command()?,
             RestartCommand::Clear => commands::run_restart_clear_command()?,
         },
+        Some(Command::Hooks(args)) => {
+            commands::run_hooks_command(args).await?
+        }
         None => run_default_command(args).await?,
     }
 

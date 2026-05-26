@@ -121,11 +121,10 @@ fn load_hooks_config_from_path(path: &PathBuf) -> Result<Option<HooksConfig>> {
         return Ok(None);
     }
 
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
-    let config = toml::from_str::<HooksConfig>(&content).with_context(|| {
-        format!("Failed to parse hooks config from {}", path.display())
-    })?;
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let config = toml::from_str::<HooksConfig>(&content)
+        .with_context(|| format!("Failed to parse hooks config from {}", path.display()))?;
     Ok(Some(config))
 }
 
@@ -185,10 +184,16 @@ mod tests {
 
     #[test]
     fn test_hook_event_parse() {
-        assert_eq!(HookEvent::parse("pre_tool_use"), Some(HookEvent::PreToolUse));
+        assert_eq!(
+            HookEvent::parse("pre_tool_use"),
+            Some(HookEvent::PreToolUse)
+        );
         assert_eq!(HookEvent::parse("PostToolUse"), Some(HookEvent::PreToolUse));
         assert_eq!(HookEvent::parse("pretooluse"), Some(HookEvent::PreToolUse));
-        assert_eq!(HookEvent::parse("post_session"), Some(HookEvent::PostSession));
+        assert_eq!(
+            HookEvent::parse("post_session"),
+            Some(HookEvent::PostSession)
+        );
         assert_eq!(HookEvent::parse("error"), Some(HookEvent::Error));
         assert_eq!(
             HookEvent::parse("custom:my_event"),
