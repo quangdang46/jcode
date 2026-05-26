@@ -226,6 +226,9 @@ aws-smithy-types = "1.4.7"
 aws-sdk-bedrock = "1.141.0"
 aws-sdk-sts = "1.103.0"
 
+# DCP integration (dynamic_context_pruning)
+dynamic_context_pruning = { path = "/data/projects/dynamic_context_pruning/crates/dynamic_context_pruning", optional = true }
+
 [features]
 # Include local ONNX/tokenizer embeddings in default builds so memory recall,
 # semantic retrieval, and embedding-backed features work out of the box.
@@ -246,6 +249,7 @@ jemalloc-prof = [
     "tikv-jemalloc-ctl/profiling",
 ]
 embeddings = ["dep:jcode-embedding"]
+dcp = ["dep:dynamic_context_pruning"]
 mmdr-size-api = ["jcode-tui-mermaid/mmdr-size-api"]
 pdf = ["dep:jcode-pdf"]
 
