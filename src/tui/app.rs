@@ -75,7 +75,7 @@ mod observe;
 mod remote;
 mod remote_notifications;
 mod replay;
-mod run_shell;
+pub(crate) mod run_shell;
 mod runtime_memory;
 mod split_view;
 mod state_ui;
