@@ -8,9 +8,9 @@
 
 use crate::memory_graph::{GRAPH_VERSION, MemoryGraph};
 use crate::memory_types::{
-    InjectedMemoryItem, MemoryActivity, MemoryEvent, MemoryEventKind, MemoryState, StepResult,
-    StepStatus,
-    ranking::{top_k_by_ord, top_k_by_score},
+    DynMemoryProvider, GraphStats, InjectedMemoryItem, MemoryActivity, MemoryEvent,
+    MemoryEventKind, MemoryProvider, MemoryProviderConfig, MemoryState, StepResult,
+    StepStatus, ranking::{top_k_by_ord, top_k_by_score},
 };
 use crate::sidecar::Sidecar;
 use crate::storage;
@@ -18,6 +18,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -30,8 +31,8 @@ mod pending;
 mod prompt_support;
 
 pub use crate::memory_types::{
-    MemoryCategory, MemoryEntry, MemoryScope, MemoryStore, Reinforcement, TrustLevel,
-    format_relevant_display_prompt, format_relevant_prompt,
+    DynMemoryProvider, MemoryCategory, MemoryEntry, MemoryScope, MemoryStore, Reinforcement,
+    TrustLevel, format_relevant_display_prompt, format_relevant_prompt,
 };
 use crate::memory_types::{
     collect_skill_query_terms, format_entries_for_prompt, memory_matches_search, memory_score,
@@ -77,6 +78,26 @@ pub type MemoryEventSink = Arc<dyn Fn(crate::protocol::ServerEvent) + Send + Syn
 
 pub fn memory_sidecar_enabled() -> bool {
     crate::config::config().agents.memory_sidecar_enabled
+}
+
+/// Build the active memory provider based on AgentsConfig::memory_backend.
+///
+/// Currently only `Local` (MemoryManager) is implemented.
+/// `Mempalace` will be added in mp-044+ once the adapter crate exists.
+///
+/// All call sites that need a memory backend should use this factory
+/// rather than directly constructing MemoryManager, so that the backend
+/// is switchable via config without code changes.
+pub fn provider() -> DynMemoryProvider {
+    match crate::config::config().agents.memory_backend {
+        crate::config::MemoryBackend::Local => Arc::new(MemoryManager::new()) as DynMemoryProvider,
+        crate::config::MemoryBackend::Mempalace => {
+            // MempalaceProvider will be implemented in mp-044+.
+            // For now, fall back to local to avoid breaking builds.
+            crate::logging::warn("Mempalace backend not yet implemented, falling back to Local");
+            Arc::new(MemoryManager::new()) as DynMemoryProvider
+        }
+    }
 }
 
 fn emit_memory_activity(event_tx: Option<&MemoryEventSink>) {
@@ -1799,6 +1820,130 @@ impl MemoryManager {
         let clusters = project.clusters.len() + global.clusters.len();
 
         Ok((memories, tags, edges, clusters))
+    }
+
+    /// Build the MemoryProviderConfig from this manager's current settings.
+    fn build_config(&self) -> MemoryProviderConfig {
+        MemoryProviderConfig {
+            project_dir: self.project_dir.clone(),
+            include_skills: self.include_skills,
+            test_mode: self.test_mode,
+            embedding_threshold: EMBEDDING_SIMILARITY_THRESHOLD,
+            embedding_max_hits: EMBEDDING_MAX_HITS,
+            storage_dedup_threshold: Self::STORAGE_DEDUP_THRESHOLD,
+        }
+    }
+}
+
+impl MemoryProvider for MemoryManager {
+    fn config(&self) -> &MemoryProviderConfig {
+        static CONFIG: std::sync::OnceLock<MemoryProviderConfig> = std::sync::OnceLock::new();
+        CONFIG.get_or_init(|| self.build_config())
+    }
+
+    fn remember_project(&self, entry: MemoryEntry) -> Result<String> {
+        self.remember_project(entry)
+    }
+
+    fn remember_global(&self, entry: MemoryEntry) -> Result<String> {
+        self.remember_global(entry)
+    }
+
+    fn upsert_project_memory(&self, entry: MemoryEntry) -> Result<String> {
+        self.upsert_project_memory(entry)
+    }
+
+    fn upsert_global_memory(&self, entry: MemoryEntry) -> Result<String> {
+        self.upsert_global_memory(entry)
+    }
+
+    fn forget(&self, id: &str) -> Result<bool> {
+        self.forget(id)
+    }
+
+    fn tag_memory(&self, memory_id: &str, tag: &str) -> Result<()> {
+        self.tag_memory(memory_id, tag)
+    }
+
+    fn link_memories(&self, from_id: &str, to_id: &str, weight: f32) -> Result<()> {
+        self.link_memories(from_id, to_id, weight)
+    }
+
+    fn boost_confidence(&self, _id: &str, _amount: f32) -> Result<()> {
+        Ok(())
+    }
+
+    fn decay_confidence(&self, _id: &str, _amount: f32) -> Result<()> {
+        Ok(())
+    }
+
+    fn list_all_scoped(&self, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
+        self.list_all_scoped(scope)
+    }
+
+    fn search_scoped(&self, query: &str, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
+        self.search_scoped(query, scope)
+    }
+
+    fn find_similar_scoped(
+        &self,
+        text: &str,
+        threshold: f32,
+        limit: usize,
+        scope: MemoryScope,
+    ) -> Result<Vec<(MemoryEntry, f32)>> {
+        self.find_similar_scoped(text, threshold, limit, scope)
+    }
+
+    fn find_similar_with_embedding_scoped(
+        &self,
+        query_embedding: &[f32],
+        threshold: f32,
+        limit: usize,
+        scope: MemoryScope,
+    ) -> Result<Vec<(MemoryEntry, f32)>> {
+        self.find_similar_with_embedding_scoped(query_embedding, threshold, limit, scope)
+    }
+
+    fn find_similar_with_cascade_scoped(
+        &self,
+        text: &str,
+        threshold: f32,
+        limit: usize,
+        scope: MemoryScope,
+    ) -> Result<Vec<(MemoryEntry, f32)>> {
+        let hits = self.find_similar_scoped(text, threshold, limit, scope)?;
+        if !hits.is_empty() {
+            return Ok(hits);
+        }
+        Ok(self
+            .search_scoped(text, scope)?
+            .into_iter()
+            .map(|e| (e, 0.0))
+            .take(limit)
+            .collect())
+    }
+
+    fn get_related(&self, memory_id: &str, depth: usize) -> Result<Vec<MemoryEntry>> {
+        self.get_related(memory_id, depth)
+    }
+
+    fn graph_stats(&self) -> Result<GraphStats> {
+        let (memories, tags, edges, clusters) = self.graph_stats()?;
+        Ok(GraphStats {
+            memories,
+            tags,
+            edges,
+            clusters,
+        })
+    }
+
+    fn extract_from_transcript<'a>(
+        &'a self,
+        transcript: &'a str,
+        session_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + 'a>> {
+        Box::pin(MemoryManager::extract_from_transcript(self, transcript, session_id))
     }
 }
 

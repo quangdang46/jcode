@@ -365,10 +365,23 @@ pub struct AuthConfig {
     pub trusted_external_source_paths: Vec<String>,
 }
 
+/// Which memory backend to use (mp-042).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryBackend {
+    /// Use the local JSON-file + SQLite backend (MemoryManager).
+    #[default]
+    Local,
+    /// Use mempalace-core as the memory backend (future, mp-044+).
+    Mempalace,
+}
+
 /// Agent-specific model defaults.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AgentsConfig {
+    /// Which memory backend to use.
+    pub memory_backend: MemoryBackend,
     /// Optional default model override for spawned swarm/subagent sessions.
     pub swarm_model: Option<String>,
     /// Default terminal mode for swarm-created agents.

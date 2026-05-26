@@ -1,7 +1,9 @@
 pub mod graph;
+pub mod provider;
 pub use graph::{
     ClusterEntry, Edge, EdgeKind, GRAPH_VERSION, GraphMetadata, MemoryGraph, TagEntry,
 };
+pub use provider::{DynMemoryProvider, GraphStats, MemoryProvider, MemoryProviderConfig};
 
 use std::time::Instant;
 

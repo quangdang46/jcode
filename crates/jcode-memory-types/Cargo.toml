@@ -5,6 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
+anyhow = "1"
+async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 jcode-core = { path = "../jcode-core" }
 serde = { version = "1", features = ["derive"] }
