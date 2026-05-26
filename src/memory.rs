@@ -8,10 +8,12 @@
 
 use crate::memory_graph::{GRAPH_VERSION, MemoryGraph};
 use crate::memory_types::{
-    DynMemoryProvider, GraphStats, InjectedMemoryItem, MemoryActivity, MemoryEvent,
+    GraphStats, InjectedMemoryItem, MemoryActivity, MemoryEvent,
     MemoryEventKind, MemoryProvider, MemoryProviderConfig, MemoryState, StepResult,
     StepStatus, ranking::{top_k_by_ord, top_k_by_score},
 };
+// DynMemoryProvider comes from pub use crate::memory_types re-export (below)
+use jcode_mempalace_adapter::MempalaceProvider;
 use crate::sidecar::Sidecar;
 use crate::storage;
 use anyhow::Result;
@@ -92,10 +94,24 @@ pub fn provider() -> DynMemoryProvider {
     match crate::config::config().agents.memory_backend {
         crate::config::MemoryBackend::Local => Arc::new(MemoryManager::new()) as DynMemoryProvider,
         crate::config::MemoryBackend::Mempalace => {
-            // MempalaceProvider will be implemented in mp-044+.
-            // For now, fall back to local to avoid breaking builds.
-            crate::logging::warn("Mempalace backend not yet implemented, falling back to Local");
-            Arc::new(MemoryManager::new()) as DynMemoryProvider
+            // Build MempalaceProvider from the adapter crate (mp-044).
+            // We use a OnceLock so we only initialise once per process.
+            static PROVIDER: std::sync::OnceLock<DynMemoryProvider> = std::sync::OnceLock::new();
+            PROVIDER
+                .get_or_init(|| {
+                    let config = MemoryManager::new().build_config();
+                    let palace_path = config
+                        .project_dir
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from(".jcode/palace"))
+                        .join("palace");
+                    Arc::new(
+                        tokio::runtime::Handle::current()
+                            .block_on(MempalaceProvider::new(config, palace_path))
+                            .expect("MempalaceProvider failed to initialise"),
+                    ) as DynMemoryProvider
+                })
+                .clone()
         }
     }
 }
