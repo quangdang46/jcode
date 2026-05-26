@@ -1,6 +1,6 @@
 use crate::color;
 use crate::color::rgb;
-use ratatui::prelude::*;
+use ftui_style::Color;
 
 pub fn user_color() -> Color {
     rgb(138, 180, 248)
@@ -89,19 +89,13 @@ pub fn activity_indicator(
     }
 }
 
-/// Convert HSL to RGB (h in 0-360, s and l in 0-1)
-/// Chroma color based on position and time - creates flowing rainbow wave
-/// Calculate chroma color with fade-in from dim during startup
-/// Calculate smooth animated color for the header (single color, no position)
-pub fn color_to_floats(c: Color, fallback: (f32, f32, f32)) -> (f32, f32, f32) {
-    match c {
-        Color::Rgb(r, g, b) => (r as f32, g as f32, b as f32),
-        Color::Indexed(n) => {
-            let (r, g, b) = color::indexed_to_rgb(n);
-            (r as f32, g as f32, b as f32)
-        }
-        _ => fallback,
-    }
+/// Convert any `ftui_style::Color` value into floating-point RGB components in
+/// the 0..=255 range. The fallback is unused on the frankentui side because
+/// `Color::to_rgb()` is total — it is preserved for API compatibility with
+/// the previous ratatui-shaped signature so call sites do not have to change.
+pub fn color_to_floats(c: Color, _fallback: (f32, f32, f32)) -> (f32, f32, f32) {
+    let rgb = c.to_rgb();
+    (rgb.r as f32, rgb.g as f32, rgb.b as f32)
 }
 
 pub fn blend_color(from: Color, to: Color, t: f32) -> Color {
@@ -189,6 +183,13 @@ pub fn animated_tool_color(elapsed: f32, enable_decorative_animations: bool) -> 
     let b = (220.0 + t * 35.0) as u8; // 220 -> 255
 
     rgb(r, g, b)
+}
+
+/// Keep the `color` import alive even if no internal function happens to use
+/// it directly — public re-exports of `color::*` go through `lib.rs`.
+#[allow(dead_code)]
+fn _keep_color_import_alive() {
+    let _ = color::has_truecolor;
 }
 
 #[cfg(test)]

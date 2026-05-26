@@ -157,7 +157,10 @@ fn render_status_spinner_into_buffer_mut(buffer: &mut Buffer, area: Rect, symbol
         area.y,
         symbol,
         1,
-        Style::default().fg(jcode_tui_style::theme::ai_color()),
+        Style::default().fg({
+            use crate::tui::ftui_compat::FtuiColorExt;
+            jcode_tui_style::theme::ai_color().rata()
+        }),
     );
 }
 
@@ -605,10 +608,10 @@ mod tests {
             for x in 0..8 {
                 if (x, y) == (2, 1) {
                     assert_eq!(buffer.cell((x, y)).unwrap().symbol(), "⠂");
-                    assert_eq!(
-                        buffer.cell((x, y)).unwrap().fg,
-                        jcode_tui_style::theme::ai_color()
-                    );
+                    assert_eq!(buffer.cell((x, y)).unwrap().fg, {
+                        use crate::tui::ftui_compat::FtuiColorExt;
+                        jcode_tui_style::theme::ai_color().rata()
+                    });
                 } else {
                     assert_eq!(buffer.cell((x, y)), before.cell((x, y)));
                 }

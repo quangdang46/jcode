@@ -5,3 +5,9 @@ edition = "2024"
 
 [dependencies]
 ratatui = "0.30"
+# Color/style primitives now come from frankentui via jcode-tui-style.
+# `ratatui` stays because workspace_map_widget renders to a ratatui Buffer
+# and clear_buf takes a ratatui Buffer/Rect; both are removed when the
+# rendering layer itself migrates.
+jcode-tui-style = { path = "../jcode-tui-style" }
+ftui-style = { git = "https://github.com/quangdang46/frankentui", rev = "33ad1c57d545292242e41a477c8278c70ed7e0d6" }

@@ -5,4 +5,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
-ratatui = "0.30"
+# Migrated to frankentui's ftui-style on branch experimental/ratatui-to-frankentui.
+ftui-style = { git = "https://github.com/quangdang46/frankentui", rev = "33ad1c57d545292242e41a477c8278c70ed7e0d6" }

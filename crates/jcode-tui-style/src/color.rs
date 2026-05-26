@@ -1,8 +1,5 @@
-use ratatui::style::Color;
+use ftui_style::Color;
 use std::sync::OnceLock;
-
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorCapability {
@@ -62,20 +59,14 @@ pub fn has_truecolor() -> bool {
     color_capability() == ColorCapability::TrueColor
 }
 
-pub fn clear_buf(area: Rect, buf: &mut Buffer) {
-    for x in area.left()..area.right() {
-        for y in area.top()..area.bottom() {
-            buf[(x, y)].reset();
-        }
-    }
-}
-
+/// Build an `ftui_style::Color` from RGB, downgrading to a 256-palette index
+/// when the terminal does not advertise truecolor support.
 #[inline]
 pub fn rgb(r: u8, g: u8, b: u8) -> Color {
     if has_truecolor() {
-        Color::Rgb(r, g, b)
+        Color::rgb(r, g, b)
     } else {
-        Color::Indexed(rgb_to_xterm256(r, g, b))
+        Color::Ansi256(rgb_to_xterm256(r, g, b))
     }
 }
 
@@ -204,7 +195,6 @@ mod tests {
     #[test]
     fn test_mid_gray() {
         let idx = rgb_to_xterm256(128, 128, 128);
-        // Should pick grayscale 243 (value 128) or nearby
         assert!(
             (232..=255).contains(&u16::from(idx)),
             "Expected grayscale, got {}",
@@ -225,30 +215,25 @@ mod tests {
     #[test]
     fn test_red() {
         let idx = rgb_to_xterm256(255, 0, 0);
-        assert_eq!(idx, 196); // cube 5,0,0
+        assert_eq!(idx, 196);
     }
 
     #[test]
     fn test_green() {
         let idx = rgb_to_xterm256(0, 255, 0);
-        assert_eq!(idx, 46); // cube 0,5,0
+        assert_eq!(idx, 46);
     }
 
     #[test]
     fn test_blue() {
         let idx = rgb_to_xterm256(0, 0, 255);
-        assert_eq!(idx, 21); // cube 0,0,5
+        assert_eq!(idx, 21);
     }
 
     #[test]
-    fn test_rgb_truecolor() {
-        // When we have truecolor, rgb() should return Color::Rgb
-        // (can't easily test since it depends on env, but test the mapper)
-        let color = Color::Indexed(rgb_to_xterm256(138, 180, 248));
-        match color {
-            Color::Indexed(n) => assert!(n >= 16, "Should be extended color"),
-            _ => panic!("Expected indexed color"),
-        }
+    fn test_extended_idx_for_rgb_value() {
+        let idx = rgb_to_xterm256(138, 180, 248);
+        assert!(idx >= 16, "Should be extended color");
     }
 
     #[test]

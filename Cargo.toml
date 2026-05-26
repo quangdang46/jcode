@@ -229,6 +229,13 @@ aws-smithy-types = "1.4.7"
 aws-sdk-bedrock = "1.141.0"
 aws-sdk-sts = "1.103.0"
 
+# Dynamic Context Pruning library (feature-gated, opt-in).
+# When enabled via `--features dcp`, exposes the `dcp_bridge` module that
+# converts between jcode's `jcode_message_types::Message` IR and the
+# canonical `dynamic_context_pruning::Message` IR. The Agent / provider
+# wiring is intentionally left for a follow-up PR (PLAN.md §9.1).
+dynamic_context_pruning = { path = "/data/projects/dynamic_context_pruning/crates/dynamic_context_pruning", optional = true }
+
 [features]
 # Include local ONNX/tokenizer embeddings in default builds so memory recall,
 # semantic retrieval, and embedding-backed features work out of the box.
@@ -251,6 +258,13 @@ jemalloc-prof = [
 embeddings = ["dep:jcode-embedding"]
 mmdr-size-api = ["jcode-tui-mermaid/mmdr-size-api"]
 pdf = ["dep:jcode-pdf"]
+
+# Opt-in integration with the dynamic_context_pruning library.
+# Enables the `dcp_bridge` module (jcode IR <-> DCP IR adapters).
+# Wiring into Agent::messages_for_provider is intentionally deferred to a
+# future PR; this feature only makes the bridge available so it can be
+# wired without touching jcode's hot path.
+dcp = ["dep:dynamic_context_pruning"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Console"] }
