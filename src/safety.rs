@@ -107,20 +107,6 @@ pub struct AmbientTranscript {
 // Tier-1 (auto-allowed) action names
 // ---------------------------------------------------------------------------
 
-const AUTO_ALLOWED: &[&str] = &[
-    "read",
-    "glob",
-    "grep",
-    "ls",
-    "memory",
-    "todo",
-    "todowrite",
-    "todoread",
-    "conversation_search",
-    "session_search",
-    "codesearch",
-];
-
 // ---------------------------------------------------------------------------
 // SafetySystem
 // ---------------------------------------------------------------------------
@@ -154,12 +140,23 @@ impl SafetySystem {
     }
 
     /// Classify an action name into a tier.
+    ///
+    /// Delegates to [`crate::dcg_bridge::classify`], which evaluates the
+    /// action through `dcg-core::Engine` under the currently configured
+    /// [`dcg_core::Mode`]. `BridgeDecision::Allow` collapses to
+    /// [`ActionTier::AutoAllowed`]; `Prompt` and `Deny` both surface as
+    /// [`ActionTier::RequiresPermission`] so jcode's existing queue / TUI
+    /// / notification flow handles user interaction. The legacy
+    /// `AUTO_ALLOWED` string table that lived here previously is gone —
+    /// the bridge's `action_to_tool_call` mapping replaces it and is the
+    /// single source of truth for which intents auto-allow under each
+    /// mode.
     pub fn classify(&self, action: &str) -> ActionTier {
-        let lower = action.to_lowercase();
-        if AUTO_ALLOWED.iter().any(|&a| a == lower) {
-            ActionTier::AutoAllowed
-        } else {
-            ActionTier::RequiresPermission
+        match crate::dcg_bridge::classify(action) {
+            crate::dcg_bridge::BridgeDecision::Allow => ActionTier::AutoAllowed,
+            crate::dcg_bridge::BridgeDecision::Prompt | crate::dcg_bridge::BridgeDecision::Deny => {
+                ActionTier::RequiresPermission
+            }
         }
     }
 

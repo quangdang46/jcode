@@ -122,6 +122,12 @@ toml = "0.8"
 # CLI
 clap = { version = "4", features = ["derive"] }
 
+# Permission modes (Plan / AcceptEdits / BypassPermissions / DontAsk).
+# Local path dep until dcg-core publishes to crates.io. v0.6.0-rc.1 ships
+# the Mode + Effect + Engine + Session API; pack-rule evaluation lands in
+# Phase 2.
+dcg-core = { path = "../destructive_command_guard/crates/dcg-core" }
+
 # File operations
 glob = "0.3"
 ignore = "0.4"           # gitignore-aware file walking

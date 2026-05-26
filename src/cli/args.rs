@@ -33,6 +33,48 @@ pub(crate) enum ProviderAuthArg {
     None,
 }
 
+/// Mirror of `dcg_core::Mode` exposed as a CLI value-enum.
+///
+/// jcode passes the parsed value into [`crate::dcg_bridge::set_mode`] at
+/// startup. The `default` variant matches Claude Code's "rule-based"
+/// behavior; `plan` is read-only; `accept-edits` auto-allows in-tree
+/// file ops; `bypass-permissions` is the escape hatch.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub(crate) enum PermissionModeArg {
+    /// Standard rule-based decision flow. Unmatched intents fall through
+    /// to allow / prompt depending on jcode's existing logic.
+    Default,
+    /// Read-only enforcement: only `Effect::Read`/`Effect::Fs` actions
+    /// auto-allow; everything else is denied without a prompt.
+    Plan,
+    /// Auto-allow file ops (`Read`/`Edit`/`Write`) inside the working
+    /// directory; prompt on network / spawn / irreversible / protected
+    /// paths.
+    AcceptEdits,
+    /// Restricted-surface mode: only explicitly allow-listed actions
+    /// pass; everything else is denied without prompting.
+    DontAsk,
+    /// Skip permission evaluation entirely.
+    BypassPermissions,
+    /// Reserved for a future LLM classifier; today routes identically
+    /// to `default`.
+    Auto,
+}
+
+impl PermissionModeArg {
+    pub(crate) fn into_dcg_mode(self) -> dcg_core::Mode {
+        match self {
+            Self::Default => dcg_core::Mode::Default,
+            Self::Plan => dcg_core::Mode::Plan,
+            Self::AcceptEdits => dcg_core::Mode::AcceptEdits,
+            Self::DontAsk => dcg_core::Mode::DontAsk,
+            Self::BypassPermissions => dcg_core::Mode::BypassPermissions,
+            Self::Auto => dcg_core::Mode::Auto,
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "jcode")]
 #[command(version = env!("JCODE_VERSION"))]
@@ -198,6 +240,23 @@ pub(crate) struct Args {
     /// Hide all built-in tools unless --tools or [tools].enabled opts tools back in.
     #[arg(long, global = true)]
     pub(crate) disable_base_tools: bool,
+
+    /// Permission mode for tool-call gating, mirroring Claude Code.
+    ///
+    /// The choice is forwarded to `dcg_core::Engine::evaluate` via
+    /// `dcg_bridge::set_mode` at startup and observed by every
+    /// `SafetySystem::classify` call. Defaults to `default` (rule-based,
+    /// closest to legacy behavior).
+    ///
+    /// - `default`: rule-based fall-through.
+    /// - `plan`: read-only; writes / spawns / network are denied.
+    /// - `accept-edits`: auto-allow in-tree file ops; prompt on
+    ///   network / spawn / irreversible / protected paths.
+    /// - `dont-ask`: only allow-listed actions pass; never prompt.
+    /// - `bypass-permissions`: skip evaluation (escape hatch).
+    /// - `auto`: reserved (currently routes like `default`).
+    #[arg(long = "permission-mode", global = true, value_enum)]
+    pub(crate) permission_mode: Option<PermissionModeArg>,
 
     #[command(subcommand)]
     pub(crate) command: Option<Command>,

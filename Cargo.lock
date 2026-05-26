@@ -1704,6 +1704,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
+name = "dcg-core"
+version = "0.6.0-rc.1"
+dependencies = [
+ "aho-corasick",
+ "chrono",
+ "dirs 6.0.0",
+ "fancy-regex 0.18.0",
+ "memchr",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "smallvec",
+]
+
+[[package]]
 name = "deltae"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1822,7 +1838,16 @@ version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
 dependencies = [
- "dirs-sys",
+ "dirs-sys 0.4.1",
+]
+
+[[package]]
+name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys 0.5.0",
 ]
 
 [[package]]
@@ -1833,8 +1858,20 @@ checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users",
+ "redox_users 0.4.6",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users 0.5.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2083,6 +2120,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fancy-regex"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1e1dacd0d2082dfcf1351c4bdd566bbe89a2b263235a2b50058f1e130a47277"
+dependencies = [
+ "bit-set 0.8.0",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "fast-srgb8"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2174,7 +2222,7 @@ dependencies = [
  "bindet",
  "blake3",
  "chrono",
- "dirs",
+ "dirs 5.0.1",
  "dunce",
  "fff-notify-debouncer-full",
  "ffs-grep",
@@ -3552,7 +3600,8 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
- "dirs",
+ "dcg-core",
+ "dirs 5.0.1",
  "ffs-search",
  "flate2",
  "futures",
@@ -3923,7 +3972,7 @@ dependencies = [
 name = "jcode-provider-openrouter"
 version = "0.1.0"
 dependencies = [
- "dirs",
+ "dirs 5.0.1",
  "serde",
  "serde_json",
 ]
@@ -3958,7 +4007,7 @@ name = "jcode-storage"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dirs",
+ "dirs 5.0.1",
  "jcode-core",
  "libc",
  "rand 0.9.3",
@@ -3988,7 +4037,7 @@ name = "jcode-terminal-launch"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dirs",
+ "dirs 5.0.1",
 ]
 
 [[package]]
@@ -4049,7 +4098,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "crossterm",
- "dirs",
+ "dirs 5.0.1",
  "image",
  "jcode-tui-workspace",
  "mermaid-rs-renderer",
@@ -6232,6 +6281,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_users"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
+dependencies = [
+ "getrandom 0.2.16",
+ "libredox",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "ref-cast"
 version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6265,9 +6325,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.13"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5276caf25ac86c8d810222b3dbb938e512c55c6831a10f3e6ed1c93b84041f1c"
+checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
 dependencies = [
  "aho-corasick",
  "memchr",
