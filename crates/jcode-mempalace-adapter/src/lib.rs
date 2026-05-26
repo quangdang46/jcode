@@ -134,12 +134,52 @@ impl MempalaceProvider {
         drawer
     }
 
+    /// Map a mempalace Drawer to a jcode MemoryEntry.
+    /// Reverses `entry_to_drawer` by extracting metadata back into fields.
+    fn drawer_to_entry(drawer: Drawer) -> MemoryEntry {
+        let now = chrono::Utc::now();
+        let tags = drawer
+            .metadata
+            .get("tags")
+            .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
+            .unwrap_or_default();
+        let source = drawer
+            .metadata
+            .get("source")
+            .and_then(|v| v.as_str().map(String::from))
+            .filter(|s| !s.is_empty());
+
+        MemoryEntry {
+            id: drawer.id.map(|d| d.to_string()).unwrap_or_default(),
+            category: jcode_memory_types::MemoryCategory::Fact,
+            content: drawer.content,
+            tags,
+            search_text: String::new(),
+            created_at: now,
+            updated_at: now,
+            access_count: 0,
+            source,
+            trust: jcode_memory_types::TrustLevel::Medium,
+            strength: 0,
+            active: true,
+            superseded_by: None,
+            reinforcements: vec![],
+            embedding: None,
+            confidence: 0.0,
+        }
+    }
+
     /// Map a mempalace SearchHit to a jcode MemoryEntry.
-    /// palace SearchHit has no id/metadata — use content + similarity as defaults.
+    /// NOTE: palace SearchHit has no id field — the original MemoryEntry ID is lost
+    /// when retrieving via search. This is a palace limitation; hit-based lookups
+    /// cannot perform further operations that require the original ID.
     fn hit_to_entry(hit: SearchHit) -> MemoryEntry {
         let now = chrono::Utc::now();
         MemoryEntry {
-            id: Default::default(),   // palace SearchHit has no id
+            // palace SearchHit carries no id; the original MemoryEntry's id is not
+            // recoverable from search results. Use source_file as placeholder if needed,
+            // but further operations (forget, tag, link) won't work on these entries.
+            id: hit.source_file.clone(),
             category: jcode_memory_types::MemoryCategory::Fact,
             content: hit.text,
             tags: Vec::new(),
@@ -172,17 +212,17 @@ impl JcodeMemoryProvider for MempalaceProvider {
     }
 
     fn remember_project(&self, entry: MemoryEntry) -> Result<String> {
-        let content = entry.content;
+        let drawer = Self::entry_to_drawer(&entry);
         let id = Self::block_on(
-            self.palace.remember(content, MpScope::Local)
+            self.palace.add_drawer(drawer)
         )?;
         Ok(id.to_string())
     }
 
     fn remember_global(&self, entry: MemoryEntry) -> Result<String> {
-        let content = entry.content;
+        let drawer = Self::entry_to_drawer(&entry);
         let id = Self::block_on(
-            self.palace.remember(content, MpScope::Global)
+            self.palace.add_drawer(drawer)
         )?;
         Ok(id.to_string())
     }
@@ -229,9 +269,17 @@ impl JcodeMemoryProvider for MempalaceProvider {
         Ok(())
     }
 
-    fn list_all_scoped(&self, _scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
-        // TODO(mp-044): palace doesn't expose list_all yet
-        Ok(vec![])
+    fn list_all_scoped(&self, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
+        let mp_scope = Self::mp_scope(scope);
+        let include_global = matches!(mp_scope, MpScope::Global);
+        let search_scope = SearchScope {
+            include_global,
+            ..Default::default()
+        };
+        let drawers = Self::block_on(
+            self.palace.get_drawers(Some(&search_scope), Some(usize::MAX))
+        )?;
+        Ok(drawers.into_iter().map(Self::drawer_to_entry).collect())
     }
 
     fn search_scoped(&self, query: &str, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
