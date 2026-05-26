@@ -5,6 +5,12 @@
 // Implements jcode's `MemoryProvider` trait backed by mempalace-core's
 // `Palace`. Core of Phase 3 integration (mp-044).
 //
+// Phase 4 adds:
+//   - `WriteThroughProvider` — fans out writes to both jcode local storage
+//     AND the mempalace palace.
+//   - `EventCaptureBridge` — implements mempalace's `EventCapture` trait
+//     so jcode's `emit_event` telemetry flows into mempalace.
+//
 // Translation:
 //   jcode MemoryEntry    →  mempalace Drawer (tags/source in metadata)
 //   jcode String ID      →  mempalace DrawerId
@@ -17,7 +23,11 @@
 //
 // Ref: docs/research/00_UPGRADE_AND_INTEGRATION_PLAN.md phase-3 mp-044
 
-use anyhow::Result;
+pub mod event_capture_bridge;
+pub mod write_through;
+
+pub use event_capture_bridge::EventCaptureBridge;
+pub use write_through::WriteThroughProvider;
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -27,6 +37,7 @@ use jcode_memory_types::{
     MemoryEntry, MemoryScope, MemoryProvider as JcodeMemoryProvider,
     MemoryProviderConfig, GraphStats,
 };
+use anyhow::Result;
 use mempalace_core::{
     Drawer, DrawerId, DrawerKind, MemoryScope as MpScope,
     Palace, PalaceBuilder, PalaceConfig,
