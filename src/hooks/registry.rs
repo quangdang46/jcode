@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::hooks::config::{HookEvent, HookHandlerConfig, HooksConfig};
-use crate::hooks::matcher::{matches, MatcherContext};
+use crate::hooks::matcher::{MatcherContext, matches};
 
 /// Context passed to hooks for matching decisions.
 ///
@@ -38,12 +38,7 @@ pub struct HookContext {
 
 impl HookContext {
     /// Create a new empty HookContext
-    pub fn new(
-        session_id: &str,
-        transcript_path: &str,
-        cwd: &str,
-        hook_event_name: &str,
-    ) -> Self {
+    pub fn new(session_id: &str, transcript_path: &str, cwd: &str, hook_event_name: &str) -> Self {
         Self {
             session_id: session_id.to_string(),
             transcript_path: transcript_path.to_string(),
@@ -125,7 +120,11 @@ impl HookRegistry {
             } else {
                 // If event name doesn't parse, try using it as a custom event
                 let custom_event = HookEvent::Custom(event_name);
-                registry.hooks.entry(custom_event).or_default().push(handler);
+                registry
+                    .hooks
+                    .entry(custom_event)
+                    .or_default()
+                    .push(handler);
             }
         }
 
@@ -145,7 +144,11 @@ impl HookRegistry {
     /// - Multi: matches any of several tool names  
     /// - Regex: matches tool name via regex pattern
     /// - Wildcard: matches any tool name
-    pub fn get_matching(&self, event: &HookEvent, context: &HookContext) -> Vec<&HookHandlerConfig> {
+    pub fn get_matching(
+        &self,
+        event: &HookEvent,
+        context: &HookContext,
+    ) -> Vec<&HookHandlerConfig> {
         self.get_hooks(event)
             .iter()
             .filter(|handler| {
@@ -173,7 +176,10 @@ impl HookRegistry {
     ///
     /// Currently returns None as matchers are not yet integrated into HookHandlerConfig.
     /// This will be updated when matcher support is added to the handler config.
-    fn get_handler_matcher(&self, _handler: &HookHandlerConfig) -> Option<crate::hooks::matcher::HookMatcher> {
+    fn get_handler_matcher(
+        &self,
+        _handler: &HookHandlerConfig,
+    ) -> Option<crate::hooks::matcher::HookMatcher> {
         // TODO: Integrate matcher from handler config when implemented
         None
     }
