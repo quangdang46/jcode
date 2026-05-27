@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::hooks::config::{HookEvent, HookHandlerConfig, HooksConfig};
-use crate::hooks::matcher::{MatcherContext, matches};
+use crate::hooks::matcher::{HookMatcher, MatcherContext, matches};
 
 /// Context passed to hooks for matching decisions.
 ///
@@ -250,20 +250,19 @@ impl HookRegistry {
 
     /// Get the matcher from a handler configuration
     ///
-    /// Currently returns None as matchers are not yet integrated into HookHandlerConfig.
-    /// This will be updated when matcher support is added to the handler config.
-    fn get_handler_matcher(
-        &self,
-        _handler: &HookHandlerConfig,
-    ) -> Option<crate::hooks::matcher::HookMatcher> {
-        // TODO: Integrate matcher from handler config when implemented
-        None
+    fn get_handler_matcher(&self, handler: &HookHandlerConfig) -> Option<&HookMatcher> {
+        match handler {
+            HookHandlerConfig::Command(cmd) => cmd.matcher.as_ref(),
+            HookHandlerConfig::Http(http) => http.matcher.as_ref(),
+        }
     }
 
     /// Get the condition (`if_`) from a handler configuration
-    fn get_handler_condition(&self, handler: &HookHandlerConfig) -> Option<&str> {
-        // TODO: Integrate condition from handler config when implemented
-        None
+    fn get_handler_condition<'a>(&self, handler: &'a HookHandlerConfig) -> Option<&'a str> {
+        match handler {
+            HookHandlerConfig::Command(cmd) => cmd.if_.as_deref(),
+            HookHandlerConfig::Http(http) => http.if_.as_deref(),
+        }
     }
 
     /// Evaluate a condition against the context

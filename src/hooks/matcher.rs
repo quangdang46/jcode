@@ -3,7 +3,7 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HookMatcher {
     Exact(String),
     Multi(Vec<String>),
