@@ -1,10 +1,11 @@
 //! Hooks configuration loading - multi-layer config support
 //!
-//! Loads hooks.toml from two layers:
-//! 1. User level: `~/.jcode/hooks.toml`
+//! Loads hooks.toml from three layers (highest to lowest priority):
+//! 1. Environment variable: `JCODE_HOOKS_CONFIG` (absolute path to config file)
 //! 2. Project level: `.jcode/hooks.toml` (current working directory)
+//! 3. User level: `~/.jcode/hooks.toml`
 //!
-//! Project-level hooks override user-level hooks for the same event.
+//! Each layer overrides the previous for the same event.
 
 use crate::hooks::matcher::HookMatcher;
 use crate::storage::jcode_dir;
@@ -17,6 +18,8 @@ use std::path::PathBuf;
 pub const HOOKS_CONFIG_DIR: &str = ".jcode";
 /// Filename for hooks configuration
 pub const HOOKS_CONFIG_FILENAME: &str = "hooks.toml";
+/// Environment variable name for hooks config override
+pub const HOOKS_CONFIG_ENV_VAR: &str = "JCODE_HOOKS_CONFIG";
 
 /// Hook event types that can be triggered
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -168,6 +171,11 @@ fn project_hooks_config_path() -> Option<PathBuf> {
         .map(|d| d.join(HOOKS_CONFIG_DIR).join(HOOKS_CONFIG_FILENAME))
 }
 
+/// Get the env-level hooks config path from `JCODE_HOOKS_CONFIG` env var
+fn env_hooks_config_path() -> Option<PathBuf> {
+    std::env::var(HOOKS_CONFIG_ENV_VAR).ok().map(PathBuf::from)
+}
+
 /// Load a hooks config from a file path, returning None if file doesn't exist
 fn load_hooks_config_from_path(path: &PathBuf) -> Result<Option<HooksConfig>> {
     if !path.exists() {
@@ -183,16 +191,16 @@ fn load_hooks_config_from_path(path: &PathBuf) -> Result<Option<HooksConfig>> {
 
 /// Load hooks configuration from multi-layer config.
 ///
-/// Loads from:
-/// 1. User level: `~/.jcode/hooks.toml`
+/// Loads from (highest to lowest priority):
+/// 1. Environment variable: `JCODE_HOOKS_CONFIG` (path to config file)
 /// 2. Project level: `.jcode/hooks.toml` (current directory)
-///
-/// Project-level hooks override user-level for the same event.
+/// 3. User level: `~/.jcode/hooks.toml`
 ///
 /// Returns a merged `HooksConfig`. If no config files are found, returns an empty config.
 pub fn load_hooks_config() -> HooksConfig {
     let mut merged = HooksConfig::default();
 
+    // Layer 1: User-level config (~/.jcode/hooks.toml) - lowest priority
     if let Some(path) = user_hooks_config_path() {
         match load_hooks_config_from_path(&path) {
             Ok(Some(config)) => {
@@ -209,6 +217,7 @@ pub fn load_hooks_config() -> HooksConfig {
         }
     }
 
+    // Layer 2: Project-level config (.jcode/hooks.toml) - medium priority
     if let Some(path) = project_hooks_config_path() {
         match load_hooks_config_from_path(&path) {
             Ok(Some(config)) => {
@@ -218,6 +227,23 @@ pub fn load_hooks_config() -> HooksConfig {
             Err(e) => {
                 crate::logging::warn(&format!(
                     "Failed to load project hooks config from {}: {}",
+                    path.display(),
+                    e
+                ));
+            }
+        }
+    }
+
+    // Layer 3: Env-level config (JCODE_HOOKS_CONFIG path) - highest priority
+    if let Some(path) = env_hooks_config_path() {
+        match load_hooks_config_from_path(&path) {
+            Ok(Some(config)) => {
+                merged.merge(config);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                crate::logging::warn(&format!(
+                    "Failed to load env hooks config from {}: {}",
                     path.display(),
                     e
                 ));
