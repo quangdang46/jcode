@@ -608,6 +608,60 @@ impl Registry {
                 fields.push(("elapsed_ms".to_string(), latency_ms.to_string()));
                 fields.push(("error".to_string(), crate::util::format_error_chain(&error)));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
+
+                // --- TOOL ERROR HOOK ---
+                // Fire-and-forget error notification hook
+                {
+                    let cwd = ctx.working_dir
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| std::env::current_dir()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default());
+
+                    let transcript_path = format!(
+                        "{}/.jcode/sessions/{}/transcript.jsonl",
+                        std::env::var("HOME").unwrap_or_default(),
+                        ctx.session_id
+                    );
+
+                    let hook_input = HookInput::for_tool_error(
+                        ctx.session_id.clone(),
+                        resolved_name.to_string(),
+                        crate::util::format_error_chain(&error),
+                    );
+
+                    let hook_ctx = HookContext::for_tool_error(
+                        resolved_name.to_string(),
+                        ctx.session_id.clone(),
+                        cwd,
+                    );
+
+                    let config = load_hooks_config();
+                    let registry = HookRegistry::from_config(config);
+                    let matching = registry.get_matching(&HookEvent::ToolError, &hook_ctx);
+                    let handlers: Vec<_> = matching.into_iter().cloned().collect();
+                    for handler in handlers {
+                        let hook_input = hook_input.clone();
+                        tokio::spawn(async move {
+                            match execute_hook(&handler, &hook_input).await {
+                                Ok(HookResult::Blocked { reason, .. }) => {
+                                    debug!("ToolError hook blocked: {}", reason);
+                                }
+                                Ok(HookResult::Failed { error }) => {
+                                    debug!("ToolError hook failed: {}", error);
+                                }
+                                Ok(HookResult::Continue(_)) => {
+                                    debug!("ToolError hook completed");
+                                }
+                                Err(e) => {
+                                    debug!("ToolError hook error: {}", e);
+                                }
+                            }
+                        });
+                    }
+                }
+
                 return Err(error);
             }
         };

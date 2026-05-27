@@ -31,6 +31,16 @@ pub enum HookEvent {
     PostSession,
     /// On any error
     Error,
+    /// Session has started
+    SessionStart,
+    /// Session has ended
+    SessionEnd,
+    /// Permission requested
+    PermissionRequest,
+    /// Permission denied
+    PermissionDenied,
+    /// Tool execution error
+    ToolError,
     /// Custom event type
     Custom(String),
 }
@@ -44,6 +54,11 @@ impl HookEvent {
             "presession" | "pre_session" => Some(HookEvent::PreSession),
             "postsession" | "post_session" => Some(HookEvent::PostSession),
             "error" => Some(HookEvent::Error),
+            "sessionstart" | "session_start" => Some(HookEvent::SessionStart),
+            "sessionend" | "session_end" => Some(HookEvent::SessionEnd),
+            "permissionrequest" | "permission_request" => Some(HookEvent::PermissionRequest),
+            "permissiondenied" | "permission_denied" => Some(HookEvent::PermissionDenied),
+            "toolerror" | "tool_error" => Some(HookEvent::ToolError),
             s if s.starts_with("custom:") => Some(HookEvent::Custom(s[7..].to_string())),
             s if s.starts_with("custom") => Some(HookEvent::Custom(s.to_string())),
             _ => None,
