@@ -102,7 +102,8 @@ pub(super) async fn maybe_handle_ambient_command(
         let output = if let Some(runner) = ambient_runner {
             runner
                 .safety()
-                .record_decision(request_id, true, "debug_socket", None)?;
+                .record_decision(request_id, true, "debug_socket", None)
+                .await?;
             format!("Approved: {}", request_id)
         } else {
             return Err(anyhow::anyhow!("Ambient mode is not enabled"));
@@ -124,7 +125,8 @@ pub(super) async fn maybe_handle_ambient_command(
                 .filter(|s| !s.is_empty());
             runner
                 .safety()
-                .record_decision(request_id, false, "debug_socket", message)?;
+                .record_decision(request_id, false, "debug_socket", message)
+                .await?;
             format!("Denied: {}", request_id)
         } else {
             return Err(anyhow::anyhow!("Ambient mode is not enabled"));

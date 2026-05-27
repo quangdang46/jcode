@@ -3,6 +3,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
+use crate::hooks::config::HookEvent;
+use crate::hooks::execute::{execute_hook, HookResult};
+use crate::hooks::registry::{HookContext, HookRegistry};
+use crate::hooks::types::HookInput;
+use crate::hooks::load_hooks_config;
 use crate::notifications::NotificationDispatcher;
 use crate::storage;
 
@@ -220,14 +225,120 @@ impl SafetySystem {
     }
 
     /// Record a user decision (approve / deny) for a pending request.
-    pub fn record_decision(
+    pub async fn record_decision(
         &self,
         request_id: &str,
         approved: bool,
         via: &str,
         message: Option<String>,
     ) -> Result<()> {
-        // Remove from queue
+        let request = {
+            let q = self.queue.lock().ok();
+            q.and_then(|q| q.iter().find(|r| r.id == request_id).cloned())
+        };
+
+        if approved {
+            if let Some(ref req) = request {
+                let session_id = req
+                    .context
+                    .as_ref()
+                    .and_then(|ctx| ctx.get("session_id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                let tool_name = req.action.clone();
+                let permission_mode = req.rationale.clone();
+
+                let hook_input = HookInput::for_permission_request(
+                    session_id.clone(),
+                    tool_name.clone(),
+                    permission_mode.clone(),
+                );
+
+                let hook_ctx = HookContext::for_permission_request(
+                    tool_name.clone(),
+                    session_id,
+                    permission_mode,
+                );
+                let config = load_hooks_config();
+                let registry = HookRegistry::from_config(config);
+                let matching = registry.get_matching(&HookEvent::PermissionRequest, &hook_ctx);
+                for handler in matching {
+                    let input = hook_input.clone();
+                    match execute_hook(handler, &input).await {
+                        Ok(HookResult::Blocked { reason, .. }) => {
+                            let _ = self.queue.lock().map(|mut q| {
+                                q.retain(|r| r.id != request_id);
+                                let _ = persist_queue(&q);
+                            });
+                            let _ = self.history.lock().map(|mut h| {
+                                h.push(Decision {
+                                    request_id: request_id.to_string(),
+                                    approved: false,
+                                    decided_at: Utc::now(),
+                                    decided_via: format!("hook:{}", via),
+                                    message: Some(format!("Blocked by hook: {}", reason)),
+                                });
+                                let _ = persist_history(&h);
+                            });
+                            return Err(anyhow::anyhow!(
+                                "Permission '{}' blocked by hook: {}",
+                                tool_name,
+                                reason
+                            ));
+                        }
+                        Ok(HookResult::Failed { error }) => {
+                            tracing::debug!("PermissionRequest hook failed for {}: {}", tool_name, error);
+                        }
+                        Ok(HookResult::Continue(_)) => {
+                            tracing::debug!("PermissionRequest hook approved for {}", tool_name);
+                        }
+                        Err(e) => {
+                            tracing::debug!("PermissionRequest hook error for {}: {}", tool_name, e);
+                        }
+                    }
+                }
+            }
+        } else if let Some(ref req) = request {
+            let session_id = req
+                .context
+                .as_ref()
+                .and_then(|ctx| ctx.get("session_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let tool_name = req.action.clone();
+            let permission_mode = req.rationale.clone();
+            let hook_input = HookInput::for_permission_denied(
+                session_id.clone(),
+                tool_name.clone(),
+                permission_mode.clone(),
+            );
+            let hook_ctx = HookContext::for_permission_denied(session_id, permission_mode);
+            let config = load_hooks_config();
+            let registry = HookRegistry::from_config(config);
+            let matching = registry.get_matching(&HookEvent::PermissionDenied, &hook_ctx);
+            for handler in matching {
+                let input = hook_input.clone();
+                match execute_hook(handler, &input).await {
+                    Ok(HookResult::Blocked { reason, .. }) => {
+                        tracing::debug!("PermissionDenied hook blocked: {}", reason);
+                    }
+                    Ok(HookResult::Failed { error }) => {
+                        tracing::debug!("PermissionDenied hook failed: {}", error);
+                    }
+                    Ok(HookResult::Continue(_)) => {
+                        tracing::debug!("PermissionDenied hook completed");
+                    }
+                    Err(e) => {
+                        tracing::debug!("PermissionDenied hook error: {}", e);
+                    }
+                }
+            }
+        }
+
         if let Ok(mut q) = self.queue.lock() {
             q.retain(|r| r.id != request_id);
             let _ = persist_queue(&q);
@@ -240,7 +351,6 @@ impl SafetySystem {
             decided_via: via.to_string(),
             message,
         };
-
         if let Ok(mut h) = self.history.lock() {
             h.push(decision);
             let _ = persist_history(&h);
@@ -619,6 +729,7 @@ mod tests {
             assert_eq!(sys.pending_requests().len(), baseline + 1);
 
             sys.record_decision("req_test_2", true, "tui", Some("looks good".to_string()))
+                .await
                 .unwrap();
             assert_eq!(sys.pending_requests().len(), baseline);
         });
