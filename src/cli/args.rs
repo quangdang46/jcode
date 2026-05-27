@@ -141,10 +141,10 @@ pub(crate) struct Args {
     /// permitted at startup.
     ///
     /// Values:
-    ///   - `all`        load everything (DEFAULT)
-    ///   - `trusted`    load only entries that have been explicitly
-    ///                  trusted via `jcode mcp trust`
-    ///   - `none`       block all extension loading
+    ///   - `all` — load everything (DEFAULT)
+    ///   - `trusted` — load only entries that have been explicitly trusted
+    ///     via `jcode mcp trust`
+    ///   - `none` — block all extension loading
     ///
     /// Equivalent to setting `JCODE_EXTENSION_POLICY=<value>` in env.
     #[arg(

@@ -30,7 +30,7 @@ pub(super) fn edit_input_in_external_editor(app: &mut App) {
             }
             app.set_status_notice("Prompt edited in $EDITOR");
         }
-        Err(err) => app.set_status_notice(&format!("Failed to open $EDITOR: {err}")),
+        Err(err) => app.set_status_notice(format!("Failed to open $EDITOR: {err}")),
     }
 }
 
@@ -2981,7 +2981,7 @@ impl App {
         }
 
         let mut raw_input = std::mem::take(&mut self.input);
-        let mut input = self.expand_paste_placeholders(&raw_input);
+        let input = self.expand_paste_placeholders(&raw_input);
         if let Some(notice) = input_exceeds_submit_limit(&input) {
             self.input = raw_input;
             self.cursor_pos = self.input.len();

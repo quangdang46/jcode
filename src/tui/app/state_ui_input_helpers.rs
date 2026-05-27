@@ -381,6 +381,7 @@ fn parse_quoted_token(input: &str, start: usize, cursor: usize) -> Option<AtToke
 /// active_at_token("look at @docs/RM done")  // None
 /// active_at_token("email@example.com")      // None — middle of token
 /// ```
+#[cfg(test)]
 pub(super) fn active_at_token(input: &str) -> Option<&str> {
     let bytes = input.as_bytes();
     let mut i = bytes.len();
@@ -409,6 +410,7 @@ pub(super) fn active_at_token(input: &str) -> Option<&str> {
 /// Implementation note: this is intentionally cheap — it only walks
 /// the directory containing the partial path, not the full tree.
 /// `@s` looks at `cwd`. `@src/m` looks inside `cwd/src/`.
+#[cfg(test)]
 pub(super) fn suggest_at_path(cwd: &std::path::Path, query: &str, limit: usize) -> Vec<String> {
     let q = query.trim_start_matches('@');
     let (parent_rel, prefix) = match q.rfind('/') {
