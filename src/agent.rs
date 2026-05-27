@@ -28,6 +28,10 @@ use crate::build;
 use crate::bus::{Bus, BusEvent, SubagentStatus, ToolEvent, ToolStatus};
 use crate::cache_tracker::CacheTracker;
 use crate::compaction::CompactionEvent;
+use crate::hooks::config::{HookEvent, load_hooks_config};
+use crate::hooks::execute::{execute_hook, HookResult};
+use crate::hooks::registry::{HookContext, HookRegistry};
+use crate::hooks::types::HookInput;
 use crate::id;
 use crate::logging;
 use crate::message::{
@@ -47,6 +51,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
+use tracing::debug;
 
 use interrupts::{NoToolCallOutcome, PostToolInterruptOutcome};
 pub use jcode_agent_runtime::{
@@ -324,7 +329,35 @@ impl Agent {
             agent.session.parent_id.clone(),
             false,
         );
+        let session_id = agent.session.id.clone();
+        let cwd = agent.session.working_dir.clone().unwrap_or_default();
+        tokio::spawn(async move {
+            if let Some(hook_result) = Self::execute_session_start_hook(&session_id, &cwd).await {
+                debug!("SessionStart hook executed: {:?}", hook_result);
+            }
+        });
         agent
+    }
+
+    async fn execute_session_start_hook(session_id: &str, cwd: &str) -> Option<HookResult> {
+        let config = load_hooks_config();
+        let registry = HookRegistry::from_config(config);
+        if registry.is_empty() {
+            return None;
+        }
+        let hook_ctx = HookContext::for_session_start(session_id.to_string(), cwd.to_string());
+        let hook_input = HookInput::for_session_start(session_id.to_string(), cwd.to_string());
+        let matching = registry.get_matching(&HookEvent::SessionStart, &hook_ctx);
+        if matching.is_empty() {
+            return None;
+        }
+        match execute_hook(matching[0], &hook_input).await {
+            Ok(result) => Some(result),
+            Err(e) => {
+                debug!("SessionStart hook error: {}", e);
+                None
+            }
+        }
     }
 
     pub fn new_with_session(
@@ -813,10 +846,39 @@ impl Agent {
             &self.provider.model(),
             crate::telemetry::SessionEndReason::NormalExit,
         );
+        let session_id = self.session.id.clone();
+        Self::execute_session_end_hook(&session_id);
         self.persist_soft_interrupt_snapshot();
         self.session.mark_closed();
         if !self.session.messages.is_empty() {
             self.persist_session_best_effort("session close state");
+        }
+    }
+
+    fn execute_session_end_hook(session_id: &str) {
+        let config = load_hooks_config();
+        let registry = HookRegistry::from_config(config);
+        if registry.is_empty() {
+            return;
+        }
+        let hook_ctx = HookContext::for_session_end(session_id.to_string());
+        let hook_input = HookInput::for_session_end(session_id.to_string());
+        let matching = registry.get_matching(&HookEvent::SessionEnd, &hook_ctx);
+        for handler in matching {
+            let runtime = tokio::runtime::Handle::current();
+            let result = runtime.block_on(execute_hook(handler, &hook_input));
+            match result {
+                Ok(HookResult::Continue(_)) => {
+                    debug!("SessionEnd hook completed for {}", session_id);
+                }
+                Ok(HookResult::Failed { error }) => {
+                    debug!("SessionEnd hook failed for {}: {}", session_id, error);
+                }
+                Err(e) => {
+                    debug!("SessionEnd hook error for {}: {}", session_id, e);
+                }
+                _ => {}
+            }
         }
     }
 
