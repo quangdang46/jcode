@@ -249,8 +249,7 @@ impl HookRegistry {
     }
 
     /// Get the matcher from a handler configuration
-    ///
-    fn get_handler_matcher(&self, handler: &HookHandlerConfig) -> Option<&HookMatcher> {
+    fn get_handler_matcher<'a>(&self, handler: &'a HookHandlerConfig) -> Option<&'a HookMatcher> {
         match handler {
             HookHandlerConfig::Command(cmd) => cmd.matcher.as_ref(),
             HookHandlerConfig::Http(http) => http.matcher.as_ref(),
