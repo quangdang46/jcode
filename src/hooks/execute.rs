@@ -1,7 +1,10 @@
 //! Hook execution - runs hooks and returns results
 
-use crate::hooks::config::HookHandlerConfig;
+use std::collections::HashMap;
+
+use crate::hooks::config::{CommandHandlerConfig, HookHandlerConfig};
 use crate::hooks::types::{HookInput, HookOutput};
+use reqwest::Client;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -9,24 +12,19 @@ use tokio::time::timeout;
 /// Result of executing a hook
 #[derive(Debug)]
 pub enum HookResult {
-    /// Hook approved - continue execution
     Continue(HookOutput),
-    /// Hook blocked - do not continue
     Blocked { reason: String, output: HookOutput },
-    /// Hook execution failed
     Failed { error: String },
 }
 
 /// Execute a command hook
 pub async fn execute_command_hook(
-    config: &HookHandlerConfig,
+    config: &CommandHandlerConfig,
     input: &HookInput,
 ) -> Result<HookResult, String> {
-    // Serialize input to JSON
-    let input_json = serde_json::to_string(input)
-        .map_err(|e| format!("Failed to serialize hook input: {}", e))?;
+    let input_json =
+        serde_json::to_string(input).map_err(|e| format!("Failed to serialize hook input: {}", e))?;
 
-    // Build command
     let mut cmd = if cfg!(windows) {
         let mut c = Command::new("powershell");
         c.args(["-NoProfile", "-Command", &config.command]);
@@ -37,38 +35,31 @@ pub async fn execute_command_hook(
         c
     };
 
-    // Set timeout if specified
     let timeout_duration = config
         .timeout_secs
         .map(|s| std::time::Duration::from_secs(s))
         .unwrap_or(std::time::Duration::from_secs(30));
 
-    // Add env vars
     for (k, v) in &config.env {
         cmd.env(k, v);
     }
 
-    // Set cwd if specified
     if let Some(cwd) = &config.cwd {
         cmd.current_dir(cwd);
     }
 
-    // Execute with timeout
     let result = timeout(
         timeout_duration,
         async {
-            // Set stdin/stdout mode before spawning
             cmd.stdin(std::process::Stdio::piped());
             cmd.stdout(std::process::Stdio::piped());
 
-            // Spawn the child process
             let mut child = cmd
                 .spawn()
                 .map_err(|e| format!("Failed to spawn hook process: {}", e))?;
 
             let mut stdout = Vec::new();
 
-            // Write input to stdin
             if let Some(ref mut stdin) = child.stdin {
                 stdin
                     .write_all(input_json.as_bytes())
@@ -76,7 +67,6 @@ pub async fn execute_command_hook(
                     .map_err(|e| e.to_string())?;
             }
 
-            // Read stdout
             if let Some(ref mut stdout_handle) = child.stdout {
                 stdout_handle
                     .read_to_end(&mut stdout)
@@ -84,13 +74,11 @@ pub async fn execute_command_hook(
                     .map_err(|e| e.to_string())?;
             }
 
-            // Wait for process
             let status = child.wait().await.map_err(|e| e.to_string())?;
 
-            // Parse output
             let output_str = String::from_utf8_lossy(&stdout);
-            let hook_output: HookOutput = serde_json::from_str(&output_str)
-                .unwrap_or_else(|_| HookOutput::continue_());
+            let hook_output: HookOutput =
+                serde_json::from_str(&output_str).unwrap_or_else(|_| HookOutput::continue_());
 
             Ok::<_, String>((status, hook_output))
         },
@@ -117,11 +105,89 @@ pub async fn execute_command_hook(
     }
 }
 
+/// Execute an HTTP hook
+pub async fn execute_http_hook(
+    url: &str,
+    method: &str,
+    headers: &HashMap<String, String>,
+    body: &serde_json::Value,
+    timeout_secs: u64,
+) -> Result<HookResult, String> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let mut request = match method.to_uppercase().as_str() {
+        "GET" => client.get(url),
+        "POST" => client.post(url),
+        "PUT" => client.put(url),
+        "DELETE" => client.delete(url),
+        "PATCH" => client.patch(url),
+        "HEAD" => client.head(url),
+        "OPTIONS" => client.request(reqwest::Method::OPTIONS, url),
+        _ => {
+            return Ok(HookResult::Failed {
+                error: format!("Unsupported HTTP method: {}", method),
+            })
+        }
+    };
+
+    for (k, v) in headers {
+        request = request.header(k, v);
+    }
+
+    request = request.json(body);
+
+    let response = timeout(std::time::Duration::from_secs(timeout_secs), async {
+        request.send().await
+    })
+    .await;
+
+    match response {
+        Ok(Ok(resp)) => {
+            let status = resp.status();
+            if status.is_success() {
+                let hook_output: HookOutput = resp
+                    .json()
+                    .await
+                    .unwrap_or_else(|_| HookOutput::continue_());
+                Ok(HookResult::Continue(hook_output))
+            } else if status.is_client_error() || status.is_server_error() {
+                Ok(HookResult::Failed {
+                    error: format!("HTTP {} error: {}", status.as_u16(), status.canonical_reason().unwrap_or("Unknown")),
+                })
+            } else {
+                Ok(HookResult::Failed {
+                    error: format!("HTTP response: {}", status),
+                })
+            }
+        }
+        Ok(Err(e)) => Ok(HookResult::Failed {
+            error: format!("HTTP request failed: {}", e),
+        }),
+        Err(_) => Ok(HookResult::Failed {
+            error: "HTTP request timed out".to_string(),
+        }),
+    }
+}
+
 /// Dispatch to appropriate handler type
 pub async fn execute_hook(
     config: &HookHandlerConfig,
     input: &HookInput,
 ) -> Result<HookResult, String> {
-    // Command is the only implemented handler for now
-    execute_command_hook(config, input).await
+    match config {
+        HookHandlerConfig::Command(cmd_config) => execute_command_hook(cmd_config, input).await,
+        HookHandlerConfig::Http(http_config) => {
+            let headers: HashMap<String, String> = http_config
+                .headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            let body = http_config.body.as_ref().unwrap_or(&serde_json::Value::Null);
+            let timeout_secs = http_config.timeout_secs.unwrap_or(30);
+            execute_http_hook(&http_config.url, &http_config.method, &headers, body, timeout_secs).await
+        }
+    }
 }

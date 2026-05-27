@@ -359,7 +359,7 @@ pub fn run_mcp_list_command(json: bool) -> Result<()> {
 }
 
 use crate::cli::args::HooksCommand;
-use crate::hooks::config::{HookEvent, HookHandlerConfig};
+use crate::hooks::config::{HookEvent, HookHandlerConfig, HttpHandlerConfig};
 
 pub async fn run_hooks_command(args: HooksCommand) -> Result<()> {
     match args {
@@ -402,11 +402,8 @@ fn parse_hook_event(event_str: &str) -> Result<HookEvent> {
         .ok_or_else(|| anyhow::anyhow!("Invalid event name '{}'. Valid events: pre_tool_use, post_tool_use, pre_session, post_session, error, custom:<name>", event_str))
 }
 
-fn parse_handler_type(handler_type: &str) -> Result<HookHandlerConfig> {
-    match handler_type.to_ascii_lowercase().as_str() {
-        "command" => Ok(HookHandlerConfig::default()),
-        _ => anyhow::bail!("Invalid handler type '{}'. Valid types: command", handler_type),
-    }
+fn parse_handler_type(_handler_type: &str) -> Result<HookHandlerConfig> {
+    anyhow::bail!("parse_handler_type is deprecated; use handler type specific parsing in run_hooks_add")
 }
 
 async fn run_hooks_list(event: Option<String>) -> Result<()> {
@@ -433,10 +430,20 @@ async fn run_hooks_list(event: Option<String>) -> Result<()> {
             printed_header = true;
         }
         
-        println!(
-            "[{}] command=\"{}\" timeout={:?}",
-            event_name, handler.command, handler.timeout_secs
-        );
+        match handler {
+            HookHandlerConfig::Command(cmd) => {
+                println!(
+                    "[{}] type=command command=\"{}\" timeout={:?}",
+                    event_name, cmd.command, cmd.timeout_secs
+                );
+            }
+            HookHandlerConfig::Http(http) => {
+                println!(
+                    "[{}] type=http url=\"{}\" method={} timeout={:?}",
+                    event_name, http.url, http.method, http.timeout_secs
+                );
+            }
+        }
     }
     
     if !printed_header && event.is_some() {
@@ -447,36 +454,57 @@ async fn run_hooks_list(event: Option<String>) -> Result<()> {
 }
 
 async fn run_hooks_add(event: String, handler_type: String, config_json: String) -> Result<()> {
-    // Parse event
     let hook_event = parse_hook_event(&event)?;
     let event_key = match &hook_event {
         HookEvent::Custom(name) => format!("custom:{}", name),
         other => format!("{:?}", other).to_lowercase(),
     };
     
-    // Parse handler type
-    let mut handler = parse_handler_type(&handler_type)?;
-    
-    // Parse config JSON to extract command
     let config: serde_json::Value = serde_json::from_str(&config_json)
         .with_context(|| format!("Failed to parse config JSON: {}", config_json))?;
     
-    // Extract command (required)
-    let command = config
-        .get("command")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Config JSON must include 'command' field"))?;
-    handler.command = command.to_string();
+    let handler = match handler_type.to_ascii_lowercase().as_str() {
+        "command" => {
+            let command = config
+                .get("command")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Config JSON must include 'command' field"))?;
+            let mut handler = crate::hooks::config::CommandHandlerConfig::default();
+            handler.command = command.to_string();
+            if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
+                handler.args = args
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect();
+            }
+            HookHandlerConfig::Command(handler)
+        }
+        "http" => {
+            let url = config
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Config JSON must include 'url' field"))?;
+            let method = config
+                .get("method")
+                .and_then(|v| v.as_str())
+                .unwrap_or("GET");
+            let mut handler = HttpHandlerConfig::default();
+            handler.url = url.to_string();
+            handler.method = method.to_string();
+            if let Some(headers) = config.get("headers").and_then(|v| v.as_object()) {
+                handler.headers = headers
+                    .iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect();
+            }
+            if let Some(body) = config.get("body") {
+                handler.body = Some(body.clone());
+            }
+            HookHandlerConfig::Http(handler)
+        }
+        _ => anyhow::bail!("Invalid handler type '{}'. Valid types: command, http", handler_type),
+    };
     
-    // Extract optional args
-    if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
-        handler.args = args
-            .iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect();
-    }
-    
-    // Load existing config and add the new hook
     let mut config = load_user_hooks_config()?;
     config.events.insert(event_key.clone(), handler);
     save_user_hooks_config(&config)?;

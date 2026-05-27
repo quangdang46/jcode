@@ -53,8 +53,22 @@ impl HookEvent {
 
 /// Handler configuration for a single hook
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum HookHandlerConfig {
+    Command(CommandHandlerConfig),
+    Http(HttpHandlerConfig),
+}
+
+impl Default for HookHandlerConfig {
+    fn default() -> Self {
+        HookHandlerConfig::Command(CommandHandlerConfig::default())
+    }
+}
+
+/// Command handler configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct HookHandlerConfig {
+pub struct CommandHandlerConfig {
     /// The command or script to execute
     pub command: String,
     /// Arguments to pass to the handler
@@ -71,7 +85,7 @@ pub struct HookHandlerConfig {
     pub pass_input_via_stdin: bool,
 }
 
-impl Default for HookHandlerConfig {
+impl Default for CommandHandlerConfig {
     fn default() -> Self {
         Self {
             command: String::new(),
@@ -80,6 +94,36 @@ impl Default for HookHandlerConfig {
             cwd: None,
             timeout_secs: None,
             pass_input_via_stdin: true,
+        }
+    }
+}
+
+/// HTTP handler configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HttpHandlerConfig {
+    /// URL to send the HTTP request to
+    pub url: String,
+    /// HTTP method (GET, POST, PUT, DELETE, etc.)
+    pub method: String,
+    /// HTTP headers
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    /// Request body template
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<serde_json::Value>,
+    /// Timeout in seconds (default: 30)
+    pub timeout_secs: Option<u64>,
+}
+
+impl Default for HttpHandlerConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            method: "GET".to_string(),
+            headers: BTreeMap::new(),
+            body: None,
+            timeout_secs: Some(30),
         }
     }
 }
@@ -207,39 +251,39 @@ mod tests {
         let mut config1 = HooksConfig::default();
         config1.events.insert(
             "pre_tool_use".to_string(),
-            HookHandlerConfig {
+            HookHandlerConfig::Command(CommandHandlerConfig {
                 command: "user_handler".to_string(),
                 ..Default::default()
-            },
+            }),
         );
 
         let mut config2 = HooksConfig::default();
         config2.events.insert(
             "pre_tool_use".to_string(),
-            HookHandlerConfig {
+            HookHandlerConfig::Command(CommandHandlerConfig {
                 command: "project_handler".to_string(),
                 ..Default::default()
-            },
+            }),
         );
         config2.events.insert(
             "post_tool_use".to_string(),
-            HookHandlerConfig {
+            HookHandlerConfig::Command(CommandHandlerConfig {
                 command: "post_handler".to_string(),
                 ..Default::default()
-            },
+            }),
         );
 
         config1.merge(config2);
 
-        // Project handler should override user handler
-        assert_eq!(
-            config1.events.get("pre_tool_use").unwrap().command,
-            "project_handler"
+        let pre_handler = config1.events.get("pre_tool_use").unwrap();
+        let post_handler = config1.events.get("post_tool_use").unwrap();
+        assert!(
+            matches!(pre_handler, HookHandlerConfig::Command(cmd) if cmd.command == "project_handler"),
+            "Project handler should override user handler"
         );
-        // New event should be added
-        assert_eq!(
-            config1.events.get("post_tool_use").unwrap().command,
-            "post_handler"
+        assert!(
+            matches!(post_handler, HookHandlerConfig::Command(cmd) if cmd.command == "post_handler"),
+            "New event should be added"
         );
     }
 

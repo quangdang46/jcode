@@ -69,6 +69,88 @@ impl HookContext {
         }
     }
 
+    pub fn for_session_start(session_id: String, cwd: String) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd,
+            hook_event_name: "session_start".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: None,
+            tool_input: None,
+            tool_use_id: None,
+            permission_mode: None,
+        }
+    }
+
+    pub fn for_session_end(session_id: String) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd: String::new(),
+            hook_event_name: "session_end".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: None,
+            tool_input: None,
+            tool_use_id: None,
+            permission_mode: None,
+        }
+    }
+
+    pub fn for_permission_request(
+        tool_name: String,
+        session_id: String,
+        permission_mode: String,
+    ) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd: String::new(),
+            hook_event_name: "permission_request".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: Some(tool_name),
+            tool_input: None,
+            tool_use_id: None,
+            permission_mode: Some(permission_mode),
+        }
+    }
+
+    pub fn for_permission_denied(
+        session_id: String,
+        permission_mode: String,
+    ) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd: String::new(),
+            hook_event_name: "permission_denied".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: None,
+            tool_input: None,
+            tool_use_id: None,
+            permission_mode: Some(permission_mode),
+        }
+    }
+
+    pub fn for_tool_error(tool_name: String, session_id: String, error: String) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd: String::new(),
+            hook_event_name: "tool_error".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: Some(tool_name),
+            tool_input: Some(serde_json::json!({ "error": error })),
+            tool_use_id: None,
+            permission_mode: None,
+        }
+    }
+
     /// Build a MatcherContext for use with the hook matcher
     ///
     /// Uses tool_name as the primary target for pattern matching.
@@ -255,16 +337,16 @@ mod tests {
         let mut config = HooksConfig::default();
         config.events.insert(
             "pre_tool_use".to_string(),
-            HookHandlerConfig {
+            HookHandlerConfig::Command(crate::hooks::config::CommandHandlerConfig {
                 command: "test_command".to_string(),
                 ..Default::default()
-            },
+            }),
         );
 
         let registry = HookRegistry::from_config(config);
         let hooks = registry.get_hooks(&HookEvent::PreToolUse);
         assert_eq!(hooks.len(), 1);
-        assert_eq!(hooks[0].command, "test_command");
+        assert!(matches!(&hooks[0], HookHandlerConfig::Command(cmd) if cmd.command == "test_command"));
     }
 
     #[test]
@@ -272,10 +354,10 @@ mod tests {
         let mut config = HooksConfig::default();
         config.events.insert(
             "custom:my_event".to_string(),
-            HookHandlerConfig {
+            HookHandlerConfig::Command(crate::hooks::config::CommandHandlerConfig {
                 command: "custom_handler".to_string(),
                 ..Default::default()
-            },
+            }),
         );
 
         let registry = HookRegistry::from_config(config);

@@ -45,6 +45,94 @@ impl HookInput {
             permission_mode: None,
         }
     }
+
+    /// Create input for SessionStart hook
+    pub fn for_session_start(session_id: String, cwd: String) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd,
+            hook_event_name: "session_start".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: None,
+            tool_input: None,
+            tool_use_id: None,
+            permission_mode: None,
+        }
+    }
+
+    /// Create input for SessionEnd hook
+    pub fn for_session_end(session_id: String) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd: String::new(),
+            hook_event_name: "session_end".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: None,
+            tool_input: None,
+            tool_use_id: None,
+            permission_mode: None,
+        }
+    }
+
+    /// Create input for PermissionRequest hook
+    pub fn for_permission_request(
+        session_id: String,
+        tool_name: String,
+        permission_mode: String,
+    ) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd: String::new(),
+            hook_event_name: "permission_request".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: Some(tool_name),
+            tool_input: None,
+            tool_use_id: None,
+            permission_mode: Some(permission_mode),
+        }
+    }
+
+    /// Create input for PermissionDenied hook
+    pub fn for_permission_denied(
+        session_id: String,
+        tool_name: String,
+        permission_mode: String,
+    ) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd: String::new(),
+            hook_event_name: "permission_denied".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: Some(tool_name),
+            tool_input: None,
+            tool_use_id: None,
+            permission_mode: Some(permission_mode),
+        }
+    }
+
+    /// Create input for ToolError hook
+    pub fn for_tool_error(session_id: String, tool_name: String, error: String) -> Self {
+        Self {
+            session_id,
+            transcript_path: String::new(),
+            cwd: String::new(),
+            hook_event_name: "tool_error".to_string(),
+            agent_id: None,
+            agent_type: None,
+            tool_name: Some(tool_name),
+            tool_input: Some(serde_json::json!({ "error": error })),
+            tool_use_id: None,
+            permission_mode: None,
+        }
+    }
 }
 
 /// Output expected from hooks via stdout JSON
