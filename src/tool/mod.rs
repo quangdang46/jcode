@@ -35,6 +35,11 @@ mod websearch;
 mod write;
 
 use crate::compaction::CompactionManager;
+use crate::hooks::config::load_hooks_config;
+use crate::hooks::config::HookEvent;
+use crate::hooks::execute::{execute_hook, HookResult};
+use crate::hooks::registry::{HookContext, HookRegistry};
+use crate::hooks::types::HookInput;
 use crate::provider::Provider;
 use crate::skill::SkillRegistry;
 use anyhow::Result;
@@ -44,6 +49,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::{LazyLock, RwLock as StdRwLock};
 use tokio::sync::RwLock;
+use tracing::debug;
+use tracing::warn;
 
 pub(crate) use jcode_tool_core::intent_schema_property;
 pub use jcode_tool_core::{StdinInputRequest, Tool, ToolContext, ToolExecutionMode};
@@ -529,6 +536,62 @@ impl Registry {
         // Drop the lock before executing
         drop(tools);
 
+        // --- PRE TOOL USE HOOKS ---
+        // Execute PreToolUse hooks before the tool runs. If a hook returns
+        // Blocked, we abort early and return the error.
+        {
+            let cwd = ctx.working_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default());
+
+            let transcript_path = format!(
+                "{}/.jcode/sessions/{}/transcript.jsonl",
+                std::env::var("HOME").unwrap_or_default(),
+                ctx.session_id
+            );
+
+            let hook_input = HookInput::for_tool(
+                &ctx.session_id,
+                &transcript_path,
+                &cwd,
+                resolved_name,
+                input.clone(),
+            );
+
+            let hook_ctx = HookContext::for_tool(
+                &ctx.session_id,
+                &transcript_path,
+                &cwd,
+                resolved_name,
+                input.clone(),
+            );
+
+            if let Ok(config) = Ok(load_hooks_config()) {
+                let registry = HookRegistry::from_config(config);
+                let matching = registry.get_matching(&HookEvent::PreToolUse, &hook_ctx);
+                for handler in matching {
+                    match execute_hook(handler, &hook_input).await {
+                        Ok(HookResult::Blocked { reason, .. }) => {
+                            warn!("PreToolUse hook blocked {}: {}", resolved_name, reason);
+                            return Err(anyhow::anyhow!("Tool '{}' blocked by hook: {}", resolved_name, reason));
+                        }
+                        Ok(HookResult::Failed { error }) => {
+                            debug!("PreToolUse hook failed for {}: {}", resolved_name, error);
+                        }
+                        Ok(HookResult::Continue(_)) => {
+                            debug!("PreToolUse hook approved for {}", resolved_name);
+                        }
+                        Err(e) => {
+                            debug!("PreToolUse hook error for {}: {}", resolved_name, e);
+                        }
+                    }
+                }
+            }
+        }
+
         crate::logging::event_info(
             "TOOL_LIFECYCLE",
             Self::tool_lifecycle_fields("start", name, resolved_name, &input, &ctx),
@@ -564,6 +627,71 @@ impl Registry {
         ));
         fields.push(("image_count".to_string(), output.images.len().to_string()));
         crate::logging::event_info("TOOL_LIFECYCLE", fields);
+
+        // --- POST TOOL USE HOOKS ---
+        // Execute PostToolUse hooks after the tool completes. These run
+        // fire-and-forget and do not affect the tool result.
+        {
+            let cwd = ctx.working_dir
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default());
+
+            let transcript_path = format!(
+                "{}/.jcode/sessions/{}/transcript.jsonl",
+                std::env::var("HOME").unwrap_or_default(),
+                ctx.session_id
+            );
+
+            let mut post_input = HookInput::for_tool(
+                &ctx.session_id,
+                &transcript_path,
+                &cwd,
+                resolved_name,
+                input.clone(),
+            );
+            post_input.hook_event_name = "PostToolUse".to_string();
+
+            let post_ctx = HookContext {
+                session_id: ctx.session_id.clone(),
+                transcript_path,
+                cwd,
+                hook_event_name: "PostToolUse".to_string(),
+                agent_id: None,
+                agent_type: None,
+                tool_name: Some(resolved_name.to_string()),
+                tool_input: Some(input),
+                tool_use_id: Some(ctx.tool_call_id.clone()),
+                permission_mode: None,
+            };
+
+            if let Ok(config) = Ok(load_hooks_config()) {
+                let registry = HookRegistry::from_config(config);
+                let matching = registry.get_matching(&HookEvent::PostToolUse, &post_ctx);
+                // Spawn PostToolUse hooks without awaiting - fire and forget
+                for handler in matching {
+                    let hook_input = post_input.clone();
+                    tokio::spawn(async move {
+                        match execute_hook(handler, &hook_input).await {
+                            Ok(HookResult::Blocked { reason, .. }) => {
+                                debug!("PostToolUse hook blocked: {}", reason);
+                            }
+                            Ok(HookResult::Failed { error }) => {
+                                debug!("PostToolUse hook failed: {}", error);
+                            }
+                            Ok(HookResult::Continue(_)) => {
+                                debug!("PostToolUse hook completed");
+                            }
+                            Err(e) => {
+                                debug!("PostToolUse hook error: {}", e);
+                            }
+                        }
+                    });
+                }
+            }
+        }
 
         Ok(output)
     }
