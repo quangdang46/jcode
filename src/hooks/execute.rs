@@ -57,13 +57,19 @@ pub async fn execute_command_hook(
     let result = timeout(
         timeout_duration,
         async {
-            // Spawn with piped stdin/stdout
-            let mut child = cmd.stdin(std::process::Stdio::piped()).unwrap();
+            // Set stdin/stdout mode before spawning
+            cmd.stdin(std::process::Stdio::piped());
+            cmd.stdout(std::process::Stdio::piped());
+
+            // Spawn the child process
+            let mut child = cmd
+                .spawn()
+                .map_err(|e| format!("Failed to spawn hook process: {}", e))?;
+
             let mut stdout = Vec::new();
 
             // Write input to stdin
-            {
-                let stdin = child.stdin.as_mut().unwrap();
+            if let Some(ref mut stdin) = child.stdin {
                 stdin
                     .write_all(input_json.as_bytes())
                     .await
@@ -71,13 +77,12 @@ pub async fn execute_command_hook(
             }
 
             // Read stdout
-            child
-                .stdout
-                .as_mut()
-                .unwrap()
-                .read_to_end(&mut stdout)
-                .await
-                .map_err(|e| e.to_string())?;
+            if let Some(ref mut stdout_handle) = child.stdout {
+                stdout_handle
+                    .read_to_end(&mut stdout)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
 
             // Wait for process
             let status = child.wait().await.map_err(|e| e.to_string())?;

@@ -569,7 +569,7 @@ impl Registry {
                 input.clone(),
             );
 
-            if let Ok(config) = Ok(load_hooks_config()) {
+            let config = load_hooks_config();
                 let registry = HookRegistry::from_config(config);
                 let matching = registry.get_matching(&HookEvent::PreToolUse, &hook_ctx);
                 for handler in matching {
@@ -589,7 +589,6 @@ impl Registry {
                         }
                     }
                 }
-            }
         }
 
         crate::logging::event_info(
@@ -667,14 +666,14 @@ impl Registry {
                 permission_mode: None,
             };
 
-            if let Ok(config) = Ok(load_hooks_config()) {
+            let config = load_hooks_config();
                 let registry = HookRegistry::from_config(config);
                 let matching = registry.get_matching(&HookEvent::PostToolUse, &post_ctx);
-                // Spawn PostToolUse hooks without awaiting - fire and forget
-                for handler in matching {
+                let handlers: Vec<_> = matching.into_iter().cloned().collect();
+                for handler in handlers {
                     let hook_input = post_input.clone();
                     tokio::spawn(async move {
-                        match execute_hook(handler, &hook_input).await {
+                        match execute_hook(&handler, &hook_input).await {
                             Ok(HookResult::Blocked { reason, .. }) => {
                                 debug!("PostToolUse hook blocked: {}", reason);
                             }
@@ -690,7 +689,6 @@ impl Registry {
                         }
                     });
                 }
-            }
         }
 
         Ok(output)

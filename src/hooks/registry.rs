@@ -85,7 +85,7 @@ impl HookContext {
     }
 
     /// Build a MatcherContext with additional context text
-    pub fn matcher_context_with_context(&self, context: &str) -> MatcherContext<'_> {
+    pub fn matcher_context_with_context<'a>(&'a self, context: &'a str) -> MatcherContext<'a> {
         MatcherContext::with_context(self.tool_name.as_deref().unwrap_or(""), context)
     }
 }

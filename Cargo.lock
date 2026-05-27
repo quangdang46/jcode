@@ -3633,6 +3633,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite",
  "toml",
+ "tracing",
  "unicode-width 0.2.0",
  "url",
  "urlencoding",

@@ -131,6 +131,7 @@ similar = "2"            # diffing for edits
 # Utilities
 dirs = "5"               # home directory
 anyhow = "1"
+tracing = "0.1"
 thiserror = "1"
 libc = "0.2"             # Unix system calls (flock)
 chrono = { version = "0.4", features = ["serde"] }

@@ -162,6 +162,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::AuthTest { .. }) => "jcode auth-test".to_string(),
         Some(Command::Restart { .. }) => "jcode restart".to_string(),
         Some(Command::SetupLauncher) => "jcode setup-launcher".to_string(),
+        Some(Command::Hooks(_)) => "jcode hooks".to_string(),
         None => {
             if let Some(resume) = args.resume.as_deref().filter(|resume| !resume.is_empty()) {
                 let prefix = if crate::cli::selfdev::client_selfdev_requested() {
