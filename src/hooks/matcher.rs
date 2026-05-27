@@ -1,9 +1,9 @@
 //! Hook matcher logic - determines which hooks apply to which tools/events
 
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
-/// Hook matcher pattern types
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub enum HookMatcher {
     Exact(String),
     Multi(Vec<String>),
