@@ -54,22 +54,16 @@ impl HookContext {
     }
 
     /// Create a new HookContext for a tool-related event
-    pub fn for_tool(
-        session_id: &str,
-        transcript_path: &str,
-        cwd: &str,
-        tool_name: &str,
-        tool_input: serde_json::Value,
-    ) -> Self {
+    pub fn for_tool(tool_name: String, session_id: String, cwd: String) -> Self {
         Self {
-            session_id: session_id.to_string(),
-            transcript_path: transcript_path.to_string(),
-            cwd: cwd.to_string(),
+            session_id,
+            transcript_path: String::new(),
+            cwd,
             hook_event_name: "PreToolUse".to_string(),
             agent_id: None,
             agent_type: None,
-            tool_name: Some(tool_name.to_string()),
-            tool_input: Some(tool_input),
+            tool_name: Some(tool_name),
+            tool_input: None,
             tool_use_id: None,
             permission_mode: None,
         }

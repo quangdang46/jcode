@@ -562,11 +562,9 @@ impl Registry {
             );
 
             let hook_ctx = HookContext::for_tool(
-                &ctx.session_id,
-                &transcript_path,
-                &cwd,
-                resolved_name,
-                input.clone(),
+                resolved_name.to_string(),
+                ctx.session_id.clone(),
+                cwd.clone(),
             );
 
             let config = load_hooks_config();
