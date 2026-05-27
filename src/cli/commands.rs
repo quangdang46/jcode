@@ -540,12 +540,42 @@ async fn run_hooks_remove(event: String, index: usize) -> Result<()> {
 }
 
 async fn run_hooks_enable(event: String, index: usize) -> Result<()> {
-    println!("Enable not yet implemented. Use 'jcode hooks remove {} {}' to remove.", event, index);
-    Ok(())
+    set_hook_enabled(event, index, true).await
 }
 
 async fn run_hooks_disable(event: String, index: usize) -> Result<()> {
-    println!("Disable not yet implemented. Use 'jcode hooks remove {} {}' to remove.", event, index);
+    set_hook_enabled(event, index, false).await
+}
+
+async fn set_hook_enabled(event: String, index: usize, enabled: bool) -> Result<()> {
+    let hook_event = parse_hook_event(&event)?;
+    let event_key = match &hook_event {
+        HookEvent::Custom(name) => format!("custom:{}", name),
+        other => format!("{:?}", other).to_lowercase(),
+    };
+
+    let mut config = load_user_hooks_config()?;
+
+    if index != 0 {
+        anyhow::bail!(
+            "Invalid index {}. Only index 0 is currently supported.",
+            index
+        );
+    }
+
+    let handler = config.events.get_mut(&event_key).ok_or_else(|| {
+        anyhow::anyhow!("No hook found at index {} for event '{}'.", index, event)
+    })?;
+
+    match handler {
+        HookHandlerConfig::Command(cmd) => cmd.enabled = enabled,
+        HookHandlerConfig::Http(http) => http.enabled = enabled,
+    }
+
+    save_user_hooks_config(&config)?;
+
+    let action = if enabled { "Enabled" } else { "Disabled" };
+    println!("{} hook for event '{}'.", action, event);
     Ok(())
 }
 

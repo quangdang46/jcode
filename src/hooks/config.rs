@@ -6,6 +6,7 @@
 //!
 //! Project-level hooks override user-level hooks for the same event.
 
+use crate::hooks::matcher::HookMatcher;
 use crate::storage::jcode_dir;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -21,27 +22,16 @@ pub const HOOKS_CONFIG_FILENAME: &str = "hooks.toml";
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HookEvent {
-    /// Before a tool is executed
     PreToolUse,
-    /// After a tool execution completes
     PostToolUse,
-    /// Before a session starts
     PreSession,
-    /// After a session ends
     PostSession,
-    /// On any error
     Error,
-    /// Session has started
     SessionStart,
-    /// Session has ended
     SessionEnd,
-    /// Permission requested
     PermissionRequest,
-    /// Permission denied
     PermissionDenied,
-    /// Tool execution error
     ToolError,
-    /// Custom event type
     Custom(String),
 }
 
@@ -84,31 +74,33 @@ impl Default for HookHandlerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CommandHandlerConfig {
-    /// The command or script to execute
+    pub enabled: bool,
     pub command: String,
-    /// Arguments to pass to the handler
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
-    /// Environment variables to set for the handler
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
-    /// Working directory for the handler (default: current dir)
     pub cwd: Option<String>,
-    /// Timeout in seconds (default: no timeout)
     pub timeout_secs: Option<u64>,
-    /// Whether to pass hook input data via stdin
     pub pass_input_via_stdin: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matcher: Option<HookMatcher>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub if_: Option<String>,
 }
 
 impl Default for CommandHandlerConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             command: String::new(),
             args: Vec::new(),
             env: BTreeMap::new(),
             cwd: None,
             timeout_secs: None,
             pass_input_via_stdin: true,
+            matcher: None,
+            if_: None,
         }
     }
 }
@@ -117,28 +109,31 @@ impl Default for CommandHandlerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HttpHandlerConfig {
-    /// URL to send the HTTP request to
+    pub enabled: bool,
     pub url: String,
-    /// HTTP method (GET, POST, PUT, DELETE, etc.)
     pub method: String,
-    /// HTTP headers
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
-    /// Request body template
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<serde_json::Value>,
-    /// Timeout in seconds (default: 30)
     pub timeout_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matcher: Option<HookMatcher>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub if_: Option<String>,
 }
 
 impl Default for HttpHandlerConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             url: String::new(),
             method: "GET".to_string(),
             headers: BTreeMap::new(),
             body: None,
             timeout_secs: Some(30),
+            matcher: None,
+            if_: None,
         }
     }
 }
@@ -147,7 +142,6 @@ impl Default for HttpHandlerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct HooksConfig {
-    /// Mapping of event names to handler configurations
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub events: BTreeMap<String, HookHandlerConfig>,
 }
@@ -197,10 +191,8 @@ fn load_hooks_config_from_path(path: &PathBuf) -> Result<Option<HooksConfig>> {
 ///
 /// Returns a merged `HooksConfig`. If no config files are found, returns an empty config.
 pub fn load_hooks_config() -> HooksConfig {
-    // Start with empty config as base
     let mut merged = HooksConfig::default();
 
-    // Load user-level config first (lower priority)
     if let Some(path) = user_hooks_config_path() {
         match load_hooks_config_from_path(&path) {
             Ok(Some(config)) => {
@@ -217,7 +209,6 @@ pub fn load_hooks_config() -> HooksConfig {
         }
     }
 
-    // Load project-level config (higher priority, overrides user-level)
     if let Some(path) = project_hooks_config_path() {
         match load_hooks_config_from_path(&path) {
             Ok(Some(config)) => {
