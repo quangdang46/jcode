@@ -1,5 +1,13 @@
 use super::*;
 use unicode_width::UnicodeWidthStr;
+use ftui::Frame;
+use ftui_core::geometry::Rect;
+use ftui_render::cell::PackedRgba;
+use ftui_style::{Color, Style};
+use ftui_text::text::Line;
+use ftui_widgets::block::Alignment;
+use ftui_widgets::paragraph::Paragraph;
+use ftui_widgets::Widget;
 
 #[cfg(target_os = "macos")]
 pub(crate) const COPY_BADGE_ALT_LABEL: &str = "⌥";
@@ -35,6 +43,11 @@ fn lower_bound(values: &[usize], target: usize) -> usize {
 fn selection_bg_for(base_bg: Option<Color>) -> Color {
     let fallback = rgb(32, 38, 48);
     blend_color(base_bg.unwrap_or(fallback), accent_color(), 0.34)
+}
+
+fn rgb_to_packed(color: Color) -> PackedRgba {
+    let rgb = color.to_rgb();
+    PackedRgba::rgb(rgb.r, rgb.g, rgb.b)
 }
 
 fn selection_fg_for(base_fg: Option<Color>) -> Option<Color> {
@@ -487,8 +500,8 @@ pub(super) fn draw_messages(
     }
 
     if let Some(active) = &active_file_context {
-        let highlight_style = Style::default().fg(file_link_color()).bold();
-        let accent_style = Style::default().fg(file_link_color());
+        let highlight_style = Style::new().fg(rgb_to_packed(file_link_color())).bold();
+        let accent_style = Style::new().fg(rgb_to_packed(file_link_color()));
 
         for abs_idx in active.start_line.max(scroll)..active.end_line.min(visible_end) {
             let rel_idx = abs_idx.saturating_sub(scroll);
@@ -529,19 +542,19 @@ pub(super) fn draw_messages(
                 truncate_line_in_place_to_width(line, max_content_width);
 
                 let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
-                    Style::default().fg(queued_color()).bold()
+                    Style::new().fg(rgb_to_packed(queued_color())).bold()
                 } else {
-                    Style::default().fg(dim_color())
+                    Style::new().fg(rgb_to_packed(dim_color()))
                 };
                 let shift_style = if copy_badge_ui.shift_is_active(copy_badge_now) {
-                    Style::default().fg(queued_color()).bold()
+                    Style::new().fg(rgb_to_packed(queued_color())).bold()
                 } else {
-                    Style::default().fg(dim_color())
+                    Style::new().fg(rgb_to_packed(dim_color()))
                 };
                 let key_style = if copy_badge_ui.key_is_active('e', copy_badge_now) {
-                    Style::default().fg(accent_color()).bold()
+                    Style::new().fg(rgb_to_packed(accent_color())).bold()
                 } else {
-                    Style::default().fg(dim_color())
+                    Style::new().fg(rgb_to_packed(dim_color()))
                 };
 
                 line.spans.push(Span::raw(" "));
@@ -552,7 +565,7 @@ pub(super) fn draw_messages(
                 line.spans.push(Span::raw(" "));
                 line.spans.push(Span::styled("[E]", key_style));
                 line.spans
-                    .push(Span::styled(badge_text, Style::default().fg(dim_color())));
+                    .push(Span::styled(badge_text, Style::new().fg(rgb_to_packed(dim_color()))));
             }
         }
     }
@@ -567,27 +580,27 @@ pub(super) fn draw_messages(
             let max_content_width = (content_area.width as usize).saturating_sub(reserved);
             truncate_line_in_place_to_width(line, max_content_width);
 
-            let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
-                Style::default().fg(queued_color()).bold()
-            } else {
-                Style::default().fg(dim_color())
-            };
-            let shift_style = if copy_badge_ui.shift_is_active(copy_badge_now) {
-                Style::default().fg(queued_color()).bold()
-            } else {
-                Style::default().fg(dim_color())
-            };
-            let key_style = if copy_badge_ui.key_is_active(key, copy_badge_now) {
-                Style::default().fg(accent_color()).bold()
-            } else {
-                Style::default().fg(dim_color())
-            };
+let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
+                    Style::new().fg(rgb_to_packed(queued_color())).bold()
+                } else {
+                    Style::new().fg(rgb_to_packed(dim_color()))
+                };
+                let shift_style = if copy_badge_ui.shift_is_active(copy_badge_now) {
+                    Style::new().fg(rgb_to_packed(queued_color())).bold()
+                } else {
+                    Style::new().fg(rgb_to_packed(dim_color()))
+                };
+                let key_style = if copy_badge_ui.key_is_active(key, copy_badge_now) {
+                    Style::new().fg(rgb_to_packed(accent_color())).bold()
+                } else {
+                    Style::new().fg(rgb_to_packed(dim_color()))
+                };
 
             if let Some(success) = copy_badge_ui.feedback_for_key(key, copy_badge_now) {
                 let feedback_style = if success {
-                    Style::default().fg(ai_color()).bold()
+                    Style::new().fg(rgb_to_packed(ai_color())).bold()
                 } else {
-                    Style::default().fg(Color::Red).bold()
+                    Style::new().fg(rgb_to_packed(Color::Red)).bold()
                 };
                 let feedback_text = if success {
                     " ✓ Copied!"
@@ -644,7 +657,7 @@ pub(super) fn draw_messages(
         }
     }
 
-    frame.render_widget(Paragraph::new(visible_lines), content_area);
+    Paragraph::new(ftui_text::Text::from(visible_lines)).render(content_area, frame);
 
     let centered = app.centered_mode();
     let diagram_mode = app.diagram_mode();
@@ -685,13 +698,10 @@ pub(super) fn draw_messages(
                             false,
                         );
                         if rows == 0 {
-                            frame.render_widget(
-                                Paragraph::new(Line::from(Span::styled(
+                            Paragraph::new(ftui_text::Text::from(Line::from(Span::styled(
                                     "↗ mermaid diagram unavailable",
-                                    Style::default().fg(dim_color()),
-                                ))),
-                                image_area,
-                            );
+                                    Style::new().fg(rgb_to_packed(dim_color())),
+                                )))).render(image_area, frame);
                         }
                     }
                 } else {
@@ -730,8 +740,8 @@ pub(super) fn draw_messages(
                 width: 1,
                 height: 1,
             };
-            let bar = Paragraph::new(Span::styled("│", Style::default().fg(user_color())));
-            frame.render_widget(bar, bar_area);
+            let bar = Paragraph::new(ftui_text::Text::from(Span::styled("│", Style::new().fg(rgb_to_packed(user_color())))));
+            bar.render(bar_area, frame);
         }
     }
 
@@ -743,13 +753,10 @@ pub(super) fn draw_messages(
             width: indicator.len() as u16,
             height: 1,
         };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled(
+        Paragraph::new(ftui_text::Text::from(Line::from(vec![Span::styled(
                 indicator,
-                Style::default().fg(dim_color()),
-            )])),
-            indicator_area,
-        );
+                Style::new().fg(rgb_to_packed(dim_color())),
+            )]))).render(indicator_area, frame);
     }
 
     if crate::config::config().display.prompt_preview && scroll > 0 {
@@ -766,11 +773,11 @@ pub(super) fn draw_messages(
                 let prefix_len = num_str.len() + 2;
                 let content_width =
                     render_area.width.saturating_sub(prefix_len as u16 + 2) as usize;
-                let dim_style = Style::default().dim();
+                let dim_style = Style::new().dim();
                 let align = if app.centered_mode() {
-                    ratatui::layout::Alignment::Center
+                    Alignment::Center
                 } else {
-                    ratatui::layout::Alignment::Left
+                    Alignment::Left
                 };
 
                 let text_flat = prompt_text.replace('\n', " ");
@@ -823,7 +830,7 @@ pub(super) fn draw_messages(
                     height: line_count,
                 };
                 clear_area(frame, preview_area);
-                frame.render_widget(Paragraph::new(preview_lines), preview_area);
+                Paragraph::new(ftui_text::Text::from(preview_lines)).render(preview_area, frame);
             }
         }
     }
@@ -836,13 +843,10 @@ pub(super) fn draw_messages(
             width: indicator.len() as u16,
             height: 1,
         };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled(
+        Paragraph::new(ftui_text::Text::from(Line::from(vec![Span::styled(
                 indicator,
-                Style::default().fg(queued_color()),
-            )])),
-            indicator_area,
-        );
+                Style::new().fg(rgb_to_packed(queued_color())),
+            )]))).render(indicator_area, frame);
     }
 
     if let Some(scrollbar_area) = scrollbar_area {

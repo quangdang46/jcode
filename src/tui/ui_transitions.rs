@@ -1,7 +1,7 @@
 #[cfg(test)]
 use super::TuiState;
 #[cfg(test)]
-use ratatui::text::Line;
+use ftui_text::text::Line;
 
 #[cfg(test)]
 pub(crate) fn inline_ui_gap_height(app: &dyn TuiState) -> u16 {

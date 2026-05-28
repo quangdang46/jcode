@@ -9,6 +9,9 @@ pub(super) use cache_support::get_cached_message_lines;
 use cache_support::{centered_wrap_width, left_pad_lines_for_centered_mode};
 use std::borrow::Cow;
 use unicode_width::UnicodeWidthStr;
+use ftui_widgets::block::Alignment;
+use ftui_style::Color;
+use ftui_render::cell::PackedRgba;
 
 const MAX_INLINE_DIFF_LINES: usize = 12;
 
@@ -60,7 +63,7 @@ pub(crate) fn render_assistant_message(
                 .iter()
                 .any(|span| !span.content.trim().is_empty())
         }) {
-            lines.push(Line::default().alignment(ratatui::layout::Alignment::Left));
+            lines.push(Line::default().alignment(Alignment::Left));
         }
         lines.extend(render_assistant_tool_call_lines(
             &msg.tool_calls,
@@ -226,13 +229,13 @@ pub(crate) fn render_usage_message(
         }
 
         let (text, style) = if let Some(rest) = raw_line.strip_prefix("! ") {
-            (rest, Style::default().fg(Color::Red))
+            (rest, Style::default().fg(PackedRgba::rgb(255, 0, 0)))
         } else if let Some(rest) = raw_line.strip_prefix("~ ") {
             (rest, Style::default().fg(rgb(255, 200, 100)))
         } else if let Some(rest) = raw_line.strip_prefix("+ ") {
             (rest, Style::default().fg(rgb(100, 220, 170)))
         } else if let Some(rest) = raw_line.strip_prefix("# ") {
-            (rest, Style::default().fg(Color::White).bold())
+            (rest, Style::default().fg(PackedRgba::rgb(255, 255, 255)).bold())
         } else {
             (raw_line, Style::default().fg(dim_color()))
         };
@@ -1741,7 +1744,7 @@ pub(crate) fn render_tool_message(
                 format!("{}┌─ diff", pad_str),
                 Style::default().fg(dim_color()),
             ))
-            .alignment(ratatui::layout::Alignment::Left),
+            .alignment(Alignment::Left),
         );
 
         let mut shown_truncation = false;
@@ -1754,7 +1757,7 @@ pub(crate) fn render_tool_message(
                         format!("{}│ ... {} more changes ...", pad_str, skipped),
                         Style::default().fg(dim_color()),
                     ))
-                    .alignment(ratatui::layout::Alignment::Left),
+                    .alignment(Alignment::Left),
                 );
                 shown_truncation = true;
             }
@@ -1804,7 +1807,7 @@ pub(crate) fn render_tool_message(
                 }
             }
 
-            lines.push(Line::from(spans).alignment(ratatui::layout::Alignment::Left));
+            lines.push(Line::from(spans).alignment(Alignment::Left));
         }
 
         let footer = if total_changes > 0 && truncated {
@@ -1814,7 +1817,7 @@ pub(crate) fn render_tool_message(
         };
         lines.push(
             Line::from(Span::styled(footer, Style::default().fg(dim_color())))
-                .alignment(ratatui::layout::Alignment::Left),
+                .alignment(Alignment::Left),
         );
     }
 

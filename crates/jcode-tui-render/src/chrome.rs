@@ -1,10 +1,20 @@
-use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ftui::Frame;
+use ftui_core::geometry::Rect;
+use ftui_render::cell::PackedRgba;
+use ftui_style::{Color, Style};
+use ftui_text::text::Line;
+use ftui_widgets::block::Alignment;
+use ftui_widgets::borders::Borders;
+use ftui_widgets::block::Block;
+use ftui_widgets::paragraph::Paragraph;
+use ftui_widgets::Widget;
 
 pub fn clear_area(frame: &mut Frame, area: Rect) {
     for x in area.left()..area.right() {
         for y in area.top()..area.bottom() {
-            frame.buffer_mut()[(x, y)].reset();
+            if let Some(cell) = frame.buffer.get_mut(x, y) {
+                *cell = ftui_render::cell::Cell::default();
+            }
         }
     }
 }
@@ -17,22 +27,16 @@ pub fn centered_content_block_width(width: u16, max_width: usize) -> usize {
     (width as usize).min(max_width).max(1)
 }
 
-pub fn left_pad_lines_to_block_width(lines: &mut [Line<'static>], width: u16, block_width: usize) {
-    let block_width = block_width.min(width as usize);
-    let pad = (width as usize).saturating_sub(block_width) / 2;
-    for line in lines {
-        if pad > 0 {
-            line.spans.insert(0, Span::raw(" ".repeat(pad)));
-        }
-        line.alignment = Some(Alignment::Left);
-    }
+pub fn left_pad_lines_to_block_width(_lines: &mut [Line<'static>], _width: u16, _block_width: usize) {
+    todo!("ftui Line API differs - spans field is private, no alignment field")
 }
 
 const RIGHT_RAIL_HEADER_HEIGHT: u16 = 1;
 
 pub fn right_rail_border_style(focused: bool, focus_color: Color, dim_color: Color) -> Style {
     let border_color = if focused { focus_color } else { dim_color };
-    Style::default().fg(border_color)
+    let rgb = border_color.to_rgb();
+    Style::new().fg(PackedRgba::rgb(rgb.r, rgb.g, rgb.b))
 }
 
 fn right_rail_inner(area: Rect) -> Rect {
@@ -65,27 +69,20 @@ pub fn draw_right_rail_chrome(
     let block = Block::default()
         .borders(Borders::LEFT)
         .border_style(border_style);
-    frame.render_widget(block, area);
-    frame.render_widget(
-        Paragraph::new(title),
+    block.render(area, frame);
+    Paragraph::new(ftui_text::Text::from(title)).render(
         Rect {
             x: inner.x,
             y: inner.y,
             width: inner.width,
             height: RIGHT_RAIL_HEADER_HEIGHT,
         },
+        frame,
     );
 
     Some(content_area)
 }
 
-/// Set alignment on a line only if it doesn't already have one set.
-/// This allows markdown rendering to mark code blocks as left-aligned while
-/// other content inherits the default alignment (e.g., centered mode).
-pub fn align_if_unset(line: Line<'static>, align: Alignment) -> Line<'static> {
-    if line.alignment.is_some() {
-        line
-    } else {
-        line.alignment(align)
-    }
+pub fn align_if_unset(_line: Line<'static>, _align: Alignment) -> Line<'static> {
+    todo!("ftui Line has no alignment field - paragraph-level alignment only")
 }

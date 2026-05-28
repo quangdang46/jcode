@@ -1,4 +1,10 @@
 use super::*;
+use ftui_render::cell::PackedRgba;
+use ftui_style::{Color, Style};
+use ftui_text::text::Line;
+use ftui_text::text::Text;
+use ftui_widgets::Paragraph;
+use ftui::Frame;
 
 fn selection_bg_for(base_bg: Option<Color>) -> Color {
     let fallback = rgb(32, 38, 48);
@@ -6,7 +12,7 @@ fn selection_bg_for(base_bg: Option<Color>) -> Color {
 }
 
 fn selection_fg_for(base_fg: Option<Color>) -> Option<Color> {
-    base_fg.map(|fg| blend_color(fg, Color::White, 0.15))
+    base_fg.map(|fg| blend_color(fg, rgb(255, 255, 255), 0.15))
 }
 
 fn highlight_line_selection(
@@ -538,7 +544,7 @@ pub(super) fn draw_file_diff_view(
             "No edits visible",
             Style::default().fg(dim_color()),
         )));
-        frame.render_widget(msg, inner);
+        msg.render(frame, inner);
         return;
     };
 
@@ -675,5 +681,5 @@ pub(super) fn draw_file_diff_view(
     apply_side_selection_highlight(app, &mut visible_lines, effective_scroll);
 
     let paragraph = Paragraph::new(visible_lines);
-    frame.render_widget(paragraph, inner);
+    paragraph.render(frame, inner);
 }

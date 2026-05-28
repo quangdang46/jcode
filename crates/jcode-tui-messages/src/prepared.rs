@@ -1,6 +1,6 @@
 use crate::WrappedLineMap;
 use jcode_tui_markdown::CopyTargetKind;
-use ratatui::text::Line;
+use ftui_text::text::Line;
 use std::sync::Arc;
 
 /// Pre-computed image region from line scanning.

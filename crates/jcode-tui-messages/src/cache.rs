@@ -1,7 +1,7 @@
 use crate::DisplayMessage;
 use jcode_config_types::{DiagramDisplayMode, DiffDisplayMode};
-use ratatui::layout::Alignment;
-use ratatui::text::{Line, Span};
+use ftui_text::layout::Alignment;
+use ftui_text::text::{Line, Span};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 

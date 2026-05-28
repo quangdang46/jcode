@@ -1,8 +1,14 @@
 use super::{accent_color, clear_area, dim_color, tool_color};
 use crate::tui::info_widget;
-use ratatui::{prelude::*, widgets::Paragraph};
+use ftui_core::geometry::Rect;
+use ftui_render::cell::PackedRgba;
+use ftui_style::{Color, Modifier, Style};
+use ftui_text::text::Line;
+use ftui_text::text::Text;
+use ftui_widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
 use serde::Serialize;
 use std::cell::RefCell;
+use ftui::Frame;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PinnedDiagramProbeRect {
@@ -878,7 +884,7 @@ pub(crate) fn draw_pinned_diagram(
             .title(Line::from(title_parts));
 
         let inner = block.inner(area);
-        frame.render_widget(block, area);
+        block.render(frame, area);
         inner
     };
 
@@ -910,7 +916,7 @@ pub(crate) fn draw_pinned_diagram(
                 let placeholder =
                     super::super::mermaid::diagram_placeholder_lines(diagram.width, diagram.height);
                 let paragraph = Paragraph::new(placeholder).wrap(Wrap { trim: true });
-                frame.render_widget(paragraph, inner);
+                paragraph.render(frame, inner);
                 rendered = inner.height;
             } else if super::super::mermaid::protocol_type().is_some() {
                 if focused && !fit_mode {
@@ -964,7 +970,7 @@ pub(crate) fn draw_pinned_diagram(
             let placeholder =
                 super::super::mermaid::diagram_placeholder_lines(diagram.width, diagram.height);
             let paragraph = Paragraph::new(placeholder).wrap(Wrap { trim: true });
-            frame.render_widget(paragraph, inner);
+            paragraph.render(frame, inner);
         }
     } else {
         clear_pinned_diagram_debug_snapshot();

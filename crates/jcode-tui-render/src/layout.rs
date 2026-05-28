@@ -1,4 +1,4 @@
-use ratatui::layout::Rect;
+use ftui_core::geometry::Rect;
 
 pub fn rect_contains(outer: Rect, inner: Rect) -> bool {
     inner.x >= outer.x

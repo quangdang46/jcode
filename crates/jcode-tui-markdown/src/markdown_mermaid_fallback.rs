@@ -1,4 +1,4 @@
-use ratatui::prelude::*;
+use super::*;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]

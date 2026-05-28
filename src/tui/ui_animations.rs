@@ -1,5 +1,12 @@
 use crate::tui::{TuiState, color_support::rgb};
-use ratatui::{prelude::*, widgets::Paragraph};
+use ftui::Frame;
+use ftui_core::geometry::Rect;
+use ftui_render::cell::PackedRgba;
+use ftui_style::{Color, Style};
+use ftui_text::text::{Line, Span, Text};
+use ftui_widgets::block::Alignment;
+use ftui_widgets::paragraph::Paragraph;
+use ftui_widgets::Widget;
 use std::cell::RefCell;
 use std::collections::{HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
@@ -219,7 +226,7 @@ pub(super) fn draw_idle_animation(frame: &mut Frame, app: &dyn TuiState, area: R
                             let sat = 0.5 + t * 0.4;
                             let val = (0.10 + t * t * 0.90) * (0.55 + coverage * 0.45);
                             let (r, g, b) = hsv_to_rgb(hue, sat, val);
-                            Span::styled(String::from(ch), Style::default().fg(rgb(r, g, b)))
+                            Span::styled(String::from(ch), Style::new().fg(PackedRgba::rgb(r, g, b)))
                         }
                     })
                     .collect();
@@ -227,7 +234,7 @@ pub(super) fn draw_idle_animation(frame: &mut Frame, app: &dyn TuiState, area: R
             })
             .collect();
 
-        frame.render_widget(Paragraph::new(lines), area);
+        Paragraph::new(Text::from(lines)).render(area, frame);
     });
 }
 
