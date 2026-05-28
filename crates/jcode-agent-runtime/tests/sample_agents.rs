@@ -9,9 +9,7 @@
 
 use std::path::PathBuf;
 
-use jcode_agent_runtime::{
-    AgentRegistry, ModelTier, OutputMode, ReasoningEffort, SourceKind,
-};
+use jcode_agent_runtime::{AgentRegistry, ModelTier, OutputMode, ReasoningEffort, SourceKind};
 
 /// Path to the project-root sample agents directory, relative to the
 /// crate manifest. Deliberately constructed via `CARGO_MANIFEST_DIR` so
@@ -20,7 +18,12 @@ use jcode_agent_runtime::{
 fn samples_dir() -> PathBuf {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     // crates/jcode-agent-runtime → ../../ .jcode/agents
-    crate_dir.parent().unwrap().parent().unwrap().join(".jcode/agents")
+    crate_dir
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(".jcode/agents")
 }
 
 #[test]
@@ -37,7 +40,11 @@ fn loads_bundled_sample_agents() {
         .load_directory(&dir, SourceKind::ProjectLocal)
         .expect("load_directory");
     assert!(n >= 2, "expected at least 2 sample agents, got {n}");
-    assert!(reg.load_errors().is_empty(), "load errors: {:?}", reg.load_errors());
+    assert!(
+        reg.load_errors().is_empty(),
+        "load errors: {:?}",
+        reg.load_errors()
+    );
 }
 
 #[test]
@@ -56,7 +63,10 @@ fn file_picker_sample_has_expected_shape() {
     assert_eq!(agent.display_name, "Fletcher the File Fetcher");
     assert_eq!(agent.prefer_tier, Some(ModelTier::Routine));
     assert_eq!(agent.reasoning, Some(ReasoningEffort::Minimal));
-    assert!(!agent.include_message_history, "file picker uses clean slate");
+    assert!(
+        !agent.include_message_history,
+        "file picker uses clean slate"
+    );
     assert!(!agent.inherit_parent_system_prompt);
     assert_eq!(agent.output_mode, OutputMode::LastMessage);
     assert!(agent.tool_names.iter().any(|t| t == "read"));

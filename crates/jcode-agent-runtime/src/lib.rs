@@ -38,10 +38,8 @@ pub use signals::{
 };
 
 // New public surface (Phase 0).
-pub use definition::{
-    AgentDefinition, DefinitionError, ReferenceError, DEFAULT_AGENT_VERSION,
-};
+pub use definition::{AgentDefinition, DEFAULT_AGENT_VERSION, DefinitionError, ReferenceError};
 pub use output::OutputMode;
 pub use reasoning::ReasoningEffort;
 pub use registry::{AgentRegistry, AgentSource, LoadError, LoadedAgent, SourceKind};
-pub use tier::{resolve_model, resolve_model_with_source, ModelTier, ResolutionSource};
+pub use tier::{ModelTier, ResolutionSource, resolve_model, resolve_model_with_source};

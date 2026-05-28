@@ -9,8 +9,8 @@ use clap::{Parser, Subcommand};
 
 use jcode_jbench::{
     agent_runner::AgentRunConfig,
-    judge::{judge_with_three_models, JudgeConfig},
-    lessons::{append_lessons_to_file, extract_lessons, LessonsConfig},
+    judge::{JudgeConfig, judge_with_three_models},
+    lessons::{LessonsConfig, append_lessons_to_file, extract_lessons},
     types::{AgentEvalResults, EvalDataV2, EvalRun},
 };
 
@@ -100,16 +100,40 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::PickCommits { repo_url, min_msg_len, max_picks, output } => {
+        Command::PickCommits {
+            repo_url,
+            min_msg_len,
+            max_picks,
+            output,
+        } => {
             pick_commits_impl(&repo_url, min_msg_len, max_picks, output).await?;
         }
         Command::GenEvals { input, output } => {
             gen_evals_impl(&input, &output).await?;
         }
-        Command::Run { eval_file, agent_id, output_dir, jcode_binary, max_turns, timeout_secs } => {
-            run_impl(&eval_file, &agent_id, &output_dir, jcode_binary.as_ref(), max_turns, timeout_secs).await?;
+        Command::Run {
+            eval_file,
+            agent_id,
+            output_dir,
+            jcode_binary,
+            max_turns,
+            timeout_secs,
+        } => {
+            run_impl(
+                &eval_file,
+                &agent_id,
+                &output_dir,
+                jcode_binary.as_ref(),
+                max_turns,
+                timeout_secs,
+            )
+            .await?;
         }
-        Command::Judge { runs_dir, api_base, api_key } => {
+        Command::Judge {
+            runs_dir,
+            api_base,
+            api_key,
+        } => {
             judge_impl(&runs_dir, api_base.as_deref(), api_key.as_deref()).await?;
         }
         Command::MetaAnalyze { runs_dir, output } => {
@@ -141,8 +165,8 @@ async fn run_impl(
     timeout_secs: u64,
 ) -> Result<()> {
     use std::fs;
-    use tokio::time::timeout as tk_timeout;
     use std::time::Duration;
+    use tokio::time::timeout as tk_timeout;
 
     // Load eval data
     let eval_data: EvalDataV2 = {
@@ -199,22 +223,28 @@ async fn judge_impl(
     _api_base: Option<&str>,
     _api_key: Option<&str>,
 ) -> Result<()> {
-    todo_step("Phase 5.4: load EvalRun JSONs, call judge_with_three_models, overwrite judging fields")
+    todo_step(
+        "Phase 5.4: load EvalRun JSONs, call judge_with_three_models, overwrite judging fields",
+    )
 }
 
-async fn meta_analyze_impl(
-    runs_dir: &PathBuf,
-    output: Option<&PathBuf>,
-) -> Result<()> {
-    use std::fs;
+async fn meta_analyze_impl(runs_dir: &PathBuf, output: Option<&PathBuf>) -> Result<()> {
     use jcode_jbench::types::AgentEvalResults;
+    use std::fs;
 
     let mut all_runs = Vec::new();
 
     for entry in fs::read_dir(runs_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("run.json") {
+        // `Path::extension` returns only the trailing component (`json`),
+        // so matching against `"run.json"` never fires. Match on the full
+        // file name suffix instead.
+        let is_run_file = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.ends_with(".run.json"));
+        if is_run_file {
             let text = fs::read_to_string(&path)?;
             if let Ok(run) = serde_json::from_str::<EvalRun>(&text) {
                 all_runs.push(run);
@@ -226,12 +256,13 @@ async fn meta_analyze_impl(
         anyhow::bail!("No .run.json files found in {}", runs_dir.display());
     }
 
-    let avg_score = all_runs.iter().map(|r| r.judging.overall_score).sum::<f64>()
+    let avg_score = all_runs
+        .iter()
+        .map(|r| r.judging.overall_score)
+        .sum::<f64>()
         / all_runs.len() as f64;
-    let avg_cost = all_runs.iter().map(|r| r.cost_usd).sum::<f64>()
-        / all_runs.len() as f64;
-    let avg_duration = all_runs.iter().map(|r| r.duration_ms).sum::<u64>()
-        / all_runs.len() as u64;
+    let avg_cost = all_runs.iter().map(|r| r.cost_usd).sum::<f64>() / all_runs.len() as f64;
+    let avg_duration = all_runs.iter().map(|r| r.duration_ms).sum::<u64>() / all_runs.len() as u64;
 
     let summary = AgentEvalResults {
         agent_id: "unknown".to_owned(),

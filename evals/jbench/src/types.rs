@@ -112,6 +112,12 @@ pub struct EvalDataV2 {
 /// All three score fields are on the same `[0.0, 10.0]` scale; `f64` is
 /// used so we can also store the *averaged* per-dimension scores when
 /// aggregating multiple judges (see `judge::judge_with_three_models`).
+///
+/// On-disk JSON stays `snake_case` to match the rest of jcode's eval
+/// outputs, but each score field also accepts the `camelCase` spelling
+/// (`completionScore`, etc.) via `serde(alias = ...)` so we can
+/// deserialize LLM judge responses directly without an intermediate
+/// wire-format struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JudgingResult {
     /// Free-form prose comparing the agent's diff to the ground truth.
@@ -121,10 +127,13 @@ pub struct JudgingResult {
     /// Bullet-point weaknesses called out by the judge.
     pub weaknesses: Vec<String>,
     /// How completely the prompt was addressed, `[0.0, 10.0]`.
+    #[serde(alias = "completionScore")]
     pub completion_score: f64,
     /// Code structure / maintainability, `[0.0, 10.0]`.
+    #[serde(alias = "codeQualityScore")]
     pub code_quality_score: f64,
     /// Combined assessment, `[0.0, 10.0]`. JBench's canonical metric.
+    #[serde(alias = "overallScore")]
     pub overall_score: f64,
 }
 

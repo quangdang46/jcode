@@ -4,9 +4,7 @@
 //! and write, and they fail loudly if anyone changes a field's
 //! `snake_case` name without updating consumers.
 
-use jcode_jbench::types::{
-    EvalCommit, FileDiff, FileDiffStatus, JudgingResult,
-};
+use jcode_jbench::types::{EvalCommit, FileDiff, FileDiffStatus, JudgingResult};
 
 #[test]
 fn eval_commit_round_trips_through_json() {

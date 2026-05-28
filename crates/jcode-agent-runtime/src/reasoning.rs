@@ -79,9 +79,15 @@ mod tests {
             ReasoningEffort::parse("minimal"),
             Some(ReasoningEffort::Minimal)
         );
-        assert_eq!(ReasoningEffort::parse("OFF"), Some(ReasoningEffort::Minimal));
+        assert_eq!(
+            ReasoningEffort::parse("OFF"),
+            Some(ReasoningEffort::Minimal)
+        );
         assert_eq!(ReasoningEffort::parse("max"), Some(ReasoningEffort::High));
-        assert_eq!(ReasoningEffort::parse("default"), Some(ReasoningEffort::Medium));
+        assert_eq!(
+            ReasoningEffort::parse("default"),
+            Some(ReasoningEffort::Medium)
+        );
         assert_eq!(ReasoningEffort::parse(""), None);
         assert_eq!(ReasoningEffort::parse("absurd"), None);
     }

@@ -1925,7 +1925,8 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
             Ok(out) if out.status.success() => {
                 let _ = std::fs::remove_file(&tmp_path);
                 let url = String::from_utf8_lossy(&out.stdout)
-                    .lines().rfind(|l| l.starts_with("https://"))
+                    .lines()
+                    .rfind(|l| l.starts_with("https://"))
                     .unwrap_or("")
                     .trim()
                     .to_string();

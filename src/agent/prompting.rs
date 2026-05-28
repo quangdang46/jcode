@@ -122,7 +122,6 @@ impl Agent {
     }
 }
 
-
 /// Wrap a step prompt body in `<system_reminder>...</system_reminder>` tags.
 ///
 /// Step prompts are emitted by the harness (not typed by the user), but they

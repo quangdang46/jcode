@@ -245,16 +245,15 @@ pub fn append_lessons_to_file(
     }
 
     if !lessons_dir.exists() {
-        fs::create_dir_all(lessons_dir)
-            .context("failed to create lessons directory")?;
+        fs::create_dir_all(lessons_dir).context("failed to create lessons directory")?;
     }
 
     let safe_id = agent_id.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
     let file_path = lessons_dir.join(format!("{safe_id}.json"));
 
     let existing: Vec<Lesson> = if file_path.exists() {
-        let contents = fs::read_to_string(&file_path)
-            .context("failed to read existing lessons file")?;
+        let contents =
+            fs::read_to_string(&file_path).context("failed to read existing lessons file")?;
         serde_json::from_str(&contents).unwrap_or_default()
     } else {
         Vec::new()
@@ -265,11 +264,9 @@ pub fn append_lessons_to_file(
         .chain(lessons.iter().cloned())
         .collect();
 
-    let json = serde_json::to_string_pretty(&all_lessons)
-        .context("failed to serialize lessons")?;
+    let json = serde_json::to_string_pretty(&all_lessons).context("failed to serialize lessons")?;
 
-    fs::write(&file_path, json)
-        .context("failed to write lessons file")?;
+    fs::write(&file_path, json).context("failed to write lessons file")?;
 
     Ok(())
 }

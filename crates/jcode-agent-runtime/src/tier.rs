@@ -135,16 +135,10 @@ pub enum ResolutionSource {
     /// Used `agent.model_override` directly.
     Override(String),
     /// Used the env var backing `tier`.
-    Tier {
-        tier: ModelTier,
-        model: String,
-    },
+    Tier { tier: ModelTier, model: String },
     /// Tier was preferred but the env var was unset, so fell back to the
     /// session's current model.
-    TierFallback {
-        tier: ModelTier,
-        model: String,
-    },
+    TierFallback { tier: ModelTier, model: String },
     /// No override or tier preference; using the session's current model.
     SessionDefault(String),
 }

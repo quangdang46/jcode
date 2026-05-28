@@ -77,7 +77,12 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 ///
 /// Length caps documented on [`PlaceholderContext`] are enforced here, so
 /// callers may pass un-truncated input and trust the output to be bounded.
-pub fn substitute_placeholders(prompt: &str, ctx: &PlaceholderContext) -> String {
+///
+/// This is the **context-driven** substitution path used for built-in
+/// Phase 4 placeholders. For user-supplied template bindings (arbitrary
+/// `HashMap<String, String>`), use
+/// [`crate::prompt_templates::substitute_placeholders`] instead.
+pub fn substitute_context_placeholders(prompt: &str, ctx: &PlaceholderContext) -> String {
     if prompt.is_empty() {
         return String::new();
     }
@@ -123,11 +128,8 @@ mod tests {
                      k=[{{KNOWLEDGE_FILES}}] git=[{{GIT_CHANGES}}] \
                      date=[{{CURRENT_DATE}}] steps=[{{REMAINING_STEPS}}] \
                      sys=[{{SYSTEM_INFO}}]";
-        let out = substitute_placeholders(input, &ctx);
-        assert_eq!(
-            out,
-            "tree=[] full=[] k=[] git=[] date=[] steps=[] sys=[]"
-        );
+        let out = substitute_context_placeholders(input, &ctx);
+        assert_eq!(out, "tree=[] full=[] k=[] git=[] date=[] steps=[] sys=[]");
     }
 
     #[test]
@@ -136,11 +138,11 @@ mod tests {
             current_date: "2026-05-25".to_string(),
             ..Default::default()
         };
-        let out = substitute_placeholders("today is {{CURRENT_DATE}}.", &ctx);
+        let out = substitute_context_placeholders("today is {{CURRENT_DATE}}.", &ctx);
         assert_eq!(out, "today is 2026-05-25.");
 
         // Unrelated placeholder stays empty in the same call.
-        let out2 = substitute_placeholders(
+        let out2 = substitute_context_placeholders(
             "date={{CURRENT_DATE}} steps={{REMAINING_STEPS}}",
             &ctx,
         );
@@ -161,7 +163,7 @@ mod tests {
                      {{KNOWLEDGE_FILES}}\n\n## Meta\n\
                      date={{CURRENT_DATE}} steps={{REMAINING_STEPS}} \
                      sys={{SYSTEM_INFO}}";
-        let out = substitute_placeholders(input, &ctx);
+        let out = substitute_context_placeholders(input, &ctx);
         let expected = "## Tree\nsrc/\n  lib.rs\n\n## Knowledge\n\
                         AGENTS.md contents\n\n## Meta\n\
                         date=2026-05-25 steps=7 sys=linux x86_64";
@@ -176,7 +178,7 @@ mod tests {
         };
         let input = "known={{CURRENT_DATE}} unknown={{NOT_A_REAL_TOKEN}} \
                      other={{ALSO_BOGUS}}";
-        let out = substitute_placeholders(input, &ctx);
+        let out = substitute_context_placeholders(input, &ctx);
         assert_eq!(
             out,
             "known=2026-05-25 unknown={{NOT_A_REAL_TOKEN}} other={{ALSO_BOGUS}}"
@@ -191,7 +193,7 @@ mod tests {
             file_tree_small: big.clone(),
             ..Default::default()
         };
-        let out = substitute_placeholders("[{{FILE_TREE_SMALL}}]", &ctx);
+        let out = substitute_context_placeholders("[{{FILE_TREE_SMALL}}]", &ctx);
         // Two bracket characters plus the cap.
         assert_eq!(out.chars().count(), FILE_TREE_SMALL_MAX_CHARS + 2);
         assert!(out.starts_with('['));
