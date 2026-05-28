@@ -157,6 +157,10 @@ pub trait TuiState {
     }
     /// Total session token usage (input, output) - used for high usage warnings
     fn total_session_tokens(&self) -> Option<(u64, u64)>;
+    /// Number of jcode compactions already applied to this session, when known.
+    fn session_compaction_count(&self) -> usize {
+        0
+    }
     /// Whether running in remote (client-server) mode
     fn is_remote_mode(&self) -> bool;
     /// Whether running in canary/self-dev mode
@@ -290,6 +294,10 @@ pub trait TuiState {
     fn changelog_scroll(&self) -> Option<usize>;
     /// Help overlay scroll offset (None = not showing)
     fn help_scroll(&self) -> Option<usize>;
+    /// Model status overlay scroll offset and markdown content (None = not showing)
+    fn model_status_overlay(&self) -> Option<(usize, &str)> {
+        None
+    }
     /// Session picker overlay for /resume command
     fn session_picker_overlay(&self) -> Option<&std::cell::RefCell<session_picker::SessionPicker>>;
     /// Login picker overlay for /login command
@@ -342,6 +350,11 @@ pub trait TuiState {
         }
         false
     }
+}
+
+#[cfg(feature = "dev-bins")]
+pub fn debug_copy_selection_text_for_bench(range: CopySelectionRange) -> Option<String> {
+    ui::copy_selection_text(range)
 }
 
 pub(crate) fn connection_type_icon(connection_type: Option<&str>) -> Option<&'static str> {
@@ -1080,10 +1093,34 @@ fn full_frame_status_animation_active_with_policy(
 
     // These animations are rendered as part of the full status line, not by the
     // spinner-only cell renderer in app/run_shell.rs, so they need the normal
-    // redraw loop to run at animation cadence while visible.
+    // active redraw loop while visible.
     matches!(state.status(), ProcessingStatus::RunningTool(_))
         || rate_limit_countdown_redraw_active(state)
         || crate::build::read_build_progress().is_some()
+}
+
+fn primary_status_spinner_fast_path_available_with_policy(
+    state: &dyn TuiState,
+    policy: &crate::perf::TuiPerfPolicy,
+) -> bool {
+    policy.enable_decorative_animations
+        && state.is_processing()
+        && app::run_shell::status_uses_primary_spinner(&state.status())
+        && state.streaming_text().is_empty()
+        && !state.centered_mode()
+        && !state.has_pending_mouse_scroll_animation()
+        && !state.remote_startup_phase_active()
+}
+
+fn primary_status_spinner_needs_full_redraw_with_policy(
+    state: &dyn TuiState,
+    policy: &crate::perf::TuiPerfPolicy,
+) -> bool {
+    policy.enable_decorative_animations
+        && state.is_processing()
+        && app::run_shell::status_uses_primary_spinner(&state.status())
+        && state.streaming_text().is_empty()
+        && !primary_status_spinner_fast_path_available_with_policy(state, policy)
 }
 
 fn fps_to_duration(fps: u32) -> Duration {
@@ -1107,6 +1144,8 @@ pub(crate) fn redraw_interval_with_policy(
         && state.streaming_text().is_empty()
         && !state.has_pending_mouse_scroll_animation()
         && !state.remote_startup_phase_active()
+        && !rate_limit_countdown_redraw_active(state)
+        && crate::build::read_build_progress().is_none()
     {
         return REDRAW_DEEP_IDLE;
     }
@@ -1121,7 +1160,14 @@ pub(crate) fn redraw_interval_with_policy(
     if full_frame_status_animation_active_with_policy(state, policy) {
         return match policy.tier {
             crate::perf::PerformanceTier::Minimal => REDRAW_IDLE,
-            _ => animation_interval,
+            _ => fast_interval,
+        };
+    }
+
+    if primary_status_spinner_needs_full_redraw_with_policy(state, policy) {
+        return match policy.tier {
+            crate::perf::PerformanceTier::Minimal => REDRAW_IDLE,
+            _ => fast_interval,
         };
     }
 
@@ -1175,6 +1221,7 @@ pub(crate) fn periodic_redraw_required(state: &dyn TuiState) -> bool {
         && !state.has_pending_mouse_scroll_animation()
         && !state.remote_startup_phase_active()
         && !rate_limit_countdown_redraw_active(state)
+        && crate::build::read_build_progress().is_none()
     {
         return false;
     }
