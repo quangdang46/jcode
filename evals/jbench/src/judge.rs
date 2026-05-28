@@ -52,10 +52,18 @@ impl JudgeProviderKind {
 /// Configuration for the judging pipeline.
 #[derive(Debug, Clone)]
 pub struct JudgeConfig {
-    /// API base URL for the judge backend (e.g. OpenAI-compatible).
+    /// API base URL for the OpenAI-compatible judge backend.
     pub api_base: String,
-    /// API key secret.
+    /// API key for the OpenAI-compatible judge backend.
     pub api_key: String,
+    /// Optional separate base URL for Anthropic-routed judges (e.g.
+    /// `https://api.anthropic.com`). Falls back to `api_base` when
+    /// `None`, which only makes sense if the OpenAI-compatible host
+    /// proxies the Anthropic Messages API too.
+    pub anthropic_api_base: Option<String>,
+    /// Optional separate API key for Anthropic-routed judges. Falls
+    /// back to `api_key` when `None`.
+    pub anthropic_api_key: Option<String>,
     /// Model IDs for the three judges. Order determines the median
     /// computation.
     pub models: [String; 3],
@@ -72,6 +80,8 @@ impl Default for JudgeConfig {
             api_base: std::env::var("JBENCH_API_BASE")
                 .unwrap_or_else(|_| "https://api.openai.com".to_owned()),
             api_key: std::env::var("JBENCH_API_KEY").unwrap_or_default(),
+            anthropic_api_base: std::env::var("JBENCH_ANTHROPIC_API_BASE").ok(),
+            anthropic_api_key: std::env::var("JBENCH_ANTHROPIC_API_KEY").ok(),
             models: [
                 "gpt-5-2026-05".to_owned(),
                 "google/gemini-3.1-pro".to_owned(),
@@ -84,17 +94,15 @@ impl Default for JudgeConfig {
 }
 
 /// Render the full judge prompt from commit + diff + context.
-fn render_judge_prompt(commit: &EvalCommit, agent_diff: &str, context_files: &HashMap<String, String>) -> String {
+fn render_judge_prompt(
+    commit: &EvalCommit,
+    agent_diff: &str,
+    context_files: &HashMap<String, String>,
+) -> String {
     let ground_truth_diffs = commit
         .file_diffs
         .iter()
-        .map(|fd| {
-            format!(
-                "### {}\n```diff\n{}\n```",
-                fd.path,
-                fd.diff
-            )
-        })
+        .map(|fd| format!("### {}\n```diff\n{}\n```", fd.path, fd.diff))
         .collect::<Vec<_>>()
         .join("\n\n");
 
@@ -106,10 +114,7 @@ fn render_judge_prompt(commit: &EvalCommit, agent_diff: &str, context_files: &Ha
 
     format!(
         "## User Prompt (What the agent was asked to do)\n{}\n\n## Context Files (from parent commit)\n{}\n\n## Ground Truth Changes (One valid implementation)\n{}\n\n## Agent's Changes (What the agent actually did)\n```diff\n{}\n```",
-        commit.prompt,
-        context_content,
-        ground_truth_diffs,
-        agent_diff
+        commit.prompt, context_content, ground_truth_diffs, agent_diff
     )
 }
 
@@ -168,12 +173,18 @@ struct JudgeResponse {
 
 /// Invoke a single judge model with a fully-rendered prompt.
 ///
+/// `anthropic_api_base` / `anthropic_api_key` are only consulted when
+/// the model routes through `JudgeProviderKind::Anthropic`; OpenAI-bound
+/// requests always use the primary `api_base` / `api_key`.
+///
 /// Design source: `/tmp/codebuff/evals/buffbench/judge.ts` (`runSingleJudge`).
 pub async fn run_single_judge(
     model: &str,
     prompt: &str,
     api_base: &str,
     api_key: &str,
+    anthropic_api_base: Option<&str>,
+    anthropic_api_key: Option<&str>,
     http_client: &Client,
 ) -> Result<Scorecard> {
     let kind = JudgeProviderKind::for_model(model);
@@ -182,7 +193,12 @@ pub async fn run_single_judge(
     if kind == JudgeProviderKind::OpenAI {
         run_openai_judge(model, prompt, system, api_base, api_key, http_client).await
     } else {
-        run_anthropic_judge(model, prompt, system, api_base, api_key, http_client).await
+        // Fall back to the primary host/key only if no Anthropic-specific
+        // overrides were configured. The caller is expected to set both
+        // overrides when targeting `api.anthropic.com` directly.
+        let base = anthropic_api_base.unwrap_or(api_base);
+        let key = anthropic_api_key.unwrap_or(api_key);
+        run_anthropic_judge(model, prompt, system, base, key, http_client).await
     }
 }
 
@@ -292,10 +308,14 @@ async fn run_anthropic_judge(
         },
     });
 
+    // Anthropic Messages API authenticates via `x-api-key`, not
+    // `Authorization: Bearer ...`. Using the wrong header returns 401
+    // even with a valid key, which previously made this branch
+    // permanently dead.
     let url = format!("{api_base}/v1/messages");
     let response = http_client
         .post(&url)
-        .header("Authorization", format!("Bearer {api_key}"))
+        .header("x-api-key", api_key)
         .header("Content-Type", "application/json")
         .header("anthropic-version", "2023-06-01")
         .json(&request_body)
@@ -318,15 +338,14 @@ async fn run_anthropic_judge(
         .and_then(|t| t.as_str())
         .unwrap_or_default();
 
-    let parsed = serde_json::from_str::<serde_json::Value>(text)
-        .unwrap_or(serde_json::json!({
-            "analysis": text.to_owned(),
-            "strengths": [],
-            "weaknesses": ["Could not parse structured output from Anthropic judge"],
-            "completionScore": 0,
-            "codeQualityScore": 0,
-            "overallScore": 0
-        }));
+    let parsed = serde_json::from_str::<serde_json::Value>(text).unwrap_or(serde_json::json!({
+        "analysis": text.to_owned(),
+        "strengths": [],
+        "weaknesses": ["Could not parse structured output from Anthropic judge"],
+        "completionScore": 0,
+        "codeQualityScore": 0,
+        "overallScore": 0
+    }));
 
     parse_scorecard(parsed)
 }
@@ -365,22 +384,21 @@ pub async fn judge_with_three_models(
                 &prompt,
                 &config.api_base,
                 &config.api_key,
+                config.anthropic_api_base.as_deref(),
+                config.anthropic_api_key.as_deref(),
                 http,
             )
         })
         .collect();
 
     // Run all three judges in parallel with an overall timeout
-    let valid: Vec<Scorecard> = timeout(
-        timeout_duration,
-        futures::future::join_all(judge_futures),
-    )
-    .await
-    .ok()
-    .into_iter()           // IntoIterator<Item = Vec<Result<Scorecard>>>
-    .flatten()            // Iterator<Item = Result<Scorecard>>
-    .filter_map(|r| r.ok())
-    .collect();
+    let valid: Vec<Scorecard> = timeout(timeout_duration, futures::future::join_all(judge_futures))
+        .await
+        .ok()
+        .into_iter() // IntoIterator<Item = Vec<Result<Scorecard>>>
+        .flatten() // Iterator<Item = Result<Scorecard>>
+        .filter_map(|r| r.ok())
+        .collect();
 
     if valid.len() < MIN_JUDGE_SUCCESS_COUNT {
         return Ok(Scorecard {
@@ -390,11 +408,7 @@ pub async fn judge_with_three_models(
                 3
             ),
             strengths: vec![],
-            weaknesses: vec![format!(
-                "Only {}/{} judges succeeded",
-                valid.len(),
-                3
-            )],
+            weaknesses: vec![format!("Only {}/{} judges succeeded", valid.len(), 3)],
             completion_score: 0.0,
             code_quality_score: 0.0,
             overall_score: 0.0,
@@ -452,5 +466,41 @@ mod tests {
             JudgeProviderKind::for_model("anthropic/claude-opus-4"),
             JudgeProviderKind::Anthropic
         );
+    }
+
+    /// Locks the wire-format contract: the LLM judge returns camelCase
+    /// (`completionScore`, etc.) per the request schema. Deserialization
+    /// must accept that even though the on-disk JSON form is snake_case.
+    #[test]
+    fn parse_scorecard_accepts_camelcase_from_llm() {
+        let camel = serde_json::json!({
+            "analysis": "looks good",
+            "strengths": ["clean diff"],
+            "weaknesses": [],
+            "completionScore": 8.5,
+            "codeQualityScore": 7.0,
+            "overallScore": 7.8
+        });
+        let parsed = parse_scorecard(camel).expect("camelCase must deserialize");
+        assert_eq!(parsed.completion_score, 8.5);
+        assert_eq!(parsed.code_quality_score, 7.0);
+        assert_eq!(parsed.overall_score, 7.8);
+    }
+
+    /// snake_case (on-disk eval JSON) must round-trip as well.
+    #[test]
+    fn parse_scorecard_accepts_snake_case_from_disk() {
+        let snake = serde_json::json!({
+            "analysis": "",
+            "strengths": [],
+            "weaknesses": [],
+            "completion_score": 1.0,
+            "code_quality_score": 2.0,
+            "overall_score": 3.0
+        });
+        let parsed = parse_scorecard(snake).expect("snake_case must deserialize");
+        assert_eq!(parsed.completion_score, 1.0);
+        assert_eq!(parsed.code_quality_score, 2.0);
+        assert_eq!(parsed.overall_score, 3.0);
     }
 }

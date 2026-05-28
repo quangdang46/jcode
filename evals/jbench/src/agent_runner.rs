@@ -83,9 +83,12 @@ pub async fn run_agent_in_repo(config: AgentRunConfig) -> Result<EvalRun> {
         .current_dir(&config.repo_path)
         .envs(&env_vars)
         .args([
-            "agent", "run",
-            "--agent", &config.agent_id,
-            "--output-mode", "stream",
+            "agent",
+            "run",
+            "--agent",
+            &config.agent_id,
+            "--output-mode",
+            "stream",
             "--no-interactive",
         ])
         .stdin(Stdio::piped())

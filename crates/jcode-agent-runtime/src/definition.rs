@@ -174,9 +174,7 @@ fn default_version() -> String {
 /// invariants. Displayed to users when a TOML file fails to load.
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum DefinitionError {
-    #[error(
-        "agent id `{0}` is invalid: must be non-empty, lowercase ASCII alphanumeric or hyphen"
-    )]
+    #[error("agent id `{0}` is invalid: must be non-empty, lowercase ASCII alphanumeric or hyphen")]
     InvalidId(String),
 
     #[error(
@@ -184,9 +182,7 @@ pub enum DefinitionError {
     )]
     SystemPromptConflict { id: String },
 
-    #[error(
-        "agent `{id}` has `output_mode = structured_output` but `output_schema` is missing"
-    )]
+    #[error("agent `{id}` has `output_mode = structured_output` but `output_schema` is missing")]
     StructuredOutputMissingSchema { id: String },
 
     #[error("agent `{id}` references itself in `spawnable_agents`")]
@@ -209,9 +205,7 @@ pub enum DefinitionError {
 /// agent spawn time.
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum ReferenceError {
-    #[error(
-        "agent `{id}` references unknown tool(s): {unknown}. Available tools: {available}"
-    )]
+    #[error("agent `{id}` references unknown tool(s): {unknown}. Available tools: {available}")]
     UnknownTools {
         id: String,
         unknown: String,
@@ -245,8 +239,7 @@ impl AgentDefinition {
         }
 
         // 3. structured_output requires schema
-        if matches!(self.output_mode, OutputMode::StructuredOutput)
-            && self.output_schema.is_none()
+        if matches!(self.output_mode, OutputMode::StructuredOutput) && self.output_schema.is_none()
         {
             return Err(DefinitionError::StructuredOutputMissingSchema {
                 id: self.id.clone(),
@@ -422,30 +415,21 @@ mod tests {
     fn id_validation_rejects_uppercase() {
         let mut d = minimal_definition("File-Picker");
         d.id = "File-Picker".to_string();
-        assert!(matches!(
-            d.validate(),
-            Err(DefinitionError::InvalidId(_))
-        ));
+        assert!(matches!(d.validate(), Err(DefinitionError::InvalidId(_))));
     }
 
     #[test]
     fn id_validation_rejects_underscore() {
         let mut d = minimal_definition("file_picker");
         d.id = "file_picker".to_string();
-        assert!(matches!(
-            d.validate(),
-            Err(DefinitionError::InvalidId(_))
-        ));
+        assert!(matches!(d.validate(), Err(DefinitionError::InvalidId(_))));
     }
 
     #[test]
     fn id_validation_rejects_leading_hyphen() {
         let mut d = minimal_definition("ok");
         d.id = "-bad".to_string();
-        assert!(matches!(
-            d.validate(),
-            Err(DefinitionError::InvalidId(_))
-        ));
+        assert!(matches!(d.validate(), Err(DefinitionError::InvalidId(_))));
     }
 
     #[test]

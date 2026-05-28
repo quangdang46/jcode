@@ -90,9 +90,7 @@ pub enum LoadError {
         source: DefinitionError,
     },
 
-    #[error(
-        "filename `{path}` does not match agent id `{id}`. Rename the file to `{id}.toml`."
-    )]
+    #[error("filename `{path}` does not match agent id `{id}`. Rename the file to `{id}.toml`.")]
     FileNameMismatch { path: PathBuf, id: String },
 }
 
@@ -175,10 +173,7 @@ impl AgentRegistry {
 
     /// Register a builtin agent. Builtins have the lowest priority and
     /// are overridable by both user and project files of the same id.
-    pub fn register_builtin(
-        &mut self,
-        definition: AgentDefinition,
-    ) -> Result<(), DefinitionError> {
+    pub fn register_builtin(&mut self, definition: AgentDefinition) -> Result<(), DefinitionError> {
         definition.validate()?;
         self.insert(LoadedAgent {
             definition,
@@ -233,10 +228,7 @@ impl AgentRegistry {
                             AgentSource::ProjectLocal { path: path.clone() }
                         }
                     };
-                    self.insert(LoadedAgent {
-                        definition,
-                        source,
-                    });
+                    self.insert(LoadedAgent { definition, source });
                     loaded += 1;
                 }
                 Err(err) => {
@@ -333,7 +325,10 @@ mod tests {
     fn missing_dir_is_zero_load_not_error() {
         let mut reg = AgentRegistry::new();
         let n = reg
-            .load_directory(Path::new("/nonexistent/jcode-test-dir"), SourceKind::UserGlobal)
+            .load_directory(
+                Path::new("/nonexistent/jcode-test-dir"),
+                SourceKind::UserGlobal,
+            )
             .unwrap();
         assert_eq!(n, 0);
         assert!(reg.is_empty());
@@ -382,7 +377,10 @@ mod tests {
             output_schema: None,
         };
         reg.register_builtin(builtin_def.clone()).unwrap();
-        assert_eq!(reg.get("editor").unwrap().definition.display_name, "Builtin Editor");
+        assert_eq!(
+            reg.get("editor").unwrap().definition.display_name,
+            "Builtin Editor"
+        );
 
         // User
         let user_dir = temp_dir("user");
@@ -394,8 +392,12 @@ mod tests {
                 display_name = "User Editor"
             "#,
         );
-        reg.load_directory(&user_dir, SourceKind::UserGlobal).unwrap();
-        assert_eq!(reg.get("editor").unwrap().definition.display_name, "User Editor");
+        reg.load_directory(&user_dir, SourceKind::UserGlobal)
+            .unwrap();
+        assert_eq!(
+            reg.get("editor").unwrap().definition.display_name,
+            "User Editor"
+        );
 
         // Project
         let proj_dir = temp_dir("proj");
@@ -407,7 +409,8 @@ mod tests {
                 display_name = "Project Editor"
             "#,
         );
-        reg.load_directory(&proj_dir, SourceKind::ProjectLocal).unwrap();
+        reg.load_directory(&proj_dir, SourceKind::ProjectLocal)
+            .unwrap();
         assert_eq!(
             reg.get("editor").unwrap().definition.display_name,
             "Project Editor"
@@ -432,10 +435,7 @@ mod tests {
         reg.load_directory(&dir, SourceKind::UserGlobal).unwrap();
         assert!(reg.is_empty(), "no agents registered");
         assert_eq!(reg.load_errors().len(), 1);
-        assert!(matches!(
-            reg.load_errors()[0],
-            LoadError::Parse { .. }
-        ));
+        assert!(matches!(reg.load_errors()[0], LoadError::Parse { .. }));
     }
 
     #[test]
@@ -453,10 +453,7 @@ mod tests {
         reg.load_directory(&dir, SourceKind::UserGlobal).unwrap();
         assert!(reg.is_empty());
         assert_eq!(reg.load_errors().len(), 1);
-        assert!(matches!(
-            reg.load_errors()[0],
-            LoadError::Invalid { .. }
-        ));
+        assert!(matches!(reg.load_errors()[0], LoadError::Invalid { .. }));
     }
 
     #[test]
@@ -506,14 +503,20 @@ mod tests {
             write_toml(
                 &dir,
                 &format!("{id}.toml"),
-                &format!(r#"id = "{id}"
+                &format!(
+                    r#"id = "{id}"
 display_name = "{id}"
-"#),
+"#
+                ),
             );
         }
         let mut reg = AgentRegistry::new();
         reg.load_directory(&dir, SourceKind::UserGlobal).unwrap();
-        let ids: Vec<_> = reg.iter_sorted().iter().map(|a| a.definition.id.clone()).collect();
+        let ids: Vec<_> = reg
+            .iter_sorted()
+            .iter()
+            .map(|a| a.definition.id.clone())
+            .collect();
         assert_eq!(ids, vec!["alpha", "mid", "zeta"]);
     }
 

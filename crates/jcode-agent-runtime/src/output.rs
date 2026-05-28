@@ -53,7 +53,10 @@ mod tests {
 
     #[test]
     fn parse_accepts_aliases() {
-        assert_eq!(OutputMode::parse("last_message"), Some(OutputMode::LastMessage));
+        assert_eq!(
+            OutputMode::parse("last_message"),
+            Some(OutputMode::LastMessage)
+        );
         assert_eq!(OutputMode::parse("all"), Some(OutputMode::AllMessages));
         assert_eq!(
             OutputMode::parse("structured"),
