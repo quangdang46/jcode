@@ -4223,6 +4223,7 @@ dependencies = [
  "ftui-render",
  "ftui-style",
  "ftui-text",
+ "ftui-widgets",
  "ratatui",
  "unicode-width 0.2.2",
 ]

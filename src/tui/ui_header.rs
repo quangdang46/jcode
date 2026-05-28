@@ -7,7 +7,9 @@ use super::{
 use crate::auth::{AuthState, AuthStatus};
 use crate::tui::color_support::rgb;
 use crate::tui::connection_type_icon;
-use ratatui::prelude::*;
+use ftui_style::{Color, Style};
+use ftui_text::text::Line;
+use ftui_widgets::block::Alignment;
 #[cfg(test)]
 use std::sync::OnceLock;
 
@@ -487,7 +489,7 @@ pub(super) fn build_persistent_header(app: &dyn TuiState, width: u16) -> Vec<Lin
 
 pub(crate) fn build_header_lines(app: &dyn TuiState, width: u16) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::new();
-    let align = ratatui::layout::Alignment::Center;
+    let align = Alignment::Center;
     let model = app.provider_model();
     let provider_name = app.provider_name();
     let upstream = app.upstream_provider();

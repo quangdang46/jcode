@@ -43,7 +43,7 @@ pub struct TuiRuntimeState {
 ///
 /// The actual terminal setup (alternate screen, mouse capture, etc.) is handled
 /// by frankentui's internal CrosstermEventSource when `run()` is called.
-pub fn init_tui_runtime() -> Result<TuiRuntimeState> {
+pub fn init_tui_runtime() -> Result<((), TuiRuntimeState)> {
     // Check that we're in a terminal
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         anyhow::bail!("jcode TUI requires an interactive terminal (stdin/stdout must be a TTY)");
@@ -71,11 +71,14 @@ pub fn init_tui_runtime() -> Result<TuiRuntimeState> {
         crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
     }
 
-    Ok(TuiRuntimeState {
-        mouse_capture,
-        keyboard_enhanced,
-        focus_change,
-    })
+    Ok((
+        (),
+        TuiRuntimeState {
+            mouse_capture,
+            keyboard_enhanced,
+            focus_change,
+        },
+    ))
 }
 
 /// Clean up the TUI runtime, restoring the terminal to its previous state.
@@ -108,7 +111,7 @@ pub fn cleanup_tui_runtime(state: &TuiRuntimeState, restore_terminal: bool) {
 /// Same as cleanup_tui_runtime but also handles the run result for exit code logic.
 pub fn cleanup_tui_runtime_for_run_result(
     state: &TuiRuntimeState,
-    run_result: &crate::tui::RunResult,
+    _run_result: &crate::tui::RunResult,
     restore_terminal: bool,
 ) {
     cleanup_tui_runtime(state, restore_terminal);

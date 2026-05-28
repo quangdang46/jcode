@@ -43,3 +43,5 @@ pub fn render_workspace_map_widget(
 ) {
     // Phase 5: Full implementation
 }
+
+pub fn render_workspace_map(_area: Rect) {}

@@ -1,5 +1,10 @@
 use chrono::{DateTime, Utc};
-use ratatui::prelude::*;
+use crate::tui::color_support::rgb;
+use ftui_core::geometry::Rect;
+use ftui_render::cell::PackedRgba;
+use ftui_style::{Color, Style};
+use ftui_text::text::Line;
+use ftui_text::text::Text;
 
 #[derive(Clone)]
 pub(super) struct MemoryTilePlan {
@@ -198,19 +203,19 @@ fn format_memory_updated_age(updated_at: DateTime<Utc>) -> String {
 
 fn memory_age_text_tint(updated_at: Option<DateTime<Utc>>) -> Color {
     let Some(updated_at) = updated_at else {
-        return Color::Rgb(140, 144, 152);
+        return rgb(140, 144, 152);
     };
     let age = Utc::now().signed_duration_since(updated_at);
     if age.num_hours() < 1 {
-        Color::Rgb(146, 156, 149)
+        rgb(146, 156, 149)
     } else if age.num_days() < 1 {
-        Color::Rgb(142, 148, 156)
+        rgb(142, 148, 156)
     } else if age.num_days() < 7 {
-        Color::Rgb(145, 144, 154)
+        rgb(145, 144, 154)
     } else if age.num_days() < 30 {
-        Color::Rgb(150, 143, 147)
+        rgb(150, 143, 147)
     } else {
-        Color::Rgb(154, 144, 144)
+        rgb(154, 144, 144)
     }
 }
 
@@ -227,7 +232,7 @@ fn memory_tile_content_lines(
     let mut content_lines: Vec<Line<'static>> = Vec::new();
     for item in items {
         let text_fill_style = text_style.fg(memory_age_text_tint(item.updated_at));
-        let meta_fill_style = Style::default().fg(Color::Rgb(160, 165, 172));
+        let meta_fill_style = Style::default().fg(rgb(160, 165, 172));
         let text_display_width = unicode_width::UnicodeWidthStr::width(item.content.as_str());
         if text_display_width <= item_width {
             let text = item.content.to_string();

@@ -12,4 +12,5 @@ ftui-style = { path = "/data/projects/frankentui/crates/ftui-style" }
 ftui-render = { path = "/data/projects/frankentui/crates/ftui-render" }
 ftui-layout = { path = "/data/projects/frankentui/crates/ftui-layout" }
 ftui-text = { path = "/data/projects/frankentui/crates/ftui-text" }
+ftui-widgets = { path = "/data/projects/frankentui/crates/ftui-widgets" }
 unicode-width = "0.2"

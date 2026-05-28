@@ -1,5 +1,5 @@
 use jcode_tui_workspace::color_support::rgb;
-use ratatui::prelude::*;
+use ftui::prelude::*;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub fn wrap_line(

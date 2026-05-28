@@ -218,7 +218,7 @@ pub(super) fn highlight_code(code: &str, lang: Option<&str>) -> Vec<Line<'static
                 let spans: Vec<Span<'static>> = ranges
                     .into_iter()
                     .map(|(style, text)| {
-                        Span::styled(text.to_string(), syntect_to_ratatui_style(style))
+                        Span::styled(text.to_string(), syntect_to_ftui_style(style))
                     })
                     .collect();
                 lines.push(Line::from(spans));
@@ -236,10 +236,10 @@ pub(super) fn highlight_code(code: &str, lang: Option<&str>) -> Vec<Line<'static
     lines
 }
 
-/// Convert syntect style to ratatui style
-fn syntect_to_ratatui_style(style: SynStyle) -> Style {
+/// Convert syntect style to ftui style
+fn syntect_to_ftui_style(style: SynStyle) -> Style {
     let fg = rgb(style.foreground.r, style.foreground.g, style.foreground.b);
-    Style::default().fg(fg)
+    Style::new().fg(fg)
 }
 
 /// Highlight a single line of code (for diff display)
@@ -257,7 +257,7 @@ pub fn highlight_line(code: &str, ext: Option<&str>) -> Vec<Span<'static>> {
     match highlighter.highlight_line(code, &SYNTAX_SET) {
         Ok(ranges) => ranges
             .into_iter()
-            .map(|(style, text)| Span::styled(text.to_string(), syntect_to_ratatui_style(style)))
+            .map(|(style, text)| Span::styled(text.to_string(), syntect_to_ftui_style(style)))
             .collect(),
         Err(_) => {
             vec![Span::raw(code.to_string())]
@@ -291,7 +291,7 @@ pub fn highlight_file_lines(
             let spans: Vec<Span<'static>> = ranges
                 .into_iter()
                 .map(|(style, text)| {
-                    Span::styled(text.to_string(), syntect_to_ratatui_style(style))
+                    Span::styled(text.to_string(), syntect_to_ftui_style(style))
                 })
                 .collect();
             results.push((line_num, spans));

@@ -21,7 +21,7 @@
 //! works. Option A keeps the App unchanged and just wraps it for the frankentui runtime.
 
 use ftui::{App, Cmd, Frame, Model};
-use ftui_runtime::{AppBuilder, MouseCapturePolicy, Subscription};
+use ftui_runtime::{AppBuilder, MouseCapturePolicy};
 use std::sync::{Arc, Mutex};
 
 use crate::tui::app::App as AppCore;
@@ -108,8 +108,17 @@ impl AppWrapper {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AppMsg;
+
+impl From<ftui::Event> for AppMsg {
+    fn from(_: ftui::Event) -> Self {
+        AppMsg
+    }
+}
+
 impl ftui::Model for AppWrapper {
-    type Message = ();
+    type Message = AppMsg;
 
     fn init(&mut self) -> Cmd<Self::Message> {
         // STUB: No startup commands needed for phase 1.3
@@ -208,7 +217,7 @@ pub fn run_frankentui(app: AppCore, config: FrankenTuiConfig) -> std::io::Result
     let captured = result
         .lock()
         .ok()
-        .and_then(|r| r.take())
+        .and_then(|mut r| r.take())
         .unwrap_or_else(|| RunResult {
             reload_session: None,
             rebuild_session: None,
