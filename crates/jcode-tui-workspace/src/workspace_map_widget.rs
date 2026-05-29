@@ -75,11 +75,11 @@ pub fn compute_workspace_tile_placements(
 
 fn state_color(state: WorkspaceSessionVisualState) -> PackedRgba {
     match state {
-        WorkspaceSessionVisualState::Idle => PackedRgba::rgb(127, 127, 127),     // Dim gray
-        WorkspaceSessionVisualState::Running => PackedRgba::rgb(0, 200, 0),     // Green
-        WorkspaceSessionVisualState::Completed => PackedRgba::rgb(0, 0, 205),    // Blue
-        WorkspaceSessionVisualState::Waiting => PackedRgba::rgb(205, 205, 0),    // Yellow
-        WorkspaceSessionVisualState::Error => PackedRgba::rgb(205, 0, 0),        // Red
+        WorkspaceSessionVisualState::Idle => PackedRgba::rgb(127, 127, 127), // Dim gray
+        WorkspaceSessionVisualState::Running => PackedRgba::rgb(0, 200, 0),  // Green
+        WorkspaceSessionVisualState::Completed => PackedRgba::rgb(0, 0, 205), // Blue
+        WorkspaceSessionVisualState::Waiting => PackedRgba::rgb(205, 205, 0), // Yellow
+        WorkspaceSessionVisualState::Error => PackedRgba::rgb(205, 0, 0),    // Red
         WorkspaceSessionVisualState::Detached => PackedRgba::rgb(128, 128, 128), // Darker gray
     }
 }

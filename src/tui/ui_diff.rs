@@ -1,12 +1,15 @@
+use ftui_style::Rgb;
+use ftui_style::MonoColor;
 use crate::{message::ToolCall, tui::ui::tools_ui};
-use ratatui::prelude::*;
+use ftui_style::{Color, Style};
+use ftui_text::text::Span;
 
 pub(super) fn diff_add_color() -> Color {
-    Color::Rgb(100, 200, 100)
+    Color::Rgb(Rgb { r: 100, g: 200, b: 100 })
 }
 
 pub(super) fn diff_del_color() -> Color {
-    Color::Rgb(200, 100, 100)
+    Color::Rgb(Rgb { r: 200, g: 100, b: 100 })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,23 +318,23 @@ fn trim_diff_content(content: &str) -> String {
 
 pub(super) fn tint_span_with_diff_color(span: Span<'static>, diff_color: Color) -> Span<'static> {
     let (dr, dg, db) = match diff_color {
-        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Rgb(rgb) => (rgb.r, rgb.g, rgb.b),
         Color::Indexed(n) => super::color_support::indexed_to_rgb(n),
         _ => return span,
     };
 
-    let fg = span.style.fg.unwrap_or(Color::White);
+    let fg = span.style.fg.unwrap_or(Color::Mono(MonoColor::White));
     let (sr, sg, sb) = match fg {
-        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Rgb(rgb) => (rgb.r, rgb.g, rgb.b),
         Color::Indexed(n) => super::color_support::indexed_to_rgb(n),
-        Color::White => (255, 255, 255),
-        Color::Black => (0, 0, 0),
+        Color::Mono(MonoColor::White) => (255, 255, 255),
+        Color::Mono(MonoColor::Black) => (0, 0, 0),
         _ => return span,
     };
 
     let blend = |s: u8, d: u8| -> u8 { ((s as u16 * 70 + d as u16 * 30) / 100) as u8 };
 
-    let tinted = Color::Rgb(blend(sr, dr), blend(sg, dg), blend(sb, db));
+    let tinted = Color::Rgb(Rgb { r: blend(sr, dr), g: blend(sg, dg), b: blend(sb, db) });
     Span::styled(span.content, span.style.fg(tinted))
 }
 

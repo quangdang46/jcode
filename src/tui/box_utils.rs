@@ -1,5 +1,5 @@
 // Phase 5 widget work - stubbed for Phase 1.3 compilation
-use ftui::text::Line;
+use ftui_text::text::Line;
 use ftui_style::Style;
 
 pub fn render_rounded_box() {}

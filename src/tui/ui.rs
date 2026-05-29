@@ -47,7 +47,13 @@ use super::visual_debug::{
 };
 use super::{DisplayMessage, DisplayMessageRoleExt, ProcessingStatus, TuiState};
 use crate::message::ToolCall;
-use ratatui::{prelude::*, widgets::Paragraph};
+use ftui_core::geometry::Rect;
+use ftui_layout::{Constraint, Direction, Flex};
+use ftui_render::frame::Frame;
+use ftui_style::{Color, Style};
+use ftui_text::text::{Line, Span};
+use ftui_widgets::block::Alignment;
+use ftui_widgets::paragraph::Paragraph;
 use serde::Serialize;
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
@@ -1436,7 +1442,8 @@ pub(crate) fn line_left_margins_for_area(lines: &[Line<'static>], area_width: u1
         .map(|line| {
             let used = line.width().min(area_width as usize) as u16;
             let total_margin = area_width.saturating_sub(used);
-            match line.alignment.unwrap_or(Alignment::Left) {
+            // ftui Line has no per-line alignment field; default to Left
+            match Alignment::Left {
                 Alignment::Left => 0,
                 Alignment::Center => total_margin / 2,
                 Alignment::Right => total_margin,
@@ -2020,29 +2027,28 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
 
     // Layout: messages (includes header), queued, status, notification, inline UI, gap, input, donut
     // All vertical chunks are within the chat_area (left column).
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
+    let chunks = Flex::vertical()
         .constraints(if use_packed {
             vec![
-                Constraint::Length(content_height.max(1)), // Messages (exact height)
-                Constraint::Length(queued_height),         // Queued messages (above status)
-                Constraint::Length(1),                     // Status line
-                Constraint::Length(notification_height),   // Notification line
-                Constraint::Length(inline_block_height),   // Inline UI
-                Constraint::Length(inline_ui_gap_height),  // Inline UI/input spacing
-                Constraint::Length(input_height),          // Input
-                Constraint::Length(donut_height),          // Donut animation
+                Constraint::Fixed(content_height.max(1)), // Messages (exact height)
+                Constraint::Fixed(queued_height),         // Queued messages (above status)
+                Constraint::Fixed(1),                     // Status line
+                Constraint::Fixed(notification_height),   // Notification line
+                Constraint::Fixed(inline_block_height),   // Inline UI
+                Constraint::Fixed(inline_ui_gap_height),  // Inline UI/input spacing
+                Constraint::Fixed(input_height),          // Input
+                Constraint::Fixed(donut_height),          // Donut animation
             ]
         } else {
             vec![
                 Constraint::Min(3),                       // Messages (scrollable)
-                Constraint::Length(queued_height),        // Queued messages (above status)
-                Constraint::Length(1),                    // Status line
-                Constraint::Length(notification_height),  // Notification line
-                Constraint::Length(inline_block_height),  // Inline UI
-                Constraint::Length(inline_ui_gap_height), // Inline UI/input spacing
-                Constraint::Length(input_height),         // Input
-                Constraint::Length(donut_height),         // Donut animation
+                Constraint::Fixed(queued_height),        // Queued messages (above status)
+                Constraint::Fixed(1),                    // Status line
+                Constraint::Fixed(notification_height),  // Notification line
+                Constraint::Fixed(inline_block_height),  // Inline UI
+                Constraint::Fixed(inline_ui_gap_height), // Inline UI/input spacing
+                Constraint::Fixed(input_height),         // Input
+                Constraint::Fixed(donut_height),         // Donut animation
             ]
         })
         .split(chat_area);
@@ -2428,10 +2434,13 @@ pub(crate) fn render_native_scrollbar(
         } else {
             (" ", Color::Reset)
         };
-        lines.push(Line::from(Span::styled(glyph, Style::default().fg(color))));
+        lines.push(Line::from_spans(vec![Span::styled(
+            glyph,
+            Style::default().fg(color),
+        )]));
     }
 
-    frame.render_widget(Paragraph::new(lines), area);
+    Paragraph::new(lines).render(area, &mut frame.buffer);
 }
 
 #[cfg(test)]

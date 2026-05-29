@@ -5,6 +5,7 @@
 //! In centered mode, widgets can appear on both left and right margins.
 //! In left-aligned mode, widgets only appear on the right margin.
 
+use crate::tui::compat::StyleCompatExt;
 use super::color_support::rgb;
 #[path = "info_widget_git.rs"]
 mod git;
@@ -39,12 +40,14 @@ use crate::provider::DEFAULT_CONTEXT_LIMIT;
 use crate::todo::TodoItem;
 use memory_render::{render_memory_compact, render_memory_expanded, render_memory_widget};
 use ftui_core::geometry::Rect;
-use ftui_style::{Color, Modifier, Style};
-use ftui_text::text::{Line, Text};
+use ftui_style::{Color, Style};
+use ftui_text::text::{Line, Span, Text};
+use ftui_layout::{Constraint, Direction, Flex};
+use ftui_text::wrap::WrapMode;
 use ftui_widgets::{
-    block::{Alignment, Block, BorderType, Borders, Constraint, Direction, Layout},
+    block::{Alignment, Block},
+    borders::{BorderType, Borders},
     paragraph::Paragraph,
-    wrap::Wrap,
     Widget,
 };
 use std::collections::HashMap;
@@ -1528,7 +1531,7 @@ fn render_kv_cache_summary_line(cache: &CacheHitInfo) -> Line<'static> {
     } else {
         spans.push(Span::styled(
             "warming",
-            Style::new().fg(color).add_modifier(Modifier::BOLD),
+            Style::new().fg(color).bold(),
         ));
     }
 

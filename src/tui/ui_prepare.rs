@@ -1,3 +1,6 @@
+use ftui_text::text::{Line, Span, Text};
+use ftui_style::{Ansi16, MonoColor};
+use crate::tui::compat::StyleCompatExt;
 use super::*;
 use crate::tui::ui::{self, WrappedLineMap};
 
@@ -70,16 +73,16 @@ fn user_prompt_text_style() -> Style {
     Style::default().fg(user_text()).bg(user_bg())
 }
 
-fn default_message_alignment(role: &str, centered: bool) -> ratatui::layout::Alignment {
+fn default_message_alignment(role: &str, centered: bool) -> ftui_widgets::block::Alignment {
     if centered
         && !matches!(
             role,
             "tool" | "system" | "swarm" | "background_task" | "overnight"
         )
     {
-        ratatui::layout::Alignment::Center
+        ftui_widgets::block::Alignment::Center
     } else {
-        ratatui::layout::Alignment::Left
+        ftui_widgets::block::Alignment::Left
     }
 }
 
@@ -164,7 +167,7 @@ fn push_user_prompt_lines(
     prompt_num: usize,
     num_color: Color,
     content: &str,
-    align: ratatui::layout::Alignment,
+    align: ftui_widgets::block::Alignment,
 ) {
     let prefix_width = unicode_width::UnicodeWidthStr::width(prompt_num.to_string().as_str())
         + unicode_width::UnicodeWidthStr::width("› ");
@@ -198,7 +201,7 @@ fn push_user_prompt_lines(
             content_line.to_string(),
             user_prompt_text_style(),
         ));
-        lines.push(Line::from(spans).alignment(align));
+        lines.push(Line::from_spans(spans).alignment(align));
         line_raw_overrides.push(Some(WrappedLineMap {
             raw_line,
             start_col: 0,
@@ -282,7 +285,7 @@ fn prepare_active_batch_progress(
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     if prefix_blank {
-        lines.push(Line::from(""));
+        lines.push(Line::from_spans(vec![]));
     }
 
     let mut header = vec![
@@ -304,7 +307,7 @@ fn prepare_active_batch_progress(
         ));
     }
     lines.push(super::truncate_line_with_ellipsis_to_width(
-        &Line::from(header),
+        &Line::from_spans(header),
         width.saturating_sub(1) as usize,
     ));
 
@@ -330,10 +333,10 @@ fn prepare_active_batch_progress(
     }
 
     if hidden_completed > 0 && progress.completed < progress.total {
-        lines.push(Line::from(Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             format!("    … {} completed", hidden_completed),
             Style::default().fg(dim_color()),
-        )));
+        )]));
     }
 
     if centered {
@@ -447,14 +450,14 @@ fn prepare_messages_inner(app: &dyn TuiState, width: u16, height: u16) -> Prepar
         let suggestions = app.suggestion_prompts();
         let is_centered = app.centered_mode();
         let suggestion_align = if is_centered {
-            ratatui::layout::Alignment::Center
+            ftui_widgets::block::Alignment::Center
         } else {
-            ratatui::layout::Alignment::Left
+            ftui_widgets::block::Alignment::Left
         };
         let mut wrapped_lines = header_prepared.wrapped_lines.clone();
 
         if !suggestions.is_empty() {
-            wrapped_lines.push(Line::from(""));
+            wrapped_lines.push(Line::from_spans(vec![]));
             for (i, (label, prompt)) in suggestions.iter().enumerate() {
                 let is_login = prompt.starts_with('/');
                 let pad = if is_centered { "" } else { "  " };
@@ -462,9 +465,7 @@ fn prepare_messages_inner(app: &dyn TuiState, width: u16, height: u16) -> Prepar
                     vec![
                         Span::styled(
                             format!("{}{} ", pad, label),
-                            Style::default()
-                                .fg(rgb(138, 180, 248))
-                                .add_modifier(Modifier::BOLD),
+                            Style::default().fg(rgb(138, 180, 248)).bold(),
                         ),
                         Span::styled(
                             format!("(type {})", prompt),
@@ -480,19 +481,19 @@ fn prepare_messages_inner(app: &dyn TuiState, width: u16, height: u16) -> Prepar
                         Span::styled(label.clone(), Style::default().fg(rgb(200, 200, 200))),
                     ]
                 };
-                wrapped_lines.push(Line::from(spans).alignment(suggestion_align));
+                wrapped_lines.push(Line::from_spans(spans).alignment(suggestion_align));
             }
             if suggestions.len() > 1 {
-                wrapped_lines.push(Line::from(""));
+                wrapped_lines.push(Line::from_spans(vec![]));
                 wrapped_lines.push(
-                    Line::from(Span::styled(
+                    Line::from_spans(vec![Span::styled(
                         if is_centered {
                             "Press 1-3 or type anything to start"
                         } else {
                             "  Press 1-3 or type anything to start"
                         },
                         Style::default().fg(dim_color()),
-                    ))
+                    )])
                     .alignment(suggestion_align),
                 );
             }
@@ -504,7 +505,7 @@ fn prepare_messages_inner(app: &dyn TuiState, width: u16, height: u16) -> Prepar
         let pad_top = available.saturating_sub(content_height) / 2;
         let mut centered = Vec::with_capacity(pad_top + content_height);
         for _ in 0..pad_top {
-            centered.push(Line::from(""));
+            centered.push(Line::from_spans(vec![]));
         }
         centered.extend(wrapped_lines);
         let wrapped_lines = centered;
@@ -628,9 +629,9 @@ pub(super) fn prepare_body_incremental(
     let centered = app.centered_mode();
     markdown::set_center_code_blocks(centered);
     let align = if centered {
-        ratatui::layout::Alignment::Center
+        ftui_widgets::block::Alignment::Center
     } else {
-        ratatui::layout::Alignment::Left
+        ftui_widgets::block::Alignment::Left
     };
 
     let total_prompts = app.display_user_message_count();
@@ -655,7 +656,7 @@ pub(super) fn prepare_body_incremental(
     for (new_msg_offset, msg) in new_messages.iter().enumerate() {
         let role = msg.effective_role();
         if (body_has_content || !new_lines.is_empty()) && role != "tool" && role != "meta" {
-            new_lines.push(Line::from(""));
+            new_lines.push(Line::from_spans(vec![]));
             new_line_raw_overrides.push(None);
             new_line_copy_offsets.push(0);
         }
@@ -711,7 +712,7 @@ pub(super) fn prepare_body_incremental(
                     unicode_width::UnicodeWidthStr::width("  ")
                 };
                 new_lines.push(
-                    Line::from(vec![
+                    Line::from_spans(vec![
                         Span::raw(if centered { "" } else { "  " }),
                         Span::styled(msg.content.clone(), Style::default().fg(dim_color())),
                     ])
@@ -844,7 +845,8 @@ pub(super) fn prepare_body_incremental(
                 } else {
                     format!("🧠 {} memories", count)
                 };
-                let header = Line::from(Span::styled(header_text, border_style)).alignment(align);
+                let header = Line::from_spans(vec![Span::styled(header_text, border_style)])
+                    .alignment(align);
 
                 let total_width = if centered {
                     (width.saturating_sub(4) as usize).min(120)
@@ -903,12 +905,12 @@ pub(super) fn prepare_body_incremental(
                 let prefix_width =
                     unicode_width::UnicodeWidthStr::width(if centered { "✗ " } else { "  ✗ " });
                 new_lines.push(
-                    Line::from(vec![
+                    Line::from_spans(vec![
                         Span::styled(
                             if centered { "✗ " } else { "  ✗ " },
-                            Style::default().fg(Color::Red),
+                            Style::default().fg_compat(Color::Mono(Ansi16::Red)),
                         ),
-                        Span::styled(msg.content.clone(), Style::default().fg(Color::Red)),
+                        Span::styled(msg.content.clone(), Style::default().fg_compat(Color::Mono(Ansi16::Red))),
                     ])
                     .alignment(align),
                 );
@@ -1058,14 +1060,14 @@ fn prepare_streaming_cached(
         markdown::recenter_structured_blocks_for_display(&mut md_lines, display_width);
     }
     let align = if centered {
-        ratatui::layout::Alignment::Center
+        ftui_widgets::block::Alignment::Center
     } else {
-        ratatui::layout::Alignment::Left
+        ftui_widgets::block::Alignment::Left
     };
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     if prefix_blank {
-        lines.push(Line::from(""));
+        lines.push(Line::from_spans(vec![]));
     }
     for line in md_lines {
         lines.push(align_if_unset(line, align));
@@ -1098,7 +1100,7 @@ pub(super) fn prepare_body(
         let role = msg.effective_role();
         let align = default_message_alignment(role, centered);
         if !lines.is_empty() && role != "tool" && role != "meta" && role != "swarm" {
-            lines.push(Line::from(""));
+            lines.push(Line::from_spans(vec![]));
             line_raw_overrides.push(None);
             line_copy_offsets.push(0);
         }
@@ -1183,7 +1185,7 @@ pub(super) fn prepare_body(
                     unicode_width::UnicodeWidthStr::width("  ")
                 };
                 lines.push(
-                    Line::from(vec![
+                    Line::from_spans(vec![
                         Span::raw(if centered { "" } else { "  " }),
                         Span::styled(msg.content.clone(), Style::default().fg(dim_color())),
                     ])
@@ -1320,7 +1322,8 @@ pub(super) fn prepare_body(
                 } else {
                     format!("🧠 {} memories", count)
                 };
-                let header = Line::from(Span::styled(header_text, border_style)).alignment(align);
+                let header = Line::from_spans(vec![Span::styled(header_text, border_style)])
+                    .alignment(align);
 
                 let total_width = if centered {
                     (width.saturating_sub(4) as usize).min(120)
@@ -1379,12 +1382,12 @@ pub(super) fn prepare_body(
                 let prefix_width =
                     unicode_width::UnicodeWidthStr::width(if centered { "✗ " } else { "  ✗ " });
                 lines.push(
-                    Line::from(vec![
+                    Line::from_spans(vec![
                         Span::styled(
                             if centered { "✗ " } else { "  ✗ " },
-                            Style::default().fg(Color::Red),
+                            Style::default().fg_compat(Color::Mono(Ansi16::Red)),
                         ),
-                        Span::styled(msg.content.clone(), Style::default().fg(Color::Red)),
+                        Span::styled(msg.content.clone(), Style::default().fg_compat(Color::Mono(Ansi16::Red))),
                     ])
                     .alignment(align),
                 );
@@ -1401,7 +1404,7 @@ pub(super) fn prepare_body(
 
     if include_streaming && app.is_processing() && !app.streaming_text().is_empty() {
         if !lines.is_empty() {
-            lines.push(Line::from(""));
+            lines.push(Line::from_spans(vec![]));
             line_raw_overrides.push(None);
             line_copy_offsets.push(0);
         }

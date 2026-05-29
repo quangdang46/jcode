@@ -23,11 +23,21 @@ fn detect_color_capability() -> ColorCapability {
     }
     if let Ok(term_program) = std::env::var("TERM_PROGRAM") {
         let tp = term_program.to_lowercase();
-        if tp == "ghostty" || tp == "iterm.app" || tp == "wezterm" || tp == "warp" || tp == "alacritty" || tp == "hyper" {
+        if tp == "ghostty"
+            || tp == "iterm.app"
+            || tp == "wezterm"
+            || tp == "warp"
+            || tp == "alacritty"
+            || tp == "hyper"
+        {
             return ColorCapability::TrueColor;
         }
     }
-    if std::env::var("GHOSTTY_RESOURCES_DIR").is_ok() || std::env::var("GHOSTTY_BIN_DIR").is_ok() || std::env::var("WEZTERM_EXECUTABLE").is_ok() || std::env::var("WEZTERM_PANE").is_ok() {
+    if std::env::var("GHOSTTY_RESOURCES_DIR").is_ok()
+        || std::env::var("GHOSTTY_BIN_DIR").is_ok()
+        || std::env::var("WEZTERM_EXECUTABLE").is_ok()
+        || std::env::var("WEZTERM_PANE").is_ok()
+    {
         return ColorCapability::TrueColor;
     }
     if let Ok(term) = std::env::var("TERM") {
@@ -85,7 +95,9 @@ pub fn indexed_to_rgb(idx: u8) -> (u8, u8, u8) {
 
 fn rgb_to_xterm256(r: u8, g: u8, b: u8) -> u8 {
     let gray_avg = (r as u16 + g as u16 + b as u16) / 3;
-    let is_grayish = (r as i16 - g as i16).unsigned_abs() < 15 && (g as i16 - b as i16).unsigned_abs() < 15 && (r as i16 - b as i16).unsigned_abs() < 15;
+    let is_grayish = (r as i16 - g as i16).unsigned_abs() < 15
+        && (g as i16 - b as i16).unsigned_abs() < 15
+        && (r as i16 - b as i16).unsigned_abs() < 15;
     let cube_idx = nearest_cube_index(r, g, b);
     let cube_color = cube_index_to_rgb(cube_idx);
     let cube_dist = color_distance(r, g, b, cube_color.0, cube_color.1, cube_color.2);
@@ -130,8 +142,12 @@ fn cube_index_to_rgb(idx: u16) -> (u8, u8, u8) {
 }
 
 fn nearest_gray_index(v: u8) -> u8 {
-    if v < 4 { return 0; }
-    if v > 243 { return 23; }
+    if v < 4 {
+        return 0;
+    }
+    if v > 243 {
+        return 23;
+    }
     ((v as u16 - 8 + 5) / 10).min(23) as u8
 }
 

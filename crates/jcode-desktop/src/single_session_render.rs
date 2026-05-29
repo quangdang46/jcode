@@ -447,8 +447,7 @@ impl<'a> SingleSessionView<'a> {
         tool_motion: Option<&'a ToolCardMotionFrame>,
         scrollbar_motion: Option<&'a SingleSessionScrollbarMotionFrame>,
     ) -> Self {
-        let layout =
-            single_session_layout_for_total_lines(app, size, rendered_body_lines.len());
+        let layout = single_session_layout_for_total_lines(app, size, rendered_body_lines.len());
         let welcome_chrome_offset = if app.is_welcome_timeline_visible() {
             welcome_timeline_visual_offset_pixels_for_total_lines(
                 app,
@@ -459,8 +458,12 @@ impl<'a> SingleSessionView<'a> {
         } else {
             0.0
         };
-        let viewport =
-            single_session_body_viewport_from_lines(app, size, smooth_scroll_lines, rendered_body_lines);
+        let viewport = single_session_body_viewport_from_lines(
+            app,
+            size,
+            smooth_scroll_lines,
+            rendered_body_lines,
+        );
         Self {
             app,
             size,

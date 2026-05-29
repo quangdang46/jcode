@@ -1,10 +1,9 @@
-use chrono::{DateTime, Utc};
 use crate::tui::color_support::rgb;
+use chrono::{DateTime, Utc};
 use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
 use ftui_style::{Color, Style};
-use ftui_text::text::Line;
-use ftui_text::text::Text;
+use ftui_text::text::{Line, Span, Text};
 
 #[derive(Clone)]
 pub(super) struct MemoryTilePlan {
@@ -246,7 +245,7 @@ fn memory_tile_content_lines(
                 spans.push(Span::raw(" ".repeat(padding)));
             }
             spans.push(Span::styled(" │", border_style));
-            content_lines.push(Line::from(spans));
+            content_lines.push(Line::from_spans(spans));
         } else {
             let indent = bullet_width;
             let cont_width = inner_width.saturating_sub(indent);
@@ -273,7 +272,7 @@ fn memory_tile_content_lines(
                         spans.push(Span::raw(" ".repeat(padding)));
                     }
                     spans.push(Span::styled(" │", border_style));
-                    content_lines.push(Line::from(spans));
+                    content_lines.push(Line::from_spans(spans));
                 } else {
                     let padding = inner_width.saturating_sub(indent + chunk_width);
                     let mut spans = vec![
@@ -285,7 +284,7 @@ fn memory_tile_content_lines(
                         spans.push(Span::raw(" ".repeat(padding)));
                     }
                     spans.push(Span::styled(" │", border_style));
-                    content_lines.push(Line::from(spans));
+                    content_lines.push(Line::from_spans(spans));
                 }
             }
         }
@@ -297,7 +296,7 @@ fn memory_tile_content_lines(
             for chunk in split_by_display_width(&meta, meta_width) {
                 let chunk_width = unicode_width::UnicodeWidthStr::width(chunk.as_str());
                 let padding = inner_width.saturating_sub(indent + chunk_width);
-                content_lines.push(Line::from(vec![
+                content_lines.push(Line::from_spans(vec![
                     Span::styled("│ ", border_style),
                     Span::raw(" ".repeat(indent)),
                     Span::styled(chunk, meta_fill_style),
@@ -309,7 +308,7 @@ fn memory_tile_content_lines(
     }
 
     if content_lines.is_empty() {
-        content_lines.push(Line::from(vec![
+        content_lines.push(Line::from_spans(vec![
             Span::styled("│ ", border_style),
             Span::raw(" ".repeat(inner_width)),
             Span::styled(" │", border_style),
@@ -338,16 +337,16 @@ fn render_memory_tile_box(
     let left_border = "─".repeat(border_chars / 2);
     let right_border = "─".repeat(border_chars - border_chars / 2);
 
-    let top = Line::from(Span::styled(
+    let top = Line::from_spans(vec![Span::styled(
         format!("╭{}{}{}╮", left_border, title_text, right_border),
         border_style,
-    ));
+    )]);
     let content_lines =
         memory_tile_content_lines(&tile.items, inner_width, border_style, text_style);
-    let bottom = Line::from(Span::styled(
+    let bottom = Line::from_spans(vec![Span::styled(
         format!("╰{}╯", "─".repeat(box_width.saturating_sub(2))),
         border_style,
-    ));
+    )]);
 
     let mut lines = Vec::with_capacity(content_lines.len() + 2);
     lines.push(top);
@@ -584,7 +583,7 @@ pub(super) fn render_memory_tiles(
             if cursor < usable_width {
                 spans.push(Span::raw(" ".repeat(usable_width - cursor)));
             }
-            all_lines.push(Line::from(spans));
+            all_lines.push(Line::from_spans(spans));
         }
     }
 

@@ -1,3 +1,4 @@
+use ftui_style::MonoColor;
 use super::*;
 use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span};
@@ -8,7 +9,7 @@ fn selection_bg_for(base_bg: Option<Color>) -> Color {
 }
 
 fn selection_fg_for(base_fg: Option<Color>) -> Option<Color> {
-    base_fg.map(|fg| blend_color(fg, Color::White, 0.15))
+    base_fg.map(|fg| blend_color(fg, Color::Mono(MonoColor::White), 0.15))
 }
 
 fn highlight_line_selection(

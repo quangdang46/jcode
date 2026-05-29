@@ -20,7 +20,8 @@
 //! However, this would require significant refactoring of how the async/sync boundary
 //! works. Option A keeps the App unchanged and just wraps it for the frankentui runtime.
 
-use ftui::{App, Cmd, Frame, Model};
+use ftui::{App, Cmd, Model};
+use ftui_render::frame::Frame;
 use ftui_runtime::{AppBuilder, MouseCapturePolicy};
 use std::sync::{Arc, Mutex};
 

@@ -1,5 +1,7 @@
+use ftui_style::MonoColor;
+use crate::tui::compat::StyleCompatExt;
 use super::*;
-use ratatui::widgets::Wrap;
+use ftui_text::wrap::WrapMode;
 
 impl SessionPicker {
     pub(super) fn crash_reason_line(session: &SessionInfo) -> Option<Line<'static>> {
@@ -16,7 +18,7 @@ impl SessionPicker {
             reason.to_string()
         };
 
-        Some(Line::from(vec![
+        Some(Line::from_spans(vec![
             Span::styled("     ", Style::default()),
             Span::styled(
                 format!("reason: {}", reason_display),
@@ -96,11 +98,9 @@ impl SessionPicker {
         let is_marked = self.selected_session_ids.contains(&session.id);
 
         let name_style = if is_selected {
-            Style::default()
-                .fg(rgb(140, 220, 160))
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(rgb(140, 220, 160)).bold()
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg_compat(Color::Mono(MonoColor::White))
         };
 
         let canary_marker = if session.is_canary { " 🔬" } else { "" };
@@ -108,9 +108,7 @@ impl SessionPicker {
         let saved_marker = if session.saved { " 📌" } else { "" };
         let selection_marker = if is_marked { "[x] " } else { "[ ] " };
         let selection_style = if is_marked {
-            Style::default()
-                .fg(rgb(140, 220, 160))
-                .add_modifier(Modifier::BOLD)
+            Style::default().fg(rgb(140, 220, 160)).bold()
         } else {
             Style::default().fg(rgb(90, 90, 90))
         };
@@ -158,27 +156,23 @@ impl SessionPicker {
         if let Some(source_badge) = session.source.badge() {
             line1_spans.push(Span::styled(
                 format!("  {}", source_badge),
-                Style::default()
-                    .fg(rgb(120, 210, 255))
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(rgb(120, 210, 255)).bold(),
             ));
         }
         if in_batch_restore {
             line1_spans.push(Span::styled(
                 "  [BATCH]",
-                Style::default()
-                    .fg(batch_restore)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(batch_restore).bold(),
             ));
         }
-        let line1 = Line::from(line1_spans);
+        let line1 = Line::from_spans(line1_spans);
 
         let tokens_display = Self::format_estimated_tokens(session.estimated_tokens);
         let line2 = if session.message_count > 0
             && session.user_message_count == 0
             && session.assistant_message_count == 0
         {
-            Line::from(vec![
+            Line::from_spans(vec![
                 Span::styled("     ", Style::default()),
                 Span::styled(
                     format!("{}", session.message_count),
@@ -189,7 +183,7 @@ impl SessionPicker {
                 Span::styled(tokens_display, Style::default().fg(dimmer)),
             ])
         } else {
-            Line::from(vec![
+            Line::from_spans(vec![
                 Span::styled("     ", Style::default()),
                 Span::styled(
                     format!("{}", session.user_message_count),
@@ -226,7 +220,7 @@ impl SessionPicker {
         } else {
             String::new()
         };
-        let line3 = Line::from(vec![
+        let line3 = Line::from_spans(vec![
             Span::styled("     ", Style::default()),
             Span::styled(
                 format!("created: {}", created_ago),
@@ -239,7 +233,7 @@ impl SessionPicker {
         if let Some(reason_line) = Self::crash_reason_line(session) {
             rows.push(reason_line);
         }
-        rows.push(Line::from(""));
+        rows.push(Line::from_spans(vec![]));
 
         rows
     }
@@ -261,16 +255,14 @@ impl SessionPicker {
 
         let items: Vec<ListItem> = if let Some(message) = self.loading_message.as_deref() {
             vec![
-                ListItem::new(Line::from(vec![
+                ListItem::new(Line::from_spans(vec![
                     Span::styled("  ⏳ ", Style::default().fg(rgb(255, 200, 100))),
                     Span::styled(
                         message.to_string(),
-                        Style::default()
-                            .fg(rgb(220, 220, 220))
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(rgb(220, 220, 220)).bold(),
                     ),
                 ])),
-                ListItem::new(Line::from(vec![Span::styled(
+                ListItem::new(Line::from_spans(vec![Span::styled(
                     "     Scanning local, imported, and running sessions…",
                     Style::default().fg(dim),
                 )])),
@@ -289,16 +281,14 @@ impl SessionPicker {
                             version,
                             session_count,
                         } => {
-                            let line1 = Line::from(vec![
+                            let line1 = Line::from_spans(vec![
                                 Span::styled(
                                     format!("{} ", icon),
                                     Style::default().fg(server_color),
                                 ),
                                 Span::styled(
                                     name.clone(),
-                                    Style::default()
-                                        .fg(server_color)
-                                        .add_modifier(Modifier::BOLD),
+                                    Style::default().fg(server_color).bold(),
                                 ),
                                 Span::styled(
                                     format!("  {} · {} sessions", version, session_count),
@@ -308,12 +298,9 @@ impl SessionPicker {
                             ListItem::new(vec![line1])
                         }
                         PickerItem::OrphanHeader { session_count } => {
-                            let line1 = Line::from(vec![
+                            let line1 = Line::from_spans(vec![
                                 Span::styled("📦 ", Style::default().fg(dim)),
-                                Span::styled(
-                                    "Other sessions",
-                                    Style::default().fg(dim).add_modifier(Modifier::BOLD),
-                                ),
+                                Span::styled("Other sessions", Style::default().fg(dim).bold()),
                                 Span::styled(
                                     format!("  {} sessions", session_count),
                                     Style::default().fg(dim),
@@ -323,14 +310,9 @@ impl SessionPicker {
                         }
                         PickerItem::SavedHeader { session_count } => {
                             let saved_color: Color = rgb(255, 180, 100);
-                            let line1 = Line::from(vec![
+                            let line1 = Line::from_spans(vec![
                                 Span::styled("📌 ", Style::default().fg(saved_color)),
-                                Span::styled(
-                                    "Saved",
-                                    Style::default()
-                                        .fg(saved_color)
-                                        .add_modifier(Modifier::BOLD),
-                                ),
+                                Span::styled("Saved", Style::default().fg(saved_color).bold()),
                                 Span::styled(
                                     format!("  {}", session_count),
                                     Style::default().fg(dim),
@@ -347,7 +329,7 @@ impl SessionPicker {
                                     .and_then(|session_ref| self.session_by_ref(session_ref))
                             })
                             .map(|session| self.render_session_item(session, is_selected))
-                            .unwrap_or_else(|| ListItem::new(Line::from(""))),
+                            .unwrap_or_else(|| ListItem::new(Line::from_spans(vec![]))),
                     }
                 })
                 .collect()
@@ -357,16 +339,12 @@ impl SessionPicker {
         if self.loading_message.is_some() {
             title_parts.push(Span::styled(
                 " loading sessions ",
-                Style::default()
-                    .fg(rgb(255, 200, 100))
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(rgb(255, 200, 100)).bold(),
             ));
         } else {
             title_parts.push(Span::styled(
                 format!(" {} ", self.visible_sessions.len()),
-                Style::default()
-                    .fg(rgb(200, 200, 200))
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(rgb(200, 200, 200)).bold(),
             ));
             title_parts.push(Span::styled(
                 "sessions",
@@ -435,18 +413,14 @@ impl SessionPicker {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title(Line::from(title_parts))
-                    .title_bottom(Line::from(Span::styled(
+                    .title(Line::from_spans(title_parts))
+                    .title_bottom(Line::from_spans(vec![Span::styled(
                         help,
                         Style::default().fg(rgb(80, 80, 80)),
-                    )))
+                    )]))
                     .border_style(Style::default().fg(border_color)),
             )
-            .highlight_style(
-                Style::default()
-                    .bg(rgb(40, 44, 52))
-                    .add_modifier(Modifier::BOLD),
-            );
+            .highlight_style(Style::default().bg(rgb(40, 44, 52)).bold());
 
         frame.render_stateful_widget(list, area, &mut self.list_state);
     }
@@ -468,11 +442,11 @@ impl SessionPicker {
         );
         let names = info.display_names.join(", ");
         let body = vec![
-            Line::from(vec![
+            Line::from_spans(vec![
                 Span::styled("💥 ", Style::default().fg(rgb(255, 140, 140))),
-                Span::styled(names, Style::default().fg(Color::White)),
+                Span::styled(names, Style::default().fg_compat(Color::Mono(MonoColor::White))),
             ]),
-            Line::from(vec![Span::styled(
+            Line::from_spans(vec![Span::styled(
                 "Press R (or B) to restore only this guessed recent group.",
                 Style::default().fg(rgb(180, 180, 180)),
             )]),
@@ -486,7 +460,7 @@ impl SessionPicker {
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(rgb(255, 140, 140))),
             )
-            .wrap(Wrap { trim: false });
+            .wrap(WrapMode::Word);
         block.render(area, frame);
     }
 }

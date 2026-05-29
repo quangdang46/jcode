@@ -1,81 +1,22 @@
+use ftui_style::MonoColor;
+use crate::tui::compat::StyleCompatExt;
 use super::*;
 use crate::tui::color_support::rgb;
 use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
-use ftui_style::{Color, Modifier, Style};
+use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span, Text};
-use ftui_widgets::block::{Alignment, Block, Borders};
-use ftui_widgets::paragraph::Paragraph;
-use ftui_widgets::wrap::Wrap;
 use ftui_widgets::Widget;
+use ftui_widgets::block::{Alignment, Block};
+use ftui_widgets::borders::Borders;
+use ftui_widgets::paragraph::Paragraph;
+use ftui_text::wrap::WrapMode;
 
 mod ui_pinned_table;
 use ui_pinned_table::is_rendered_table_line;
 
 #[path = "ui_pinned_layout.rs"]
 mod layout_support;
-#[path = "ui_pinned_utils.rs"]
-mod util_support;
-#[path = "ui_pinned_selection.rs"]
-mod selection_support;
-
-use layout_support::{
-    estimate_side_panel_image_layout, estimate_side_panel_image_layout_with_font,
-    fit_image_area_with_font, plan_fit_image_render, scaled_image_rows,
-    side_panel_viewport_scroll_x,
-};
-use util_support::{
-    compact_image_label, estimate_side_panel_pane_area, lru_touch, side_panel_content_signature,
-};
-use selection_support::apply_side_selection_highlight;
-
-const SIDE_PANEL_HEADER_HEIGHT: u16 = 1;
-
-fn side_panel_border_style(focused: bool) -> Style {
-    let border_color = if focused { tool_color() } else { dim_color() };
-    Style::default().fg(border_color)
-}
-
-fn side_panel_inner(area: Rect) -> Rect {
-    Block::new()
-        .borders(Borders::LEFT)
-        .inner(area)
-}
-
-fn side_panel_content_area(area: Rect) -> Option<Rect> {
-    let inner = side_panel_inner(area);
-    if inner.width == 0 || inner.height <= SIDE_PANEL_HEADER_HEIGHT {
-        return None;
-    }
-
-    Some(Rect {
-        x: inner.x,
-        y: inner.y + SIDE_PANEL_HEADER_HEIGHT,
-        width: inner.width,
-        height: inner.height - SIDE_PANEL_HEADER_HEIGHT,
-    })
-}
-
-fn side_panel_content_may_contain_mermaid(content: &str) -> bool {
-    content.lines().any(|line| {
-        line.trim_start()
-            .strip_prefix("```")
-            .map(|lang| mermaid::is_mermaid_lang(lang.trim()))
-            .unwrap_or(false)
-    })
-}
-
-fn side_panel_mermaid_preferred_aspect_ratio(
-    page: &crate::side_panel::SidePanelPage,
-    inner: Rect,
-    has_protocol: bool,
-) -> Option<f32> {
-    if !has_protocol || !side_panel_content_may_contain_mermaid(&page.content) {
-        return None;
-    }
-    super::diagram_pane::content_area_preferred_aspect_ratio(inner)
-}
-
 #[path = "ui_pinned_selection.rs"]
 mod selection_support;
 use selection_support::apply_side_selection_highlight;
@@ -857,9 +798,7 @@ pub(super) fn draw_pinned_content_cached(
     let mut title_parts = vec![Span::styled(" side ", Style::default().fg(tool_color()))];
     title_parts.push(Span::styled(
         "Pinned",
-        Style::default()
-            .fg(rgb(180, 200, 255))
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(rgb(180, 200, 255)).bold(),
     ));
     title_parts.push(Span::styled(" ", Style::default().fg(dim_color())));
     if total_diffs > 0 {
@@ -896,7 +835,7 @@ pub(super) fn draw_pinned_content_cached(
     }
     let border_style = side_panel_border_style(focused);
     let Some(inner) =
-        super::draw_right_rail_chrome(frame, area, Line::from(title_parts), border_style)
+        super::draw_right_rail_chrome(frame, area, Line::from_spans(title_parts), border_style)
     else {
         return;
     };
@@ -918,7 +857,7 @@ pub(super) fn draw_pinned_content_cached(
 
         for (i, entry) in entries.iter().enumerate() {
             if i > 0 {
-                text_lines.push(Line::from(""));
+                text_lines.push(Line::from_spans(vec![]));
             }
 
             match entry {
@@ -941,14 +880,9 @@ pub(super) fn draw_pinned_content_cached(
                         .extension()
                         .and_then(|e| e.to_str());
 
-                    text_lines.push(Line::from(vec![
+                    text_lines.push(Line::from_spans(vec![
                         Span::styled("── ", Style::default().fg(dim_color())),
-                        Span::styled(
-                            short_path,
-                            Style::default()
-                                .fg(rgb(180, 200, 255))
-                                .add_modifier(Modifier::BOLD),
-                        ),
+                        Span::styled(short_path, Style::default().fg(rgb(180, 200, 255)).bold()),
                         Span::styled(" (", Style::default().fg(dim_color())),
                         Span::styled(
                             format!("+{}", additions),
@@ -983,7 +917,7 @@ pub(super) fn draw_pinned_content_cached(
                             }
                         }
 
-                        text_lines.push(Line::from(spans));
+                        text_lines.push(Line::from_spans(spans));
                     }
                 }
                 PinnedContentEntry::Image {
@@ -998,13 +932,11 @@ pub(super) fn draw_pinned_content_cached(
                     let group = image_group_for(source);
                     if last_image_group != Some(group) {
                         let (group_label, group_color) = image_group_heading(group);
-                        text_lines.push(Line::from(vec![
+                        text_lines.push(Line::from_spans(vec![
                             Span::styled("   ", Style::default().fg(dim_color())),
                             Span::styled(
                                 group_label.to_uppercase(),
-                                Style::default()
-                                    .fg(group_color)
-                                    .add_modifier(Modifier::BOLD),
+                                Style::default().fg(group_color).bold(),
                             ),
                         ]));
                         last_image_group = Some(group);
@@ -1023,14 +955,9 @@ pub(super) fn draw_pinned_content_cached(
                         metadata_parts.push(format!("{ratio} ratio"));
                     }
 
-                    text_lines.push(Line::from(vec![
+                    text_lines.push(Line::from_spans(vec![
                         Span::styled("── 🖼 ", Style::default().fg(dim_color())),
-                        Span::styled(
-                            short_label,
-                            Style::default()
-                                .fg(rgb(180, 200, 255))
-                                .add_modifier(Modifier::BOLD),
-                        ),
+                        Span::styled(short_label, Style::default().fg(rgb(180, 200, 255)).bold()),
                         Span::styled(format!(" {dimensions}"), Style::default().fg(dim_color())),
                         Span::styled(
                             format!(" [{}]", source_badge),
@@ -1050,7 +977,7 @@ pub(super) fn draw_pinned_content_cached(
                         }
                         metadata_spans.push(Span::styled(part, Style::default().fg(dim_color())));
                     }
-                    text_lines.push(Line::from(metadata_spans));
+                    text_lines.push(Line::from_spans(metadata_spans));
 
                     if has_protocol {
                         let image_layout = pinned_content_image_layout_with_font(
@@ -1068,7 +995,7 @@ pub(super) fn draw_pinned_content_cached(
                             render_mode: image_layout.render_mode,
                         });
                         for _ in 0..image_layout.rows {
-                            text_lines.push(Line::from(""));
+                            text_lines.push(Line::from_spans(vec![]));
                         }
                     }
                 }
@@ -1076,10 +1003,10 @@ pub(super) fn draw_pinned_content_cached(
         }
 
         if text_lines.is_empty() {
-            text_lines.push(Line::from(Span::styled(
+            text_lines.push(Line::from_spans(vec![Span::styled(
                 "No content yet",
                 Style::default().fg(dim_color()),
-            )));
+            )]));
         }
 
         let (
@@ -1144,10 +1071,10 @@ pub(super) fn draw_pinned_content_cached(
     super::clear_area(frame, inner);
 
     if line_wrap {
-        let paragraph = Paragraph::new(Text::from(visible_lines)).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(Text::from_lines(visible_lines)).wrap(WrapMode::Word);
         paragraph.render(frame, inner);
     } else {
-        let paragraph = Paragraph::new(Text::from(visible_lines));
+        let paragraph = Paragraph::new(Text::from_lines(visible_lines));
         paragraph.render(frame, inner);
     }
 
@@ -1293,9 +1220,7 @@ pub(super) fn draw_side_panel_markdown(
     let mut title_parts = vec![Span::styled(" side ", Style::default().fg(tool_color()))];
     title_parts.push(Span::styled(
         page.title.clone(),
-        Style::default()
-            .fg(rgb(180, 200, 255))
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(rgb(180, 200, 255)).bold(),
     ));
     title_parts.push(Span::styled(
         format!(" {}/{} ", page_index, page_count),
@@ -1327,9 +1252,7 @@ pub(super) fn draw_side_panel_markdown(
     if rendered_full_width.has_scrollable_images {
         title_parts.push(Span::styled(
             " readable ",
-            Style::default()
-                .fg(accent_color())
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(accent_color()).bold(),
         ));
         title_parts.push(Span::styled(" scroll ", Style::default().fg(dim_color())));
         if focused {
@@ -1347,7 +1270,7 @@ pub(super) fn draw_side_panel_markdown(
     }
 
     let Some(content_shell_area) =
-        super::draw_right_rail_chrome(frame, area, Line::from(title_parts), border_style)
+        super::draw_right_rail_chrome(frame, area, Line::from_spans(title_parts), border_style)
     else {
         return;
     };
@@ -1405,7 +1328,7 @@ pub(super) fn draw_side_panel_markdown(
     );
     apply_side_selection_highlight(app, &mut visible_lines, clamped_scroll);
     super::clear_area(frame, content_inner);
-    let paragraph = Paragraph::new(Text::from(visible_lines));
+    let paragraph = Paragraph::new(Text::from_lines(visible_lines));
     paragraph.render(frame, content_inner);
 
     if let Some(scrollbar_area) = scrollbar_area {
@@ -1710,7 +1633,7 @@ fn render_side_panel_markdown_cached_with_zoom(
                 render_mode: image_layout.render_mode,
             });
             for _ in 0..image_layout.rows {
-                text_lines.push(Line::from(""));
+                text_lines.push(Line::from_spans(vec![]));
             }
             continue;
         }
@@ -1725,10 +1648,10 @@ fn render_side_panel_markdown_cached_with_zoom(
     }
 
     if text_lines.is_empty() {
-        text_lines.push(Line::from(Span::styled(
+        text_lines.push(Line::from_spans(vec![Span::styled(
             "No side panel content yet",
             Style::default().fg(dim_color()),
-        )));
+        )]));
     }
 
     let has_scrollable_images = image_placements
@@ -1889,10 +1812,10 @@ fn markdown_image_line_to_placeholder(
     let marker = mermaid::image_widget_placeholder_markdown(hash)
         .trim_end()
         .to_string();
-    Ok(Line::from(Span::styled(
+    Ok(Line::from_spans(vec![Span::styled(
         marker,
-        Style::default().fg(Color::Black).bg(Color::Black),
-    )))
+        Style::default().fg_compat(Color::Mono(MonoColor::Black)).bg_compat(Color::Mono(MonoColor::Black)),
+    )]))
 }
 
 fn parse_rendered_markdown_image_path(text: &str) -> Option<&str> {

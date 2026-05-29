@@ -8,7 +8,7 @@ use crate::auth::{AuthState, AuthStatus};
 use crate::tui::color_support::rgb;
 use crate::tui::connection_type_icon;
 use ftui_style::{Color, Style};
-use ftui_text::text::Line;
+use ftui_text::text::{Line, Span};
 use ftui_widgets::block::Alignment;
 #[cfg(test)]
 use std::sync::OnceLock;
@@ -219,7 +219,7 @@ pub(super) fn build_auth_status_line(auth: &AuthStatus, max_width: usize) -> Lin
         ));
     }
 
-    Line::from(spans)
+    Line::from_spans(spans)
 }
 
 fn header_provider_auth_tag(name: &str, auth: &AuthStatus) -> &'static str {
@@ -398,10 +398,14 @@ pub(super) fn build_persistent_header(app: &dyn TuiState, width: u16) -> Vec<Lin
     if !status_items.is_empty() {
         let badge_text = format!("⟨{}⟩", status_items.join("·"));
         lines.push(
-            Line::from(Span::styled(badge_text, Style::default().fg(dim_color()))).alignment(align),
+            Line::from_spans(vec![Span::styled(
+                badge_text,
+                Style::default().fg(dim_color()),
+            )])
+            .alignment(align),
         );
     } else {
-        lines.push(Line::from(""));
+        lines.push(Line::from_spans(vec![]));
     }
 
     if let Some(server_name) = server_name.as_deref() {
@@ -412,10 +416,10 @@ pub(super) fn build_persistent_header(app: &dyn TuiState, width: u16) -> Vec<Lin
             format!("server: {} {}", capitalize(server_name), server_icon)
         };
         lines.push(
-            Line::from(Span::styled(
+            Line::from_spans(vec![Span::styled(
                 server_text,
                 Style::default().fg(header_name_color()),
-            ))
+            )])
             .alignment(align),
         );
     }
@@ -423,27 +427,27 @@ pub(super) fn build_persistent_header(app: &dyn TuiState, width: u16) -> Vec<Lin
     if !session_name.is_empty() {
         let client_text = format!("client: {} {}", capitalize(&session_name), icon);
         lines.push(
-            Line::from(Span::styled(
+            Line::from_spans(vec![Span::styled(
                 client_text,
                 Style::default().fg(header_name_color()),
-            ))
+            )])
             .alignment(align),
         );
     } else if server_name.is_none() {
         lines.push(
-            Line::from(Span::styled(
+            Line::from_spans(vec![Span::styled(
                 "JCode".to_string(),
                 Style::default().fg(header_name_color()),
-            ))
+            )])
             .alignment(align),
         );
     }
 
     lines.push(
-        Line::from(Span::styled(
+        Line::from_spans(vec![Span::styled(
             nice_model,
             Style::default().fg(header_session_color()),
-        ))
+        )])
         .alignment(align),
     );
 
@@ -473,14 +477,21 @@ pub(super) fn build_persistent_header(app: &dyn TuiState, width: u16) -> Vec<Lin
         }
     };
     lines.push(
-        Line::from(Span::styled(version_text, Style::default().fg(dim_color()))).alignment(align),
+        Line::from_spans(vec![Span::styled(
+            version_text,
+            Style::default().fg(dim_color()),
+        )])
+        .alignment(align),
     );
 
     if let Some(dir) = app.working_dir() {
         let display_dir = abbreviate_home(&dir);
         lines.push(
-            Line::from(Span::styled(display_dir, Style::default().fg(dim_color())))
-                .alignment(align),
+            Line::from_spans(vec![Span::styled(
+                display_dir,
+                Style::default().fg(dim_color()),
+            )])
+            .alignment(align),
         );
     }
 
@@ -558,7 +569,11 @@ pub(crate) fn build_header_lines(app: &dyn TuiState, width: u16) -> Vec<Line<'st
     };
     if !model_info.is_empty() {
         lines.push(
-            Line::from(Span::styled(model_info, Style::default().fg(dim_color()))).alignment(align),
+            Line::from_spans(vec![Span::styled(
+                model_info,
+                Style::default().fg(dim_color()),
+            )])
+            .alignment(align),
         );
     }
 
@@ -572,10 +587,10 @@ pub(crate) fn build_header_lines(app: &dyn TuiState, width: u16) -> Vec<Line<'st
         app.side_panel(),
     ) {
         lines.push(
-            Line::from(Span::styled(
+            Line::from_spans(vec![Span::styled(
                 goal_badge,
                 Style::default().fg(rgb(170, 200, 120)),
-            ))
+            )])
             .alignment(align),
         );
     }
@@ -590,22 +605,22 @@ pub(crate) fn build_header_lines(app: &dyn TuiState, width: u16) -> Vec<Line<'st
         let mut content: Vec<Line> = Vec::new();
         for entry in new_entries.iter().take(display_count) {
             content.push(
-                Line::from(Span::styled(
+                Line::from_spans(vec![Span::styled(
                     format!("• {}", entry),
                     Style::default().fg(dim_color()),
-                ))
+                )])
                 .alignment(align),
             );
         }
         if has_more {
             content.push(
-                Line::from(Span::styled(
+                Line::from_spans(vec![Span::styled(
                     format!(
                         "  …{} more · /changelog to see all",
                         new_entries.len() - MAX_LINES
                     ),
                     Style::default().fg(dim_color()),
-                ))
+                )])
                 .alignment(align),
             );
         }
@@ -658,7 +673,11 @@ pub(crate) fn build_header_lines(app: &dyn TuiState, width: u16) -> Vec<Line<'st
         }
     };
     lines.push(
-        Line::from(Span::styled(mcp_text, Style::default().fg(dim_color()))).alignment(align),
+        Line::from_spans(vec![Span::styled(
+            mcp_text,
+            Style::default().fg(dim_color()),
+        )])
+        .alignment(align),
     );
 
     let skills = app.available_skills();
@@ -677,8 +696,11 @@ pub(crate) fn build_header_lines(app: &dyn TuiState, width: u16) -> Vec<Line<'st
             format!("skills: {} loaded", skills.len())
         };
         lines.push(
-            Line::from(Span::styled(skills_text, Style::default().fg(dim_color())))
-                .alignment(align),
+            Line::from_spans(vec![Span::styled(
+                skills_text,
+                Style::default().fg(dim_color()),
+            )])
+            .alignment(align),
         );
     }
 
@@ -697,15 +719,15 @@ pub(crate) fn build_header_lines(app: &dyn TuiState, width: u16) -> Vec<Line<'st
             parts.push(format!("{} sessions", session_count));
         }
         lines.push(
-            Line::from(Span::styled(
+            Line::from_spans(vec![Span::styled(
                 format!("server: {}", parts.join(", ")),
                 Style::default().fg(dim_color()),
-            ))
+            )])
             .alignment(align),
         );
     }
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
     lines
 }
 

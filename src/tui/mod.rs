@@ -2,6 +2,7 @@ pub mod account_picker;
 mod app;
 pub mod backend;
 pub(crate) mod color_support;
+mod compat;
 mod core;
 mod generated_image;
 pub mod image;
@@ -31,14 +32,15 @@ pub use jcode_tui_workspace::workspace_map;
 pub use jcode_tui_workspace::workspace_map_widget;
 
 pub use app::{App, CopyBadgeUiState, ProcessingStatus, RunResult};
+pub use compat::StyleCompatExt;
 pub use generated_image::{
     generated_image_side_panel_markdown, generated_image_side_panel_page_id,
     write_generated_image_side_panel_page,
 };
 
 use crate::message::ToolCall;
-use ratatui::prelude::Frame;
-use ratatui::text::Line;
+use ftui_render::frame::Frame;
+use ftui_text::text::Line;
 use std::time::Duration;
 
 pub(crate) fn scheduled_notification_text(

@@ -1,7 +1,8 @@
 use crate::message::ToolCall;
 
 use super::{dim_color, rgb, tool_color, truncate_line_preserving_suffix_to_width};
-use ratatui::prelude::*;
+use ftui_style::{Color, Style};
+use ftui_text::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub(super) use jcode_tui_tool_display::concise_tool_error_summary;
@@ -1456,7 +1457,7 @@ pub(super) fn render_batch_subcall_line(
         ));
     }
     let token_suffix = token_badge.map(|(label, color)| {
-        Line::from(vec![
+        Line::from_spans(vec![
             Span::styled(" · ", Style::default().fg(dim_color())),
             Span::styled(label, Style::default().fg(color)),
         ])
@@ -1464,7 +1465,7 @@ pub(super) fn render_batch_subcall_line(
 
     if let (Some(max_width), Some(token_suffix)) = (max_width, token_suffix.as_ref()) {
         return truncate_line_preserving_suffix_to_width(
-            &Line::from(spans),
+            &Line::from_spans(spans),
             token_suffix,
             max_width,
         );
@@ -1474,7 +1475,7 @@ pub(super) fn render_batch_subcall_line(
         spans.extend(token_suffix.spans);
     }
 
-    Line::from(spans)
+    Line::from_spans(spans)
 }
 
 pub(super) fn summarize_batch_running_tools_compact(running: &[ToolCall]) -> Option<String> {

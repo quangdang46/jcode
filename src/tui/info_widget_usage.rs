@@ -1,9 +1,9 @@
 use super::{InfoWidgetData, UsageInfo, UsageProvider};
 use crate::tui::color_support::rgb;
 use ftui_core::geometry::Rect;
-use ftui_style::{Color, Modifier, Style};
+use ftui_style::{Color, Style};
 use ftui_text::text::Line;
-use ftui_text::text::{Line, Span};
+use ftui_text::text::Span;
 use unicode_width::UnicodeWidthStr;
 
 pub(super) fn render_usage_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<'static>> {
@@ -16,7 +16,7 @@ pub(super) fn render_usage_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
 
     match info.provider {
         UsageProvider::Copilot => {
-            vec![Line::from(vec![Span::styled(
+            vec![Line::from_spans(vec![Span::styled(
                 format!(
                     "{} in + {} out",
                     format_tokens(info.input_tokens),
@@ -27,14 +27,14 @@ pub(super) fn render_usage_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
         }
         UsageProvider::CostBased => {
             vec![
-                Line::from(vec![
+                Line::from_spans(vec![
                     Span::styled("💰 ", Style::new().fg(rgb(140, 180, 255))),
                     Span::styled(
                         format!("${:.4}", info.total_cost),
                         Style::new().fg(rgb(180, 180, 190)).bold(),
                     ),
                 ]),
-                Line::from(vec![Span::styled(
+                Line::from_spans(vec![Span::styled(
                     format!(
                         "{} in + {} out",
                         format_tokens(info.input_tokens),
@@ -62,11 +62,9 @@ pub(super) fn render_usage_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
             let mut lines = Vec::new();
             let label = info.provider.label();
             if !label.is_empty() {
-                lines.push(Line::from(vec![Span::styled(
+                lines.push(Line::from_spans(vec![Span::styled(
                     format!("{} limits", label),
-                    Style::new()
-                        .fg(rgb(140, 140, 150))
-.add_modifier(Modifier::DIM),
+                    Style::new().fg(rgb(140, 140, 150)).dim(),
                 )]));
             }
             lines.push(render_labeled_bar(
@@ -124,11 +122,9 @@ pub(super) fn render_usage_compact(info: &UsageInfo, width: u16) -> Vec<Line<'st
     let mut lines = Vec::new();
     let label = info.provider.label();
     if !label.is_empty() {
-        lines.push(Line::from(vec![Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             format!("{} limits", label),
-            Style::new()
-                .fg(rgb(140, 140, 150))
-                .add_modifier(Modifier::DIM),
+            Style::new().fg(rgb(140, 140, 150)).dim(),
         )]));
     }
     lines.push(render_labeled_bar(
@@ -202,7 +198,7 @@ fn render_labeled_bar(
 
     let padded_label = format!("{:<7}", label);
 
-    Line::from(vec![
+    Line::from_spans(vec![
         Span::styled(padded_label, Style::new().fg(rgb(140, 140, 150))),
         Span::styled(bar_filled, Style::new().fg(color)),
         Span::styled(bar_empty, Style::new().fg(rgb(50, 50, 60))),
@@ -286,7 +282,7 @@ pub(super) fn render_usage_bar(
         }
     }
     spans.push(Span::styled("]", Style::new().fg(rgb(90, 90, 100))));
-    Line::from(spans)
+    Line::from_spans(spans)
 }
 
 pub(super) fn render_context_usage_line(
@@ -299,7 +295,7 @@ pub(super) fn render_context_usage_line(
     let bar_width = width.saturating_sub(label_width as u16 + 1);
 
     if bar_width < 3 {
-        return Line::from(vec![
+        return Line::from_spans(vec![
             Span::styled(label.to_string(), Style::new().fg(rgb(140, 140, 150))),
             Span::raw(" "),
             Span::styled(
@@ -318,7 +314,7 @@ pub(super) fn render_context_usage_line(
         Style::new().fg(rgb(140, 140, 150)),
     )];
     spans.extend(render_usage_bar(used_tokens, limit_tokens, bar_width).spans);
-    Line::from(spans)
+    Line::from_spans(spans)
 }
 
 fn format_token_k(tokens: usize) -> String {

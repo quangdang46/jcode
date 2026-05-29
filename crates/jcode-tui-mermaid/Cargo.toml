@@ -12,8 +12,8 @@ renderer = ["dep:mermaid-rs-renderer"]
 mmdr-size-api = ["renderer"]
 
 [dependencies]
-ratatui = "0.28"
 ftui = { path = "/data/projects/frankentui/crates/ftui" }
+ftui-core = { path = "/data/projects/frankentui/crates/ftui-core" }
 ftui-widgets = { path = "/data/projects/frankentui/crates/ftui-widgets" }
 ftui-tty = { path = "/data/projects/frankentui/crates/ftui-tty" }
 anyhow = "1"

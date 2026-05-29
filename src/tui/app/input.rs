@@ -12,7 +12,7 @@ use crate::util::truncate_str;
 use anyhow::Result;
 use crossterm::event::{EventStream, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::DefaultTerminal;
+
 use std::io::{Read, Write};
 use std::process::Stdio;
 use std::time::{Duration, Instant};

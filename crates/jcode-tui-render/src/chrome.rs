@@ -3,11 +3,11 @@ use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
 use ftui_style::{Color, Style};
 use ftui_text::text::Line;
-use ftui_widgets::block::Alignment;
-use ftui_widgets::borders::Borders;
-use ftui_widgets::block::Block;
-use ftui_widgets::paragraph::Paragraph;
 use ftui_widgets::Widget;
+use ftui_widgets::block::Alignment;
+use ftui_widgets::block::Block;
+use ftui_widgets::borders::Borders;
+use ftui_widgets::paragraph::Paragraph;
 
 pub fn clear_area(frame: &mut Frame, area: Rect) {
     for x in area.left()..area.right() {
@@ -27,7 +27,11 @@ pub fn centered_content_block_width(width: u16, max_width: usize) -> usize {
     (width as usize).min(max_width).max(1)
 }
 
-pub fn left_pad_lines_to_block_width(_lines: &mut [Line<'static>], _width: u16, _block_width: usize) {
+pub fn left_pad_lines_to_block_width(
+    _lines: &mut [Line<'static>],
+    _width: u16,
+    _block_width: usize,
+) {
     todo!("ftui Line API differs - spans field is private, no alignment field")
 }
 

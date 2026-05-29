@@ -1,15 +1,17 @@
+use ftui_style::MonoColor;
+use crate::tui::compat::StyleCompatExt;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ftui::Frame;
 use ftui_core::geometry::Rect;
-use ftui_render::cell::PackedRgba;
-use ftui_style::{Color, Style};
-use ftui_text::text::Line;
-use ftui_text::text::Text;
-use ftui_widgets::block::{Alignment, Block, BorderType, Borders, Constraint, Direction, Layout};
-use ftui_widgets::paragraph::Paragraph;
-use ftui_widgets::wrap::Wrap;
+use ftui_render::frame::Frame;
+use ftui_style::{Color, Rgb, Style};
+use ftui_text::text::{Line, Span, Text};
 use ftui_widgets::Widget;
+use ftui_layout::{Constraint, Flex};
+use ftui_widgets::block::{Alignment, Block};
+use ftui_widgets::borders::{BorderType, Borders};
+use ftui_widgets::paragraph::Paragraph;
+use ftui_text::wrap::WrapMode;
 use std::collections::HashMap;
 
 pub use jcode_tui_account_picker::{
@@ -24,13 +26,13 @@ use render_support::{
     metric_span, provider_header_line, provider_style, truncate_with_ellipsis,
 };
 
-const PANEL_BG: Color = PackedRgba::rgb(24, 28, 40);
-const PANEL_BORDER: Color = PackedRgba::rgb(90, 95, 110);
-const PANEL_BORDER_ACTIVE: Color = PackedRgba::rgb(120, 140, 190);
-const SECTION_BORDER: Color = PackedRgba::rgb(70, 78, 94);
-const SELECTED_BG: Color = PackedRgba::rgb(38, 42, 56);
-const MUTED: Color = PackedRgba::rgb(140, 146, 163);
-const MUTED_DARK: Color = PackedRgba::rgb(100, 106, 122);
+const PANEL_BG: Color = Color::Rgb(Rgb::new(24, 28, 40));
+const PANEL_BORDER: Color = Color::Rgb(Rgb::new(90, 95, 110));
+const PANEL_BORDER_ACTIVE: Color = Color::Rgb(Rgb::new(120, 140, 190));
+const SECTION_BORDER: Color = Color::Rgb(Rgb::new(70, 78, 94));
+const SELECTED_BG: Color = Color::Rgb(Rgb::new(38, 42, 56));
+const MUTED: Color = Color::Rgb(Rgb::new(140, 146, 163));
+const MUTED_DARK: Color = Color::Rgb(Rgb::new(100, 106, 122));
 const OVERLAY_PERCENT_X: u16 = 88;
 const OVERLAY_PERCENT_Y: u16 = 74;
 
@@ -309,7 +311,7 @@ impl AccountPicker {
                 Style::new().fg(MUTED),
             ));
         }
-        Line::from(spans)
+        Line::from_spans(spans)
     }
 
     pub fn handle_overlay_key(
@@ -414,7 +416,7 @@ impl AccountPicker {
 
         let block = Block::new()
             .title(format!(" {} ", self.title))
-            .title_bottom(Line::from(vec![
+            .title_bottom(Line::from_spans(vec![
                 hotkey(" Enter "),
                 Span::styled(" run  ", Style::new().fg(MUTED_DARK)),
                 hotkey(" Up/Down "),
@@ -436,26 +438,24 @@ impl AccountPicker {
             width: area.width.saturating_sub(2),
             height: area.height.saturating_sub(2),
         };
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
+        let rows = Flex::vertical()
             .constraints([
-                Constraint::Length(7),
+                Constraint::Fixed(7),
                 Constraint::Min(10),
-                Constraint::Length(1),
+                Constraint::Fixed(1),
             ])
             .split(inner);
 
         self.render_header(frame, rows[0]);
 
-        let body = Layout::default()
-            .direction(Direction::Horizontal)
+        let body = Flex::horizontal()
             .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
             .split(rows[1]);
 
         self.render_action_list(frame, body[0]);
         self.render_detail_pane(frame, body[1]);
 
-        let footer = Paragraph::new(Text::from(Line::from(vec![
+        let footer = Paragraph::new(Text::from_line(Line::from_spans(vec![
             Span::styled("Focus ", Style::new().fg(MUTED_DARK)),
             Span::styled(
                 "saved accounts stay surfaced here; click actions to focus them, use Left/Right to jump provider groups, or use `/account <provider> settings` for the full text view.",
@@ -469,7 +469,7 @@ impl AccountPicker {
         let block = Block::new()
             .title(Span::styled(
                 " Overview ",
-                Style::new().fg(Color::White).bold(),
+                Style::new().fg_compat(Color::Mono(MonoColor::White)).bold(),
             ))
             .borders(Borders::ALL)
             .style(Style::new().bg(PANEL_BG))
@@ -478,7 +478,7 @@ impl AccountPicker {
         block.render(area, frame);
 
         let lines = vec![
-            Line::from(vec![
+            Line::from_spans(vec![
                 Span::styled("Filter ", Style::new().fg(MUTED_DARK)),
                 Span::styled(
                     if self.filter.is_empty() {
@@ -487,9 +487,9 @@ impl AccountPicker {
                         self.filter.clone()
                     },
                     if self.filter.is_empty() {
-                        Style::new().fg(PackedRgba::rgb(128, 128, 128)).italic()
+                        Style::new().fg_compat(Color::Rgb(Rgb::new(128, 128, 128))).italic()
                     } else {
-                        Style::new().fg(Color::White)
+                        Style::new().fg_compat(Color::Mono(MonoColor::White))
                     },
                 ),
                 Span::styled(
@@ -502,7 +502,7 @@ impl AccountPicker {
             self.defaults_line(),
         ];
 
-        let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(Text::from_lines(lines)).wrap(WrapMode::Word);
         paragraph.render(inner, frame);
     }
 
@@ -517,10 +517,7 @@ impl AccountPicker {
             )
         };
         let block = Block::new()
-            .title(Span::styled(
-                title,
-                Style::new().fg(Color::White).bold(),
-            ))
+            .title(Span::styled(title, Style::new().fg_compat(Color::Mono(MonoColor::White)).bold()))
             .borders(Borders::ALL)
             .style(Style::new().bg(PANEL_BG))
             .border_style(Style::new().fg(PANEL_BORDER_ACTIVE));
@@ -534,14 +531,14 @@ impl AccountPicker {
 
         let mut lines = Vec::new();
         if self.filtered.is_empty() {
-            lines.push(Line::from(Span::styled(
+            lines.push(Line::from_spans(vec![Span::styled(
                 "No matching account or provider actions.",
-                Style::new().fg(PackedRgba::rgb(128, 128, 128)).italic(),
-            )));
-            lines.push(Line::from(Span::styled(
+                Style::new().fg_compat(Color::Rgb(Rgb::new(128, 128, 128))).italic(),
+            )]));
+            lines.push(Line::from_spans(vec![Span::styled(
                 "Try `openai`, `claude`, an account label, `login`, or `default`.",
                 Style::new().fg(MUTED),
-            )));
+            )]));
         } else {
             let mut current_provider: Option<&str> = None;
             for visible_idx in start..end {
@@ -568,15 +565,15 @@ impl AccountPicker {
                 let title = compact_item_title(item);
                 let meta_width = list_inner.width.saturating_sub(16) as usize;
                 let meta = truncate_with_ellipsis(&item.subtitle, meta_width);
-                lines.push(Line::from(vec![
+                lines.push(Line::from_spans(vec![
                     Span::styled(
                         if selected { "> " } else { "  " },
-                        row_style.fg(Color::White),
+                        row_style.fg_compat(Color::Mono(MonoColor::White)),
                     ),
                     Span::styled(format!("{} ", icon), row_style.fg(icon_color).bold()),
                     Span::styled(
                         truncate_with_ellipsis(&title, 22),
-                        row_style.fg(Color::White),
+                        row_style.fg_compat(Color::Mono(MonoColor::White)),
                     ),
                     Span::styled(" - ", row_style.fg(MUTED_DARK)),
                     Span::styled(meta, row_style.fg(MUTED)),
@@ -584,7 +581,7 @@ impl AccountPicker {
             }
         }
 
-        let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(Text::from_lines(lines)).wrap(WrapMode::Word);
         paragraph.render(list_inner, frame);
     }
 
@@ -594,10 +591,7 @@ impl AccountPicker {
             .map(|item| format!(" {} ", item.provider_label))
             .unwrap_or_else(|| " Details ".to_string());
         let block = Block::new()
-            .title(Span::styled(
-                title,
-                Style::new().fg(Color::White).bold(),
-            ))
+            .title(Span::styled(title, Style::new().fg_compat(Color::Mono(MonoColor::White)).bold()))
             .borders(Borders::ALL)
             .style(Style::new().bg(PANEL_BG))
             .border_style(Style::new().fg(SECTION_BORDER));
@@ -605,8 +599,8 @@ impl AccountPicker {
         block.render(area, frame);
 
         let Some(item) = self.selected_item() else {
-            let paragraph = Paragraph::new(Text::from("No action selected"))
-                .style(Style::new().fg(PackedRgba::rgb(80, 80, 80)));
+            let paragraph = Paragraph::new(Text::from_line("No action selected"))
+                .style(Style::new().fg_compat(Color::Rgb(Rgb::new(80, 80, 80))));
             paragraph.render(inner, frame);
             return;
         };
@@ -641,26 +635,29 @@ impl AccountPicker {
         let (kind_label, kind_color) = action_kind_badge(&item.command);
 
         let mut lines = vec![
-            Line::from(vec![
+            Line::from_spans(vec![
                 Span::styled("Provider ", Style::new().fg(MUTED_DARK)),
-                Span::styled(item.provider_label.clone(), provider_style(&item.provider_id)),
+                Span::styled(
+                    item.provider_label.clone(),
+                    provider_style(&item.provider_id),
+                ),
             ]),
-            Line::from(vec![
+            Line::from_spans(vec![
                 Span::styled("Saved accounts ", Style::new().fg(MUTED_DARK)),
                 Span::styled(
                     account_count_summary(account_items.len()),
-                    Style::new().fg(Color::White).bold(),
+                    Style::new().fg_compat(Color::Mono(MonoColor::White)).bold(),
                 ),
             ]),
-            Line::from(""),
-            Line::from(vec![Span::styled(
+            Line::from_spans(vec![]),
+            Line::from_spans(vec![Span::styled(
                 "Quick switch",
                 Style::new().fg(MUTED_DARK).bold(),
             )]),
         ];
 
         if account_items.is_empty() {
-            lines.push(Line::from(vec![Span::styled(
+            lines.push(Line::from_spans(vec![Span::styled(
                 "No saved accounts for this provider yet.",
                 Style::new().fg(MUTED),
             )]));
@@ -669,25 +666,25 @@ impl AccountPicker {
                 let is_selected = account.title == item.title;
                 let bullet = if account_is_active(account) { "*" } else { "o" };
                 let note = if is_selected { "  [selected]" } else { "" };
-                lines.push(Line::from(vec![
+                lines.push(Line::from_spans(vec![
                     Span::styled(
                         format!("{} ", bullet),
                         Style::new().fg(if account_is_active(account) {
-                            PackedRgba::rgb(110, 214, 158)
+                            Color::Rgb(Rgb::new(110, 214, 158))
                         } else {
                             MUTED_DARK
                         }),
                     ),
                     Span::styled(
                         compact_item_title(account),
-                        Style::new().fg(Color::White).bold(),
+                        Style::new().fg_compat(Color::Mono(MonoColor::White)).bold(),
                     ),
                     Span::styled(
                         note.to_string(),
-                        Style::new().fg(PackedRgba::rgb(170, 210, 255)),
+                        Style::new().fg_compat(Color::Rgb(Rgb::new(170, 210, 255))),
                     ),
                 ]));
-                lines.push(Line::from(vec![Span::styled(
+                lines.push(Line::from_spans(vec![Span::styled(
                     format!(
                         "  {}",
                         truncate_with_ellipsis(
@@ -700,78 +697,75 @@ impl AccountPicker {
             }
         }
 
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::styled(
+        lines.push(Line::from_spans(vec![]));
+        lines.push(Line::from_spans(vec![Span::styled(
             "Selected action",
             Style::new().fg(MUTED_DARK).bold(),
         )]));
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled(kind_label, Style::new().fg(kind_color).bold()),
             Span::styled(" - ", Style::new().fg(MUTED_DARK)),
-            Span::styled(item.title.clone(), Style::new().fg(Color::White).bold()),
+            Span::styled(item.title.clone(), Style::new().fg_compat(Color::Mono(MonoColor::White)).bold()),
         ]));
-        lines.push(Line::from(vec![Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             item.subtitle.clone(),
             Style::new().fg(MUTED),
         )]));
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::styled(
+        lines.push(Line::from_spans(vec![]));
+        lines.push(Line::from_spans(vec![Span::styled(
             "Runs",
             Style::new().fg(MUTED_DARK).bold(),
         )]));
-        lines.push(Line::from(vec![Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             command_preview(&item.command),
-            Style::new().fg(Color::White),
+            Style::new().fg_compat(Color::Mono(MonoColor::White)),
         )]));
-        lines.push(Line::from(vec![Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             action_kind_help(&item.command),
             Style::new().fg(MUTED),
         )]));
 
         if !secondary_items.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![Span::styled(
+            lines.push(Line::from_spans(vec![]));
+            lines.push(Line::from_spans(vec![Span::styled(
                 "Other controls",
                 Style::new().fg(MUTED_DARK).bold(),
             )]));
             for related in secondary_items {
-                lines.push(Line::from(vec![
+                lines.push(Line::from_spans(vec![
                     Span::styled("- ", Style::new().fg(MUTED_DARK)),
-                    Span::styled(
-                        compact_item_title(related),
-                        Style::new().fg(Color::White),
-                    ),
+                    Span::styled(compact_item_title(related), Style::new().fg_compat(Color::Mono(MonoColor::White))),
                 ]));
             }
         }
 
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::styled(
+        lines.push(Line::from_spans(vec![]));
+        lines.push(Line::from_spans(vec![Span::styled(
             "Press Enter to run this action.",
-            Style::new().fg(PackedRgba::rgb(170, 210, 255)),
+            Style::new().fg_compat(Color::Rgb(Rgb::new(170, 210, 255))),
         )]));
 
-        let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(Text::from_lines(lines)).wrap(WrapMode::Word);
         paragraph.render(inner, frame);
     }
 
     fn summary_line(&self) -> Line<'static> {
         if let Some(summary) = &self.summary {
             let mut spans = vec![
-                metric_span("ready", summary.ready_count, PackedRgba::rgb(110, 214, 158)),
+                metric_span("ready", summary.ready_count, Color::Rgb(Rgb::new(110, 214, 158))),
                 Span::raw("  "),
                 metric_span(
                     "attention",
                     summary.attention_count,
-                    PackedRgba::rgb(255, 192, 120),
+                    Color::Rgb(Rgb::new(255, 192, 120)),
                 ),
                 Span::raw("  "),
-                metric_span("setup", summary.setup_count, PackedRgba::rgb(160, 168, 188)),
+                metric_span("setup", summary.setup_count, Color::Rgb(Rgb::new(160, 168, 188))),
                 Span::raw("  "),
                 metric_span(
                     "providers",
                     summary.provider_count,
-                    PackedRgba::rgb(140, 176, 255),
+                    Color::Rgb(Rgb::new(140, 176, 255)),
                 ),
             ];
             if summary.named_account_count > 0 {
@@ -779,13 +773,13 @@ impl AccountPicker {
                 spans.push(metric_span(
                     "accounts",
                     summary.named_account_count,
-                    PackedRgba::rgb(196, 170, 255),
+                    Color::Rgb(Rgb::new(196, 170, 255)),
                 ));
             }
-            return Line::from(spans);
+            return Line::from_spans(spans);
         }
 
-        Line::from(vec![Span::styled(
+        Line::from_spans(vec![Span::styled(
             format!("{} actions available", self.filtered.len()),
             Style::new().fg(MUTED),
         )])
@@ -793,7 +787,7 @@ impl AccountPicker {
 
     fn defaults_line(&self) -> Line<'static> {
         let Some(summary) = &self.summary else {
-            return Line::from(vec![Span::styled(
+            return Line::from_spans(vec![Span::styled(
                 "Type to narrow actions by provider, account label, or setting.",
                 Style::new().fg(MUTED),
             )]);
@@ -805,12 +799,12 @@ impl AccountPicker {
             .as_deref()
             .unwrap_or("provider default");
 
-        Line::from(vec![
+        Line::from_spans(vec![
             Span::styled("Defaults ", Style::new().fg(MUTED_DARK)),
             Span::styled("provider ", Style::new().fg(MUTED_DARK)),
-            Span::styled(provider.to_string(), Style::new().fg(Color::White)),
+            Span::styled(provider.to_string(), Style::new().fg_compat(Color::Mono(MonoColor::White))),
             Span::styled("  -  model ", Style::new().fg(MUTED_DARK)),
-            Span::styled(model.to_string(), Style::new().fg(Color::White)),
+            Span::styled(model.to_string(), Style::new().fg_compat(Color::Mono(MonoColor::White))),
         ])
     }
 }

@@ -4,8 +4,8 @@
 use ftui_style::Color;
 use std::sync::OnceLock;
 
-use ftui_render::buffer::Buffer;
 use ftui_core::geometry::Rect;
+use ftui_render::buffer::Buffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorCapability {

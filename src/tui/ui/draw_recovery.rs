@@ -1,4 +1,8 @@
-use ratatui::{prelude::*, widgets::Paragraph};
+use ftui_style::{Ansi16, MonoColor};
+use crate::tui::compat::StyleCompatExt;
+use ftui_render::frame::Frame;
+use ftui_text::text::{Line, Span};
+use ftui_widgets::paragraph::Paragraph;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jcode_core::panic_util::panic_payload_to_string;
@@ -27,14 +31,14 @@ pub(super) fn render_recovered_panic_frame(
     }
     clear_area(frame, area);
     let lines = vec![
-        Line::from(Span::styled(
+        Line::from_spans(vec![Span::styled(
             "rendering error recovered",
-            Style::default().fg(Color::Red),
-        )),
-        Line::from(Span::styled(
+            Style::default().fg_compat(Color::Mono(Ansi16::Red)),
+        )]),
+        Line::from_spans(vec![Span::styled(
             "continuing with a safe fallback frame",
             Style::default().fg(dim_color()),
-        )),
+        )]),
     ];
-    frame.render_widget(Paragraph::new(lines), area);
+    Paragraph::new(lines).render(area, &mut frame.buffer);
 }

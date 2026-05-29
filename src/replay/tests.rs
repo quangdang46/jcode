@@ -422,7 +422,9 @@ fn test_load_swarm_sessions_discovers_related_sessions() {
 
 #[test]
 fn test_compose_swarm_buffers_combines_panes() {
-    use ratatui::{buffer::Buffer, layout::Rect, style::Style};
+    use ftui_core::geometry::Rect;
+    use ftui_render::buffer::Buffer;
+    use ftui_style::style::Style;
 
     let mut left = Buffer::empty(Rect::new(0, 0, 4, 2));
     left[(0, 0)].set_symbol("L").set_style(Style::default());

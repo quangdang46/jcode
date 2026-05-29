@@ -174,7 +174,7 @@ fn test_render_swarm_message_centered_mode_left_aligns_with_shared_padding() {
     for line in &lines {
         assert_eq!(
             line.alignment,
-            Some(ratatui::layout::Alignment::Left),
+            Some(ftui_widgets::block::Alignment::Left),
             "centered swarm lines should be left-aligned after padding"
         );
     }

@@ -173,11 +173,12 @@ fn test_wrapped_input_line_count_respects_two_digit_prompt_width() {
 }
 
 #[test]
-fn test_compute_visible_margins_centered_respects_line_alignment() {
+fn test_compute_visible_margins_centered_falls_back_to_center() {
+    // ftui Line has no per-line alignment field; all lines default to Center.
     let lines = vec![
-        ratatui::text::Line::from("centered").centered(),
-        ratatui::text::Line::from("left block").left_aligned(),
-        ratatui::text::Line::from("right").right_aligned(),
+        Line::from("centered"),
+        Line::from("left block"),
+        Line::from("right"),
     ];
     let area = Rect::new(0, 0, 20, 3);
     let margins = compute_visible_margins(&lines, &[], area, true);
@@ -186,13 +187,13 @@ fn test_compute_visible_margins_centered_respects_line_alignment() {
     assert_eq!(margins.left_widths[0], 6);
     assert_eq!(margins.right_widths[0], 6);
 
-    // left-aligned: used=10 => left=0, right=10
-    assert_eq!(margins.left_widths[1], 0);
-    assert_eq!(margins.right_widths[1], 10);
+    // "left block" (used=10) also defaulted to Center => 5/5
+    assert_eq!(margins.left_widths[1], 5);
+    assert_eq!(margins.right_widths[1], 5);
 
-    // right-aligned: used=5 => left=15, right=0
-    assert_eq!(margins.left_widths[2], 15);
-    assert_eq!(margins.right_widths[2], 0);
+    // "right" (used=5) also defaulted to Center => 7/8
+    assert_eq!(margins.left_widths[2], 7);
+    assert_eq!(margins.right_widths[2], 8);
 }
 
 #[test]

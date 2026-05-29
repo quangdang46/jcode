@@ -1,3 +1,4 @@
+use ftui_text::text::{Line, Span, Text};
 use super::*;
 #[path = "ui_messages_cache.rs"]
 mod cache_support;
@@ -7,11 +8,11 @@ use crate::message::{
 };
 pub(super) use cache_support::get_cached_message_lines;
 use cache_support::{centered_wrap_width, left_pad_lines_for_centered_mode};
+use ftui_render::cell::PackedRgba;
+use ftui_style::Color;
+use ftui_widgets::block::Alignment;
 use std::borrow::Cow;
 use unicode_width::UnicodeWidthStr;
-use ftui_widgets::block::Alignment;
-use ftui_style::Color;
-use ftui_render::cell::PackedRgba;
 
 const MAX_INLINE_DIFF_LINES: usize = 12;
 
@@ -141,7 +142,7 @@ fn render_assistant_tool_call_lines(
     }
 
     let mut lines = vec![super::truncate_line_with_ellipsis_to_width(
-        &Line::from(spans),
+        &Line::from_spans(spans),
         max_width,
     )];
 
@@ -190,7 +191,7 @@ pub(crate) fn render_system_message(
             .lines()
             .flat_map(|line| {
                 if line.is_empty() {
-                    vec![Line::from("")]
+                    vec![Line::from_spans(vec![])]
                 } else {
                     split_by_display_width(line, wrap_width)
                         .into_iter()
@@ -224,7 +225,7 @@ pub(crate) fn render_usage_message(
     let mut content = Vec::new();
     for raw_line in msg.content.lines() {
         if raw_line.is_empty() {
-            content.push(Line::from(""));
+            content.push(Line::from_spans(vec![]));
             continue;
         }
 
@@ -235,26 +236,29 @@ pub(crate) fn render_usage_message(
         } else if let Some(rest) = raw_line.strip_prefix("+ ") {
             (rest, Style::default().fg(rgb(100, 220, 170)))
         } else if let Some(rest) = raw_line.strip_prefix("# ") {
-            (rest, Style::default().fg(PackedRgba::rgb(255, 255, 255)).bold())
+            (
+                rest,
+                Style::default().fg(PackedRgba::rgb(255, 255, 255)).bold(),
+            )
         } else {
             (raw_line, Style::default().fg(dim_color()))
         };
 
         let chunks = split_by_display_width(text, content_width);
         if chunks.is_empty() {
-            content.push(Line::from(""));
+            content.push(Line::from_spans(vec![]));
         } else {
             for chunk in chunks {
-                content.push(Line::from(Span::styled(chunk, style)));
+                content.push(Line::from_spans(vec![Span::styled(chunk, style)]));
             }
         }
     }
 
     if content.is_empty() {
-        content.push(Line::from(Span::styled(
+        content.push(Line::from_spans(vec![Span::styled(
             "No usage data available.",
             Style::default().fg(dim_color()),
-        )));
+        )]));
     }
 
     render_rounded_box(
@@ -470,7 +474,7 @@ fn render_overnight_progress_line(
     let filled = ((percent / 100.0) * bar_width as f32).round() as usize;
     let filled = filled.min(bar_width);
     let empty = bar_width.saturating_sub(filled);
-    let line = Line::from(vec![
+    let line = Line::from_spans(vec![
         Span::styled("█".repeat(filled), filled_style),
         Span::styled("░".repeat(empty), empty_style),
         Span::styled(" ", label_style),
@@ -499,7 +503,7 @@ fn push_overnight_kv_line(
     for (idx, chunk) in chunks.into_iter().enumerate() {
         if idx == 0 {
             content.push(super::truncate_line_with_ellipsis_to_width(
-                &Line::from(vec![
+                &Line::from_spans(vec![
                     Span::styled(prefix.clone(), label_style),
                     Span::styled(chunk, value_style),
                 ]),
@@ -507,7 +511,7 @@ fn push_overnight_kv_line(
             ));
         } else {
             content.push(super::truncate_line_with_ellipsis_to_width(
-                &Line::from(vec![
+                &Line::from_spans(vec![
                     Span::styled(" ".repeat(prefix_width), label_style),
                     Span::styled(chunk, value_style),
                 ]),
@@ -572,11 +576,14 @@ fn push_card_section(
     };
 
     if !content.is_empty() {
-        content.push(Line::from(""));
+        content.push(Line::from_spans(vec![]));
     }
-    content.push(Line::from(Span::styled(label.to_string(), label_style)));
+    content.push(Line::from_spans(vec![Span::styled(
+        label.to_string(),
+        label_style,
+    )]));
     for chunk in split_by_display_width(value, inner_width) {
-        content.push(Line::from(Span::styled(chunk, body_style)));
+        content.push(Line::from_spans(vec![Span::styled(chunk, body_style)]));
     }
 }
 
@@ -649,10 +656,10 @@ fn render_scheduled_session_message(
     let body_style = Style::default().fg(rgb(225, 232, 245));
     let meta_style = Style::default().fg(rgb(170, 200, 255));
 
-    let mut box_content = vec![Line::from(Span::styled(
+    let mut box_content = vec![Line::from_spans(vec![Span::styled(
         "This scheduled task is now active in this session.",
         status_style,
-    ))];
+    )])];
     push_card_section(
         &mut box_content,
         "Task",
@@ -794,10 +801,10 @@ fn render_scheduled_tool_message(msg: &DisplayMessage, width: u16) -> Option<Vec
     let body_style = Style::default().fg(rgb(225, 232, 245));
     let meta_style = Style::default().fg(rgb(170, 200, 255));
 
-    let mut box_content = vec![Line::from(Span::styled(
+    let mut box_content = vec![Line::from_spans(vec![Span::styled(
         format!("Will run {}.", parsed.when),
         status_style,
-    ))];
+    )])];
     push_card_section(
         &mut box_content,
         "Task",
@@ -873,14 +880,17 @@ fn render_reload_system_message(msg: &DisplayMessage, width: u16) -> Vec<Line<'s
         .peekable();
 
     if non_empty_lines.peek().is_none() {
-        box_content.push(Line::from(Span::styled("No reload details.", label_style)));
+        box_content.push(Line::from_spans(vec![Span::styled(
+            "No reload details.",
+            label_style,
+        )]));
     } else {
         for (idx, line) in non_empty_lines.enumerate() {
             if idx > 0 {
-                box_content.push(Line::from(""));
+                box_content.push(Line::from_spans(vec![]));
             }
             for chunk in split_by_display_width(line, inner_width) {
-                box_content.push(Line::from(Span::styled(chunk, text_style)));
+                box_content.push(Line::from_spans(vec![Span::styled(chunk, text_style)]));
             }
         }
     }
@@ -1002,11 +1012,14 @@ fn render_connection_system_message(msg: &DisplayMessage, width: u16) -> Vec<Lin
     let label_style = Style::default().fg(dim_color());
     let body_style = Style::default().fg(rgb(225, 232, 245));
     let hint_style = Style::default().fg(rgb(170, 200, 255));
-    let mut box_content = vec![Line::from(Span::styled(status_line, status_style))];
+    let mut box_content = vec![Line::from_spans(vec![Span::styled(
+        status_line,
+        status_style,
+    )])];
 
     if let Some(detail) = detail.filter(|detail| !detail.is_empty()) {
         let detail = truncate_connection_line(&detail.replace('\n', " "), inner_width);
-        box_content.push(Line::from(vec![
+        box_content.push(Line::from_spans(vec![
             Span::styled("Detail ", label_style),
             Span::styled(detail, body_style),
         ]));
@@ -1014,7 +1027,7 @@ fn render_connection_system_message(msg: &DisplayMessage, width: u16) -> Vec<Lin
 
     if let Some(hint) = hint.filter(|hint| !hint.is_empty()) {
         let hint = truncate_connection_line(&hint.replace('\n', " "), inner_width);
-        box_content.push(Line::from(vec![
+        box_content.push(Line::from_spans(vec![
             Span::styled("Resume ", label_style),
             Span::styled(hint, hint_style),
         ]));
@@ -1083,7 +1096,7 @@ pub(crate) fn render_background_task_message(
     .max(16);
     let inner_width = max_box_width.saturating_sub(4).max(1);
 
-    let mut box_content: Vec<Line<'static>> = vec![Line::from(vec![
+    let mut box_content: Vec<Line<'static>> = vec![Line::from_spans(vec![
         Span::styled(parsed.exit_label.clone(), status_style),
         Span::styled(" · ", label_style),
         Span::styled(parsed.duration.clone(), label_style),
@@ -1094,14 +1107,14 @@ pub(crate) fn render_background_task_message(
         .as_deref()
         .filter(|summary| !summary.is_empty())
     {
-        box_content.push(Line::from(""));
-        box_content.push(Line::from(Span::styled("Failure", label_style)));
+        box_content.push(Line::from_spans(vec![]));
+        box_content.push(Line::from_spans(vec![Span::styled("Failure", label_style)]));
         for chunk in split_by_display_width(failure_summary, inner_width) {
-            box_content.push(Line::from(Span::styled(chunk, status_style)));
+            box_content.push(Line::from_spans(vec![Span::styled(chunk, status_style)]));
         }
     }
 
-    box_content.push(Line::from(""));
+    box_content.push(Line::from_spans(vec![]));
 
     match parsed.preview.as_deref() {
         Some(preview) => {
@@ -1109,27 +1122,30 @@ pub(crate) fn render_background_task_message(
             let shown_lines = preview_lines.len().min(4);
             for line in preview_lines.iter().take(shown_lines) {
                 if line.is_empty() {
-                    box_content.push(Line::from(""));
+                    box_content.push(Line::from_spans(vec![]));
                     continue;
                 }
                 for chunk in split_by_display_width(line, inner_width) {
-                    box_content.push(Line::from(Span::styled(chunk, preview_style)));
+                    box_content.push(Line::from_spans(vec![Span::styled(chunk, preview_style)]));
                 }
             }
             if preview_lines.len() > shown_lines {
                 let remaining = preview_lines.len() - shown_lines;
-                box_content.push(Line::from(Span::styled(
+                box_content.push(Line::from_spans(vec![Span::styled(
                     format!(
                         "… +{} more line{}",
                         remaining,
                         if remaining == 1 { "" } else { "s" }
                     ),
                     label_style,
-                )));
+                )]));
             }
         }
         None => {
-            box_content.push(Line::from(Span::styled("No output captured.", label_style)));
+            box_content.push(Line::from_spans(vec![Span::styled(
+                "No output captured.",
+                label_style,
+            )]));
         }
     }
 
@@ -1164,7 +1180,7 @@ fn render_compact_progress_line(
 ) -> Line<'static> {
     let Some(percent) = progress.percent else {
         return super::truncate_line_with_ellipsis_to_width(
-            &Line::from(Span::styled(progress.summary.clone(), text_style)),
+            &Line::from_spans(vec![Span::styled(progress.summary.clone(), text_style)]),
             inner_width,
         );
     };
@@ -1188,7 +1204,7 @@ fn render_compact_progress_line(
     let filled = filled.min(bar_width);
     let empty = bar_width.saturating_sub(filled);
 
-    let line = Line::from(vec![
+    let line = Line::from_spans(vec![
         Span::styled("█".repeat(filled), filled_style),
         Span::styled("░".repeat(empty), empty_style),
         Span::styled(" ", label_style),
@@ -1245,7 +1261,7 @@ fn render_background_task_progress_message(
             progress.task_id
         );
         box_content.push(super::truncate_line_with_ellipsis_to_width(
-            &Line::from(Span::styled(hint, label_style)),
+            &Line::from_spans(vec![Span::styled(hint, label_style)]),
             inner_width,
         ));
     }
@@ -1297,13 +1313,16 @@ pub(crate) fn render_swarm_message(
     .max(1);
 
     let mut lines = Vec::new();
-    lines.push(Line::from(vec![
+    lines.push(Line::from_spans(vec![
         Span::styled("│ ", rail_style),
         Span::styled(format!("{} {}", icon, title), header_style),
     ]));
 
     let mut body_lines = if content.is_empty() {
-        vec![Line::from(Span::styled(String::new(), body_style))]
+        vec![Line::from_spans(vec![Span::styled(
+            String::new(),
+            body_style,
+        )])]
     } else {
         markdown::render_markdown_with_width(content, Some(content_width))
     };
@@ -1315,7 +1334,10 @@ pub(crate) fn render_swarm_message(
                 .any(|span| !span.content.trim().is_empty())
         });
         if body_lines.is_empty() {
-            body_lines.push(Line::from(Span::styled(content.to_string(), body_style)));
+            body_lines.push(Line::from_spans(vec![Span::styled(
+                content.to_string(),
+                body_style,
+            )]));
         }
     }
 
@@ -1333,7 +1355,7 @@ pub(crate) fn render_swarm_message(
     for line in body_lines {
         let mut spans = vec![Span::styled("│ ", rail_style)];
         spans.extend(line.spans);
-        lines.push(Line::from(spans));
+        lines.push(Line::from_spans(spans));
     }
 
     let mut wrapped_lines = Vec::new();
@@ -1412,10 +1434,13 @@ pub(crate) fn render_tool_message(
         let mut box_content: Vec<Line<'static>> = Vec::new();
         let text_display_width = unicode_width::UnicodeWidthStr::width(content);
         if text_display_width <= inner_width {
-            box_content.push(Line::from(Span::styled(content.to_string(), text_style)));
+            box_content.push(Line::from_spans(vec![Span::styled(
+                content.to_string(),
+                text_style,
+            )]));
         } else {
             for chunk in split_by_display_width(content, inner_width) {
-                box_content.push(Line::from(Span::styled(chunk, text_style)));
+                box_content.push(Line::from_spans(vec![Span::styled(chunk, text_style)]));
             }
         }
 
@@ -1460,7 +1485,7 @@ pub(crate) fn render_tool_message(
                 if count == 1 { "y" } else { "ies" },
                 token_badge.label.as_str()
             );
-            let header = Line::from(Span::styled(header_text, border_style));
+            let header = Line::from_spans(vec![Span::styled(header_text, border_style)]);
             let total_width = (width.saturating_sub(4) as usize).min(120);
             let tile_lines =
                 render_memory_tiles(&tiles, total_width, border_style, text_style, Some(header));
@@ -1554,7 +1579,7 @@ pub(crate) fn render_tool_message(
             .filter(|title| !title.trim().is_empty())
             .map(|title| {
                 super::line_plain_text(&super::truncate_line_with_ellipsis_to_width(
-                    &Line::from(title.to_string()),
+                    &Line::from_spans(title.to_string()),
                     technical_summary_width,
                 ))
             })
@@ -1598,7 +1623,7 @@ pub(crate) fn render_tool_message(
         ));
         tool_line.push(Span::styled(")", Style::default().fg(dim_color())));
     }
-    let token_suffix = Line::from(vec![
+    let token_suffix = Line::from_spans(vec![
         Span::styled(" · ", Style::default().fg(dim_color())),
         Span::styled(token_badge.label, Style::default().fg(token_badge.color)),
     ]);
@@ -1618,7 +1643,7 @@ pub(crate) fn render_tool_message(
         let detail_width = row_width.saturating_sub(4).max(1);
         let command_detail = tools_ui::get_tool_summary_with_budget(tc, 80, Some(detail_width));
         if !command_detail.trim().is_empty() {
-            let detail_line = Line::from(vec![
+            let detail_line = Line::from_spans(vec![
                 Span::raw("    "),
                 Span::styled(command_detail, Style::default().fg(dim_color())),
             ]);
@@ -1628,7 +1653,7 @@ pub(crate) fn render_tool_message(
             ));
         } else if !command.trim().is_empty() {
             let fallback = format!("$ {}", command.trim());
-            let detail_line = Line::from(vec![
+            let detail_line = Line::from_spans(vec![
                 Span::raw("    "),
                 Span::styled(fallback, Style::default().fg(dim_color())),
             ]);
@@ -1740,10 +1765,10 @@ pub(crate) fn render_tool_message(
         let pad_str = "";
 
         lines.push(
-            Line::from(Span::styled(
+            Line::from_spans(vec![Span::styled(
                 format!("{}┌─ diff", pad_str),
                 Style::default().fg(dim_color()),
-            ))
+            )])
             .alignment(Alignment::Left),
         );
 
@@ -1753,10 +1778,10 @@ pub(crate) fn render_tool_message(
             if truncated && !shown_truncation && i >= half_point {
                 let skipped = total_changes - MAX_DIFF_LINES;
                 lines.push(
-                    Line::from(Span::styled(
+                    Line::from_spans(vec![Span::styled(
                         format!("{}│ ... {} more changes ...", pad_str, skipped),
                         Style::default().fg(dim_color()),
-                    ))
+                    )])
                     .alignment(Alignment::Left),
                 );
                 shown_truncation = true;
@@ -1807,7 +1832,7 @@ pub(crate) fn render_tool_message(
                 }
             }
 
-            lines.push(Line::from(spans).alignment(Alignment::Left));
+            lines.push(Line::from_spans(spans).alignment(Alignment::Left));
         }
 
         let footer = if total_changes > 0 && truncated {
@@ -1816,7 +1841,7 @@ pub(crate) fn render_tool_message(
             format!("{}└─", pad_str)
         };
         lines.push(
-            Line::from(Span::styled(footer, Style::default().fg(dim_color())))
+            Line::from_spans(vec![Span::styled(footer, Style::default().fg(dim_color()))])
                 .alignment(Alignment::Left),
         );
     }

@@ -1209,7 +1209,7 @@ impl crate::tui::TuiState for App {
         self.app_started.elapsed().as_millis() as u64 / 180
     }
 
-    fn render_streaming_markdown(&self, width: usize) -> Vec<ratatui::text::Line<'static>> {
+    fn render_streaming_markdown(&self, width: usize) -> Vec<ftui_text::text::Line<'static>> {
         let mut renderer = self.streaming_md_renderer.borrow_mut();
         renderer.set_width(Some(width));
         renderer.update(&self.streaming_text)

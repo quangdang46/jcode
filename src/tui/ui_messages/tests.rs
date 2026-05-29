@@ -46,7 +46,7 @@ fn render_system_message_centered_mode_left_aligns_with_padding() {
     for line in &lines {
         assert_eq!(
             line.alignment,
-            Some(ratatui::layout::Alignment::Left),
+            Some(ftui_widgets::block::Alignment::Left),
             "centered system lines should be left-aligned with padding"
         );
         assert!(
@@ -386,7 +386,7 @@ fn render_assistant_message_centers_single_line_tool_summary() {
         lines
             .iter()
             .skip(2)
-            .all(|line| line.alignment == Some(ratatui::layout::Alignment::Left)),
+            .all(|line| line.alignment == Some(ftui_widgets::block::Alignment::Left)),
         "centered tool summary should use a shared left-aligned block pad"
     );
 
@@ -848,7 +848,7 @@ fn render_tool_message_memory_recall_centered_mode_left_aligns_with_padding() {
     );
     assert_eq!(
         lines[0].alignment,
-        Some(ratatui::layout::Alignment::Left),
+        Some(ftui_widgets::block::Alignment::Left),
         "centered recall card header should be left-aligned after padding"
     );
     assert!(
@@ -901,7 +901,7 @@ fn render_tool_message_memory_store_centered_mode_left_aligns_with_padding() {
     );
     assert_eq!(
         lines[0].alignment,
-        Some(ratatui::layout::Alignment::Left),
+        Some(ftui_widgets::block::Alignment::Left),
         "centered saved-memory card should be left-aligned after padding"
     );
 

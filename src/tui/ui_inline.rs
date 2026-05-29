@@ -1,5 +1,10 @@
+use ftui_text::text::{Line, Span, Text};
+use ftui_style::MonoColor;
+use crate::tui::compat::StyleCompatExt;
 use super::*;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ftui_widgets::block::Block;
+use ftui_widgets::borders::{BorderType, Borders};
+use ftui_widgets::paragraph::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
 fn inline_view_display_width(text: &str) -> usize {
@@ -70,7 +75,7 @@ fn draw_inline_view(
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(rgb(85, 85, 110)))
         .style(Style::default().bg(rgb(18, 18, 26)));
-    frame.render_widget(block.clone(), render_area);
+    block.clone().render(render_area, &mut frame.buffer);
 
     let inner = block.inner(render_area);
     if inner.height == 0 || inner.width == 0 {
@@ -80,7 +85,7 @@ fn draw_inline_view(
     let mut lines: Vec<Line> = Vec::new();
     let mut header_spans = vec![Span::styled(
         view.title.clone(),
-        Style::default().fg(Color::White).bold(),
+        Style::default().fg_compat(Color::Mono(MonoColor::White)).bold(),
     )];
     if let Some(status) = view.status.as_ref() {
         header_spans.push(Span::styled(
@@ -88,14 +93,6 @@ fn draw_inline_view(
             Style::default().fg(dim_color()).italic(),
         ));
     }
-    lines.push(Line::from(header_spans));
 
-    for line in &view.lines {
-        lines.push(Line::from(Span::styled(
-            line.clone(),
-            Style::default().fg(rgb(200, 200, 220)),
-        )));
-    }
-
-    frame.render_widget(Paragraph::new(lines), inner);
+    Paragraph::new(lines).render(inner, &mut frame.buffer);
 }

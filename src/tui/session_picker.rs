@@ -4,6 +4,8 @@
 //! conversation on the right. Sessions are grouped by server for multi-server support.
 
 use super::color_support::rgb;
+use ftui_style::{Ansi16, MonoColor};
+use crate::tui::compat::StyleCompatExt;
 use crate::session::{CrashedSessionsInfo, Session};
 use crate::tui::{DisplayMessage, markdown};
 use anyhow::Result;
@@ -12,12 +14,14 @@ use jcode_session_types::SessionStatus;
 use ftui::Frame;
 use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
-use ftui_style::{Color, Style, Modifier};
+use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span, Text};
-use ftui_widgets::block::{Alignment, Block, BorderType, Borders, Constraint, Direction, Layout};
+use ftui_layout::{Constraint, Direction, Flex};
+use ftui_widgets::block::{Alignment, Block};
+use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::paragraph::Paragraph;
 use ftui_widgets::list::{List, ListItem, ListState};
-use ftui_widgets::wrap::Wrap;
+use ftui_text::wrap::WrapMode;
 use ftui_widgets::Widget;
 use std::collections::HashSet;
 use std::io::IsTerminal;
@@ -770,7 +774,7 @@ impl SessionPicker {
                         message.to_string(),
                         Style::default()
                             .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
+                            .bold(),
                     ),
                 ]),
                 Line::from(""),
@@ -824,7 +828,7 @@ impl SessionPicker {
                     session.short_name.clone(),
                     Style::default()
                         .fg(header_session_color)
-                        .add_modifier(Modifier::BOLD),
+                        .bold(),
                 ),
                 {
                     let ago = format_time_ago(session.last_message_time);
@@ -919,7 +923,7 @@ impl SessionPicker {
                     "Included in batch restore",
                     Style::default()
                         .fg(rgb(255, 140, 140))
-                        .add_modifier(Modifier::BOLD),
+                        .bold(),
                 )])
                 .alignment(align),
             );
@@ -931,7 +935,7 @@ impl SessionPicker {
                     "✓ Selected for multi-resume",
                     Style::default()
                         .fg(rgb(140, 220, 160))
-                        .add_modifier(Modifier::BOLD),
+                        .bold(),
                 )])
                 .alignment(align),
             );
@@ -1187,8 +1191,7 @@ impl SessionPicker {
         }
         v_constraints.push(Constraint::Min(10));
 
-        let v_chunks = Layout::default()
-            .direction(Direction::Vertical)
+        let v_chunks = Flex::vertical()
             .constraints(v_constraints)
             .split(frame.area());
 
@@ -1212,7 +1215,7 @@ impl SessionPicker {
                     &self.search_query,
                     Style::default()
                         .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
+                        .bold(),
                 ),
                 Span::styled(cursor_char, Style::default().fg(rgb(186, 139, 255))),
                 if self.search_active {
@@ -1229,8 +1232,7 @@ impl SessionPicker {
         let main_area = v_chunks[chunk_idx];
 
         // Split main area horizontally for list and preview
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
+        let chunks = Flex::horizontal()
             .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
             .split(main_area);
 

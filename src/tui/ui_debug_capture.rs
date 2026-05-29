@@ -1,6 +1,6 @@
 use super::info_widget;
 use super::visual_debug::{InfoWidgetSummary, WidgetPlacementCapture};
-use ratatui::prelude::Rect;
+use ftui_core::geometry::Rect;
 
 pub(super) fn capture_widget_placements(
     placements: &[info_widget::WidgetPlacement],

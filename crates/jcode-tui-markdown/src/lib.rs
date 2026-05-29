@@ -55,61 +55,128 @@ pub fn set_memory_snapshot_hook(_hook: fn() -> ProcessMemorySnapshot) {}
 pub fn render_markdown(_text: &str) -> Vec<ftui_text::text::Line<'static>> {
     Vec::new()
 }
-pub fn render_markdown_with_width(_text: &str, _width: Option<usize>) -> Vec<ftui_text::text::Line<'static>> {
+pub fn render_markdown_with_width(
+    _text: &str,
+    _width: Option<usize>,
+) -> Vec<ftui_text::text::Line<'static>> {
     Vec::new()
 }
 pub fn render_markdown_lazy(_text: &str) -> Vec<ftui_text::text::Line<'static>> {
     Vec::new()
 }
-pub fn extract_copy_targets_from_rendered_lines(_lines: &[ftui_text::text::Line]) -> Vec<RawCopyTarget> {
+pub fn extract_copy_targets_from_rendered_lines(
+    _lines: &[ftui_text::text::Line],
+) -> Vec<RawCopyTarget> {
     Vec::new()
 }
-pub fn highlight_code_cached(_code: &str, _lang: Option<&str>) -> Vec<ftui_text::text::Line<'static>> {
+pub fn highlight_code_cached(
+    _code: &str,
+    _lang: Option<&str>,
+) -> Vec<ftui_text::text::Line<'static>> {
     Vec::new()
 }
-pub fn highlight_file_lines(_text: &str, _lang: Option<&str>) -> Vec<ftui_text::text::Line<'static>> {
+pub fn highlight_file_lines(
+    _text: &str,
+    _lang: Option<&str>,
+) -> Vec<ftui_text::text::Line<'static>> {
     Vec::new()
 }
 pub fn highlight_line(_line: &str, _lang: Option<&str>) -> ftui_text::text::Line<'static> {
     ftui_text::text::Line::default()
 }
-pub fn render_table(_rows: &[Vec<ftui_text::text::Line<'static>>], _widths: &[usize]) -> Vec<ftui_text::text::Line<'static>> {
+pub fn render_table(
+    _rows: &[Vec<ftui_text::text::Line<'static>>],
+    _widths: &[usize],
+) -> Vec<ftui_text::text::Line<'static>> {
     Vec::new()
 }
-pub fn render_table_with_width(_rows: &[Vec<ftui_text::text::Line<'static>>], _width: usize) -> Vec<ftui_text::text::Line<'static>> {
+pub fn render_table_with_width(
+    _rows: &[Vec<ftui_text::text::Line<'static>>],
+    _width: usize,
+) -> Vec<ftui_text::text::Line<'static>> {
     Vec::new()
 }
-pub fn center_code_blocks() -> bool { false }
+pub fn center_code_blocks() -> bool {
+    false
+}
 pub fn set_center_code_blocks(_value: bool) {}
-pub fn get_diagram_mode_override() -> Option<DiagramDisplayMode> { None }
+pub fn get_diagram_mode_override() -> Option<DiagramDisplayMode> {
+    None
+}
 pub fn set_diagram_mode_override(_mode: Option<DiagramDisplayMode>) {}
-pub fn effective_diagram_mode() -> DiagramDisplayMode { DiagramDisplayMode::default() }
-pub fn effective_markdown_spacing_mode() -> MarkdownSpacingMode { MarkdownSpacingMode::default() }
-pub fn with_deferred_mermaid_render_context<R>(_f: impl FnOnce() -> R) -> R { _f() }
-pub fn deferred_mermaid_render_context_enabled() -> bool { false }
-pub fn streaming_render_context_enabled() -> bool { false }
-pub fn with_streaming_render_context<R>(_f: impl FnOnce() -> R) -> R { _f() }
-pub fn debug_stats() -> MarkdownDebugStats { MarkdownDebugStats::default() }
-pub fn debug_memory_profile() -> MarkdownMemoryProfile { MarkdownMemoryProfile::default() }
+pub fn effective_diagram_mode() -> DiagramDisplayMode {
+    DiagramDisplayMode::default()
+}
+pub fn effective_markdown_spacing_mode() -> MarkdownSpacingMode {
+    MarkdownSpacingMode::default()
+}
+pub fn with_deferred_mermaid_render_context<R>(_f: impl FnOnce() -> R) -> R {
+    _f()
+}
+pub fn deferred_mermaid_render_context_enabled() -> bool {
+    false
+}
+pub fn streaming_render_context_enabled() -> bool {
+    false
+}
+pub fn with_streaming_render_context<R>(_f: impl FnOnce() -> R) -> R {
+    _f()
+}
+pub fn debug_stats() -> MarkdownDebugStats {
+    MarkdownDebugStats::default()
+}
+pub fn debug_memory_profile() -> MarkdownMemoryProfile {
+    MarkdownMemoryProfile::default()
+}
 pub fn reset_debug_stats() {}
-pub fn debug_stats_json() -> Option<serde_json::Value> { None }
-pub fn wrap_line(_line: ftui_text::text::Line<'static>, _width: usize) -> Vec<ftui_text::text::Line<'static>> {
+pub fn debug_stats_json() -> Option<serde_json::Value> {
+    None
+}
+pub fn wrap_line(
+    _line: ftui_text::text::Line<'static>,
+    _width: usize,
+) -> Vec<ftui_text::text::Line<'static>> {
     Vec::new()
 }
-pub fn wrap_lines(_lines: Vec<ftui_text::text::Line<'static>>, _width: usize) -> Vec<ftui_text::text::Line<'static>> {
+pub fn wrap_lines(
+    _lines: Vec<ftui_text::text::Line<'static>>,
+    _width: usize,
+) -> Vec<ftui_text::text::Line<'static>> {
     Vec::new()
 }
-pub fn progress_bar(_progress: f32, _width: usize) -> String { String::new() }
-pub fn progress_line(_label: &str, _progress: f32, _width: usize) -> ftui_text::text::Line<'static> {
+pub fn progress_bar(_progress: f32, _width: usize) -> String {
+    String::new()
+}
+pub fn progress_line(
+    _label: &str,
+    _progress: f32,
+    _width: usize,
+) -> ftui_text::text::Line<'static> {
     ftui_text::text::Line::default()
 }
-pub fn recenter_structured_blocks_for_display(_lines: &mut [ftui_text::text::Line<'static>], _width: usize) {}
+pub fn recenter_structured_blocks_for_display(
+    _lines: &mut [ftui_text::text::Line<'static>],
+    _width: usize,
+) {
+}
 
 pub struct IncrementalMarkdownRenderer;
 
+impl Default for IncrementalMarkdownRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IncrementalMarkdownRenderer {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
     pub fn update(&mut self, _text: &str) {}
-    pub fn lines(&self) -> Vec<ftui_text::text::Line<'static>> { Vec::new() }
-    pub fn take_error(&mut self) -> Option<String> { None }
+    pub fn lines(&self) -> Vec<ftui_text::text::Line<'static>> {
+        Vec::new()
+    }
+    pub fn take_error(&mut self) -> Option<String> {
+        None
+    }
 }

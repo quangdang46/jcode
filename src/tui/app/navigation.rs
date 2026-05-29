@@ -1,6 +1,6 @@
 use super::*;
 use crate::tui::ui::input_ui;
-use ratatui::layout::Rect;
+use ftui_core::geometry::Rect;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MouseScrollTraceState {

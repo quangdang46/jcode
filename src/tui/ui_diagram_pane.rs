@@ -2,13 +2,17 @@ use super::{accent_color, clear_area, dim_color, tool_color};
 use crate::tui::info_widget;
 use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
-use ftui_style::{Color, Modifier, Style};
+use ftui_render::frame::Frame;
+use ftui_style::{Color, Style};
 use ftui_text::text::Line;
 use ftui_text::text::Text;
-use ftui_widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
+use ftui_text::wrap::WrapMode;
+use ftui_widgets::block::Block;
+use ftui_widgets::borders::{BorderType, Borders};
+use ftui_widgets::paragraph::Paragraph;
+use ftui_widgets::Widget;
 use serde::Serialize;
 use std::cell::RefCell;
-use ftui::Frame;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PinnedDiagramProbeRect {
@@ -218,7 +222,8 @@ fn pinned_diagram_content_area_for_title(
     area: Rect,
     pane_position: crate::config::DiagramPanePosition,
 ) -> Option<Rect> {
-    use ratatui::widgets::{Block, Borders};
+    use ftui_widgets::block::Block;
+    use ftui_widgets::borders::Borders;
 
     match pane_position {
         crate::config::DiagramPanePosition::Side => {
@@ -514,7 +519,7 @@ mod tests {
         PinnedDiagramFitRenderPlan, diagram_view_uses_fit_mode, plan_pinned_diagram_fit_with_font,
         vcenter_fitted_image_with_font,
     };
-    use ratatui::prelude::Rect;
+    use ftui_core::geometry::Rect;
 
     #[test]
     fn diagram_view_uses_fit_mode_when_unfocused_or_reset() {
@@ -795,7 +800,9 @@ pub(crate) fn draw_pinned_diagram(
     pane_position: crate::config::DiagramPanePosition,
     pane_animating: bool,
 ) {
-    use ratatui::widgets::{Block, BorderType, Borders, Wrap};
+    use ftui_text::wrap::WrapMode;
+use ftui_widgets::block::Block;
+use ftui_widgets::borders::{BorderType, Borders};
 
     if area.width < 5 || area.height < 3 {
         return;
@@ -848,7 +855,7 @@ pub(crate) fn draw_pinned_diagram(
             hint,
             Style::default()
                 .fg(accent_color())
-                .add_modifier(ratatui::style::Modifier::BOLD),
+                .bold(),
         ));
     }
     if focused {
@@ -865,13 +872,13 @@ pub(crate) fn draw_pinned_diagram(
             " focus+o open",
             Style::default()
                 .fg(accent_color())
-                .add_modifier(ratatui::style::Modifier::BOLD),
+                .bold(),
         ));
     }
 
     let inner = if pane_position == crate::config::DiagramPanePosition::Side {
         let Some(content_area) =
-            super::draw_right_rail_chrome(frame, area, Line::from(title_parts), border_style)
+            super::draw_right_rail_chrome(frame, area, Line::from_spans(title_parts), border_style)
         else {
             return;
         };
@@ -881,7 +888,7 @@ pub(crate) fn draw_pinned_diagram(
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(border_style)
-            .title(Line::from(title_parts));
+            .title(Line::from_spans(title_parts));
 
         let inner = block.inner(area);
         block.render(frame, area);
@@ -915,7 +922,7 @@ pub(crate) fn draw_pinned_diagram(
                 clear_area(frame, inner);
                 let placeholder =
                     super::super::mermaid::diagram_placeholder_lines(diagram.width, diagram.height);
-                let paragraph = Paragraph::new(placeholder).wrap(Wrap { trim: true });
+                let paragraph = Paragraph::new(placeholder).wrap(WrapMode::Word);
                 paragraph.render(frame, inner);
                 rendered = inner.height;
             } else if super::super::mermaid::protocol_type().is_some() {
@@ -969,7 +976,7 @@ pub(crate) fn draw_pinned_diagram(
             clear_area(frame, inner);
             let placeholder =
                 super::super::mermaid::diagram_placeholder_lines(diagram.width, diagram.height);
-            let paragraph = Paragraph::new(placeholder).wrap(Wrap { trim: true });
+            let paragraph = Paragraph::new(placeholder).wrap(WrapMode::Word);
             paragraph.render(frame, inner);
         }
     } else {

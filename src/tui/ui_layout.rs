@@ -1,4 +1,4 @@
-use ratatui::prelude::*;
+use ftui_style::{Color, Style};
 
 pub(crate) use jcode_tui_render::chrome::{
     align_if_unset, centered_content_block_width, left_aligned_content_inset,

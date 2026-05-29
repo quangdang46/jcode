@@ -1,9 +1,17 @@
 use super::*;
+use crate::tui::compat::StyleCompatExt;
 use ftui_render::cell::PackedRgba;
-use ftui_style::{Color, Style};
+use ftui_style::{Color, Rgb, Style};
+use ftui_text::text::Span;
+use ftui_layout::Flex;
 
 pub(super) fn hotkey(text: &'static str) -> Span<'static> {
-    Span::styled(text, Style::new().fg(PackedRgba::rgb(255, 255, 255)).bg(PackedRgba::rgb(80, 80, 80)))
+    Span::styled(
+        text,
+        Style::new()
+            .fg_compat(Color::Rgb(Rgb::new(255, 255, 255)))
+            .bg_compat(Color::Rgb(Rgb::new(80, 80, 80))),
+    )
 }
 
 pub(super) fn provider_header_line(
@@ -25,10 +33,10 @@ pub(super) fn provider_header_line(
             if secondary_count == 1 { "" } else { "s" }
         )
     };
-    Line::from(vec![
+    Line::from_spans(vec![
         Span::styled(" ", Style::new()),
         Span::styled(provider_label.to_string(), provider_style(provider_id)),
-        Span::styled(summary, Style::new().fg(MUTED_DARK)),
+        Span::styled(summary, Style::new().fg_compat(MUTED_DARK)),
     ])
 }
 
@@ -109,17 +117,17 @@ pub(super) fn action_icon(item: &AccountPickerItem) -> (&'static str, Color) {
         ActionSection::Switch => (
             if account_is_active(item) { "*" } else { "o" },
             if account_is_active(item) {
-                PackedRgba::rgb(110, 214, 158)
+                Color::Rgb(Rgb::new(110, 214, 158))
             } else {
-                PackedRgba::rgb(160, 168, 188)
+                Color::Rgb(Rgb::new(160, 168, 188))
             },
         ),
-        ActionSection::Add => ("+", PackedRgba::rgb(140, 176, 255)),
-        ActionSection::Login => ("R", PackedRgba::rgb(229, 187, 111)),
-        ActionSection::Overview => ("S", PackedRgba::rgb(140, 176, 255)),
-        ActionSection::Setting => (".", PackedRgba::rgb(189, 200, 255)),
-        ActionSection::Remove => ("x", PackedRgba::rgb(255, 140, 140)),
-        ActionSection::Other => ("-", PackedRgba::rgb(180, 190, 220)),
+        ActionSection::Add => ("+", Color::Rgb(Rgb::new(140, 176, 255))),
+        ActionSection::Login => ("R", Color::Rgb(Rgb::new(229, 187, 111))),
+        ActionSection::Overview => ("S", Color::Rgb(Rgb::new(140, 176, 255))),
+        ActionSection::Setting => (".", Color::Rgb(Rgb::new(189, 200, 255))),
+        ActionSection::Remove => ("x", Color::Rgb(Rgb::new(255, 140, 140))),
+        ActionSection::Other => ("-", Color::Rgb(Rgb::new(180, 190, 220))),
     }
 }
 
@@ -275,16 +283,14 @@ pub(super) fn truncate_with_ellipsis(input: &str, width: usize) -> String {
 }
 
 pub(super) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let popup = Layout::default()
-        .direction(Direction::Vertical)
+    let popup = Flex::vertical()
         .constraints([
             Constraint::Percentage((100 - percent_y) / 2),
             Constraint::Percentage(percent_y),
             Constraint::Percentage((100 - percent_y) / 2),
         ])
         .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
+    Flex::horizontal()
         .constraints([
             Constraint::Percentage((100 - percent_x) / 2),
             Constraint::Percentage(percent_x),

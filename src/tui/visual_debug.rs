@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use ratatui::layout::Rect;
+use ftui_core::geometry::Rect;
 use serde::Serialize;
 use serde_json::Value;
 

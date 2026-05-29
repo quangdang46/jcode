@@ -716,7 +716,8 @@ pub fn compose_swarm_buffers(
     fps: u32,
     cols: u16,
 ) -> Vec<(f64, ratatui::buffer::Buffer)> {
-    use ratatui::{buffer::Buffer, layout::Rect};
+    use ftui_core::geometry::Rect;
+    use ftui_render::buffer::Buffer;
 
     if pane_frames.is_empty() {
         return Vec::new();

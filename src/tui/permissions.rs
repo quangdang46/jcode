@@ -1,15 +1,19 @@
+use ftui_style::MonoColor;
+use crate::tui::compat::StyleCompatExt;
 use super::color_support::rgb;
 use crate::safety::{self, PermissionRequest, Urgency};
 use anyhow::Result;
 use chrono::Utc;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use ratatui::{
-    Frame,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
-};
+use ftui_core::geometry::Rect;
+use ftui_layout::{Constraint, Direction, Flex};
+use ftui_render::frame::Frame;
+use ftui_style::{Color, Style};
+use ftui_text::text::{Line, Span};
+use ftui_text::wrap::WrapMode;
+use ftui_widgets::block::Block;
+use ftui_widgets::borders::{BorderType, Borders};
+use ftui_widgets::paragraph::Paragraph;
 use serde_json::{Map, Value};
 use std::io::IsTerminal;
 use std::time::Duration;
@@ -116,25 +120,20 @@ impl PermissionsApp {
 
         let outer = Block::default()
             .title(format!(" Permissions ({} pending) ", self.requests.len()))
-            .title_style(
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .title_style(Style::default().fg_compat(Color::Mono(MonoColor::White)).bold())
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(rgb(80, 80, 90)));
         let inner = outer.inner(area);
-        frame.render_widget(outer, area);
+        outer.render(area, &mut frame.buffer);
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
+        let chunks = Flex::vertical()
             .constraints([
                 Constraint::Min(5),
-                Constraint::Length(1),
-                Constraint::Length(detail_height(inner.height)),
-                Constraint::Length(1),
-                Constraint::Length(1),
+                Constraint::Fixed(1),
+                Constraint::Fixed(detail_height(inner.height)),
+                Constraint::Fixed(1),
+                Constraint::Fixed(1),
             ])
             .split(inner);
 
@@ -162,9 +161,7 @@ impl PermissionsApp {
             let age = format_age(now - req.created_at);
 
             let action_style = if is_selected {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
+                Style::default().fg_compat(Color::Mono(MonoColor::White)).bold()
             } else {
                 Style::default().fg(rgb(180, 180, 190))
             };
@@ -188,7 +185,7 @@ impl PermissionsApp {
                 .saturating_sub(action_text.len() as u16 + age.len() as u16 + 6);
             let padding = " ".repeat(remaining as usize);
 
-            lines.push(Line::from(vec![
+            lines.push(Line::from_spans(vec![
                 Span::styled(
                     format!(" {} ", cursor),
                     Style::default().fg(if is_selected {
@@ -207,7 +204,7 @@ impl PermissionsApp {
             ]));
 
             let desc_text = truncate(&req.description, area.width.saturating_sub(8) as usize);
-            lines.push(Line::from(vec![
+            lines.push(Line::from_spans(vec![
                 Span::raw("      "),
                 Span::styled(desc_text, desc_style),
             ]));
@@ -227,13 +224,16 @@ impl PermissionsApp {
         };
 
         let para = Paragraph::new(lines).scroll((scroll as u16, 0));
-        frame.render_widget(para, area);
+        para.render(area, &mut frame.buffer);
     }
 
     fn render_separator(&self, frame: &mut Frame, area: Rect) {
         let sep = "─".repeat(area.width as usize);
-        let line = Line::from(Span::styled(sep, Style::default().fg(rgb(60, 60, 70))));
-        frame.render_widget(Paragraph::new(vec![line]), area);
+        let line = Line::from_spans(vec![Span::styled(
+            sep,
+            Style::default().fg(rgb(60, 60, 70)),
+        )]);
+        Paragraph::new(vec![line]).render(area, &mut frame.buffer);
     }
 
     fn render_detail(&self, frame: &mut Frame, area: Rect) {
@@ -243,9 +243,7 @@ impl PermissionsApp {
 
         let mut lines: Vec<Line<'static>> = Vec::new();
 
-        let label_style = Style::default()
-            .fg(rgb(140, 180, 255))
-            .add_modifier(Modifier::BOLD);
+        let label_style = Style::default().fg(rgb(140, 180, 255)).bold();
         let value_style = Style::default().fg(rgb(180, 180, 190));
         let review = extract_permission_review(req);
 
@@ -360,12 +358,12 @@ impl PermissionsApp {
 
         lines.push(Line::raw(""));
 
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled(" ID: ", label_style),
             Span::styled(req.id.clone(), Style::default().fg(rgb(100, 100, 110))),
         ]));
 
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled(" Created: ", label_style),
             Span::styled(
                 req.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
@@ -374,7 +372,7 @@ impl PermissionsApp {
         ]));
 
         if req.wait {
-            lines.push(Line::from(vec![
+            lines.push(Line::from_spans(vec![
                 Span::styled(" ⏳ ", Style::default().fg(rgb(255, 200, 100))),
                 Span::styled(
                     "Agent is waiting for this decision",
@@ -385,19 +383,17 @@ impl PermissionsApp {
 
         if let Some(ref deny_text) = self.deny_input {
             lines.push(Line::raw(""));
-            lines.push(Line::from(vec![
+            lines.push(Line::from_spans(vec![
                 Span::styled(
                     " Deny reason: ",
-                    Style::default()
-                        .fg(rgb(255, 100, 100))
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(rgb(255, 100, 100)).bold(),
                 ),
-                Span::styled(format!("{}▌", deny_text), Style::default().fg(Color::White)),
+                Span::styled(format!("{}▌", deny_text), Style::default().fg_compat(Color::Mono(MonoColor::White))),
             ]));
         }
 
-        let para = Paragraph::new(lines).wrap(Wrap { trim: false });
-        frame.render_widget(para, area);
+        let para = Paragraph::new(lines).wrap(WrapMode::Word);
+        para.render(area, &mut frame.buffer);
     }
 
     fn render_help(&self, frame: &mut Frame, area: Rect) {
@@ -435,74 +431,66 @@ impl PermissionsApp {
             })
             .collect();
 
-        frame.render_widget(Paragraph::new(Line::from(spans)), area);
+        Paragraph::new(Line::from_spans(spans)).render(area, &mut frame.buffer);
     }
 
     fn render_empty(&self, frame: &mut Frame, area: Rect) {
         let outer = Block::default()
             .title(" Permissions ")
-            .title_style(
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .title_style(Style::default().fg_compat(Color::Mono(MonoColor::White)).bold())
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(rgb(80, 80, 90)));
         let inner = outer.inner(area);
-        frame.render_widget(outer, area);
+        outer.render(area, &mut frame.buffer);
 
         let lines = vec![
             Line::raw(""),
-            Line::from(Span::styled(
+            Line::from_spans(vec![Span::styled(
                 "  No pending permission requests.",
                 Style::default().fg(rgb(120, 120, 130)),
-            )),
+            )]),
             Line::raw(""),
-            Line::from(Span::styled(
+            Line::from_spans(vec![Span::styled(
                 "  Press q to quit.",
                 Style::default().fg(rgb(80, 80, 90)),
-            )),
+            )]),
         ];
-        frame.render_widget(Paragraph::new(lines), inner);
+        Paragraph::new(lines).render(inner, &mut frame.buffer);
     }
 
     fn render_done(&self, frame: &mut Frame, area: Rect) {
         let outer = Block::default()
             .title(" Permissions ")
-            .title_style(
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .title_style(Style::default().fg_compat(Color::Mono(MonoColor::White)).bold())
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(rgb(80, 80, 90)));
         let inner = outer.inner(area);
-        frame.render_widget(outer, area);
+        outer.render(area, &mut frame.buffer);
 
         let mut lines = vec![Line::raw("")];
 
         if self.approved_count > 0 {
-            lines.push(Line::from(vec![Span::styled(
+            lines.push(Line::from_spans(vec![Span::styled(
                 format!("  ✓ {} approved", self.approved_count),
                 Style::default().fg(rgb(100, 200, 100)),
             )]));
         }
         if self.denied_count > 0 {
-            lines.push(Line::from(vec![Span::styled(
+            lines.push(Line::from_spans(vec![Span::styled(
                 format!("  ✗ {} denied", self.denied_count),
                 Style::default().fg(rgb(255, 100, 100)),
             )]));
         }
 
         lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             "  Done! Press any key to exit.",
             Style::default().fg(rgb(140, 140, 150)),
-        )));
+        )]));
 
-        frame.render_widget(Paragraph::new(lines), inner);
+        Paragraph::new(lines).render(inner, &mut frame.buffer);
     }
 
     pub fn run(mut self) -> Result<()> {
@@ -783,7 +771,7 @@ fn push_wrapped_field(
         return;
     }
 
-    lines.push(Line::from(vec![
+    lines.push(Line::from_spans(vec![
         Span::styled(label.to_string(), label_style),
         Span::styled(chunks.remove(0), value_style),
     ]));
@@ -795,7 +783,7 @@ fn push_wrapped_field(
     let indent = " ".repeat(label_width);
     for chunk in chunks {
         for wrapped in wrap_by_chars(&chunk, continued_width) {
-            lines.push(Line::from(vec![
+            lines.push(Line::from_spans(vec![
                 Span::raw(indent.clone()),
                 Span::styled(wrapped, value_style),
             ]));

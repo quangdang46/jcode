@@ -1,8 +1,9 @@
+use crate::tui::compat::StyleCompatExt;
 use super::text::{truncate_chars, truncate_smart};
 use super::{AuthMethod, InfoWidgetData};
 use crate::tui::color_support::rgb;
 use ftui_core::geometry::Rect;
-use ftui_style::{Color, Modifier, Style};
+use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span};
 
 pub(super) fn render_model_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<'static>> {
@@ -25,7 +26,7 @@ pub(super) fn render_model_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
 
     append_model_runtime_metadata(&mut spans, data);
 
-    lines.push(Line::from(spans));
+    lines.push(Line::from_spans(spans));
 
     if data.session_count.is_some() || data.session_name.is_some() {
         let mut parts = Vec::new();
@@ -46,7 +47,7 @@ pub(super) fn render_model_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
 
         if !parts.is_empty() {
             let detail = truncate_smart(&parts.join(" · "), max_len.saturating_sub(2));
-            lines.push(Line::from(vec![Span::styled(
+            lines.push(Line::from_spans(vec![Span::styled(
                 detail,
                 Style::new().fg(rgb(140, 140, 150)),
             )]));
@@ -61,24 +62,18 @@ pub(super) fn render_model_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
     {
         let mut provider_spans = vec![
             Span::styled("☁ ", Style::new().fg(rgb(140, 180, 255))),
-            Span::styled(
-                provider.to_lowercase(),
-                Style::new().fg(rgb(140, 180, 255)),
-            ),
+            Span::styled(provider.to_lowercase(), Style::new().fg(rgb(140, 180, 255))),
         ];
         if let Some(upstream) = data.upstream_provider.as_deref().map(str::trim)
             && !upstream.is_empty()
         {
-            provider_spans.push(Span::styled(
-                " -> ",
-                Style::new().fg(rgb(100, 100, 110)),
-            ));
+            provider_spans.push(Span::styled(" -> ", Style::new().fg(rgb(100, 100, 110))));
             provider_spans.push(Span::styled(
                 upstream.to_string(),
                 Style::new().fg(rgb(220, 190, 120)),
             ));
         }
-        lines.push(Line::from(provider_spans));
+        lines.push(Line::from_spans(provider_spans));
     }
 
     if let Some(connection) = data
@@ -87,7 +82,7 @@ pub(super) fn render_model_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled("↔ ", Style::new().fg(rgb(140, 180, 255))),
             Span::styled(
                 connection.to_lowercase(),
@@ -110,15 +105,15 @@ pub(super) fn render_model_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
         };
 
         if let Some(ref upstream) = data.upstream_provider {
-            lines.push(Line::from(vec![
-                Span::styled(format!("{} ", icon), Style::new().fg(color)),
+            lines.push(Line::from_spans(vec![
+                Span::styled(format!("{} ", icon), Style::new().fg_compat(color)),
                 Span::styled(label, Style::new().fg(rgb(140, 140, 150))),
                 Span::styled(" via ", Style::new().fg(rgb(100, 100, 110))),
                 Span::styled(upstream.clone(), Style::new().fg(rgb(200, 180, 100))),
             ]));
         } else {
-            lines.push(Line::from(vec![
-                Span::styled(format!("{} ", icon), Style::new().fg(color)),
+            lines.push(Line::from_spans(vec![
+                Span::styled(format!("{} ", icon), Style::new().fg_compat(color)),
                 Span::styled(label, Style::new().fg(rgb(140, 140, 150))),
             ]));
         }
@@ -128,7 +123,7 @@ pub(super) fn render_model_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
         && tps.is_finite()
         && tps > 0.1
     {
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled("⏱ ", Style::new().fg(rgb(140, 180, 255))),
             Span::styled(
                 format!("{:.1} t/s", tps),
@@ -172,7 +167,7 @@ pub(super) fn render_model_info(data: &InfoWidgetData, inner: Rect) -> Vec<Line<
         spans.push(Span::styled(label, Style::new().fg(rgb(120, 210, 230))));
     }
 
-    let mut lines = vec![Line::from(spans)];
+    let mut lines = vec![Line::from_spans(spans)];
 
     let has_provider = data
         .provider_name
@@ -219,7 +214,7 @@ pub(super) fn render_model_info(data: &InfoWidgetData, inner: Rect) -> Vec<Line<
         }
 
         if !detail_spans.is_empty() {
-            lines.push(Line::from(detail_spans));
+            lines.push(Line::from_spans(detail_spans));
         }
     }
 
@@ -242,7 +237,7 @@ pub(super) fn render_model_info(data: &InfoWidgetData, inner: Rect) -> Vec<Line<
 
         if !parts.is_empty() {
             let detail = truncate_smart(&parts.join(" · "), max_len.saturating_sub(2));
-            lines.push(Line::from(vec![Span::styled(
+            lines.push(Line::from_spans(vec![Span::styled(
                 detail,
                 Style::new().fg(rgb(140, 140, 150)),
             )]));

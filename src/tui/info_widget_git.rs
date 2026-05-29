@@ -2,7 +2,7 @@ use super::text::truncate_smart;
 use super::{GitInfo, InfoWidgetData};
 use crate::tui::color_support::rgb;
 use ftui_core::geometry::Rect;
-use ftui_style::{Color, Modifier, Style};
+use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span};
 
 pub(super) fn render_git_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<'static>> {
@@ -40,9 +40,7 @@ pub(super) fn render_git_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<
     let branch_display = truncate_smart(&info.branch, branch_max);
     parts.push(Span::styled(
         branch_display,
-        Style::new()
-            .fg(rgb(200, 200, 210))
-            .add_modifier(Modifier::BOLD),
+        Style::new().fg(rgb(200, 200, 210)).bold(),
     ));
 
     if info.modified > 0 {
@@ -76,18 +74,18 @@ pub(super) fn render_git_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<
         ));
     }
 
-    lines.push(Line::from(parts));
+    lines.push(Line::from_spans(parts));
 
     let max_files = inner.height.saturating_sub(lines.len() as u16).min(5) as usize;
     for file in info.dirty_files.iter().take(max_files) {
         let display = truncate_smart(file, w.saturating_sub(4));
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::raw("  "),
             Span::styled(display, Style::new().fg(rgb(140, 140, 155))),
         ]));
     }
     if info.dirty_files.len() > max_files {
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::raw("  "),
             Span::styled(
                 format!("+{} more", info.dirty_files.len() - max_files),
@@ -141,5 +139,5 @@ pub(super) fn render_git_compact(info: &GitInfo, width: u16) -> Vec<Line<'static
         ));
     }
 
-    vec![Line::from(parts)]
+    vec![Line::from_spans(parts)]
 }

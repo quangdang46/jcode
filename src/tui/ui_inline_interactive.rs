@@ -1,5 +1,9 @@
+use ftui_text::text::{Line, Span, Text};
+use ftui_style::MonoColor;
+use crate::tui::compat::StyleCompatExt;
 use super::*;
-use ratatui::widgets::{Block, BorderType, Borders};
+use ftui_widgets::block::Block;
+use ftui_widgets::borders::{BorderType, Borders};
 use unicode_width::UnicodeWidthStr;
 
 fn display_width(text: &str) -> usize {
@@ -394,7 +398,7 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(rgb(85, 85, 110)))
         .style(Style::default().bg(rgb(18, 18, 26)));
-    frame.render_widget(block.clone(), render_area);
+    block.clone().render(render_area, &mut frame.buffer);
 
     let inner = block.inner(render_area);
     if inner.height == 0 || inner.width == 0 {
@@ -520,32 +524,32 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
         .and_then(|entry| selected_route_notice_text(picker, entry.active_option()));
 
     let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(header_spans));
+    lines.push(Line::from_spans(header_spans));
     if let Some((notice, warning)) = selected_route_notice.as_ref() {
         let notice_width = width.saturating_sub(1);
-        lines.push(Line::from(Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             format!(" {}", truncate_display(notice.as_str(), notice_width)),
             if *warning {
                 Style::default().fg(rgb(210, 150, 110)).italic()
             } else {
                 Style::default().fg(dim_color()).italic()
             },
-        )));
+        )]));
     }
 
     if picker.filtered.is_empty() {
-        lines.push(Line::from(Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             "   no matches",
             Style::default().fg(dim_color()).italic(),
-        )));
-        frame.render_widget(Paragraph::new(lines), inner);
+        )]));
+        Paragraph::new(lines).render(inner, &mut frame.buffer);
         return;
     }
 
     let list_header_lines = 1 + usize::from(selected_route_notice.is_some());
     let list_height = height.saturating_sub(list_header_lines);
     if list_height == 0 {
-        frame.render_widget(Paragraph::new(lines), inner);
+        Paragraph::new(lines).render(inner, &mut frame.buffer);
         return;
     }
 
@@ -577,7 +581,7 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
             if unavailable {
                 Style::default().fg(rgb(180, 120, 120)).bold()
             } else if is_row_selected {
-                Style::default().fg(Color::White).bold()
+                Style::default().fg_compat(Color::Mono(MonoColor::White)).bold()
             } else {
                 Style::default().fg(dim_color())
             },
@@ -598,7 +602,7 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
         let primary_style = if unavailable {
             Style::default().fg(rgb(80, 80, 80))
         } else if is_row_selected && col == 0 {
-            Style::default().fg(Color::White).bg(rgb(60, 60, 80)).bold()
+            Style::default().fg_compat(Color::Mono(MonoColor::White)).bg(rgb(60, 60, 80)).bold()
         } else if let Some(color) = account_action_color {
             Style::default().fg(color).bold()
         } else if entry.is_current {
@@ -658,7 +662,7 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
             let state_style = if unavailable {
                 Style::default().fg(rgb(80, 80, 80))
             } else if is_row_selected {
-                Style::default().fg(Color::White).bg(rgb(60, 60, 80)).bold()
+                Style::default().fg_compat(Color::Mono(MonoColor::White)).bg(rgb(60, 60, 80)).bold()
             } else if entry.is_current {
                 Style::default().fg(accent_color()).bold()
             } else if let Some(color) = account_action_color {
@@ -683,7 +687,7 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
                 ));
             }
 
-            lines.push(Line::from(spans));
+            lines.push(Line::from_spans(spans));
             continue;
         }
 
@@ -750,7 +754,7 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
         let provider_style = if unavailable {
             Style::default().fg(rgb(80, 80, 80))
         } else if is_row_selected && col == 1 {
-            Style::default().fg(Color::White).bg(rgb(60, 60, 80)).bold()
+            Style::default().fg_compat(Color::Mono(MonoColor::White)).bg(rgb(60, 60, 80)).bold()
         } else {
             Style::default().fg(rgb(140, 180, 255))
         };
@@ -763,7 +767,7 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
         let via_style = if unavailable {
             Style::default().fg(rgb(80, 80, 80))
         } else if is_row_selected && col == 2 {
-            Style::default().fg(Color::White).bg(rgb(60, 60, 80)).bold()
+            Style::default().fg_compat(Color::Mono(MonoColor::White)).bg(rgb(60, 60, 80)).bold()
         } else if is_usage_picker {
             Style::default().fg(rgb(196, 170, 255))
         } else {
@@ -794,10 +798,10 @@ pub(super) fn draw_inline_interactive(frame: &mut Frame, app: &dyn TuiState, are
             ));
         }
 
-        lines.push(Line::from(spans));
+        lines.push(Line::from_spans(spans));
     }
 
-    frame.render_widget(Paragraph::new(lines), inner);
+    Paragraph::new(lines).render(inner, &mut frame.buffer);
 }
 
 #[cfg(test)]

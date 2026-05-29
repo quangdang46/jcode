@@ -1,7 +1,11 @@
+use ftui_style::{Ansi16, MonoColor};
+use crate::tui::compat::StyleCompatExt;
 use super::*;
 use crate::tui::TuiState;
 use crossterm::cursor::{RestorePosition, SavePosition};
-use ratatui::{buffer::Buffer, layout::Rect, style::Style};
+use ftui_core::geometry::Rect;
+use ftui_render::buffer::Buffer;
+use ftui_style::style::Style;
 use std::io::Write;
 
 const STATUS_SPINNER_FPS: f32 = 12.5;
@@ -466,7 +470,8 @@ impl App {
         fps: u32,
     ) -> Result<Vec<(f64, ratatui::buffer::Buffer)>> {
         use crate::replay::ReplayEvent;
-        use ratatui::backend::TestBackend;
+        #[allow(unused_imports)]
+        use ftui_backend::TestBackend;
 
         let replay_events = crate::replay::timeline_to_replay_events(timeline);
         if replay_events.is_empty() {
@@ -542,7 +547,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::style::Color;
+        use ftui_style::Color;
 
     fn assert_duration_close(actual: Duration, expected: Duration) {
         let actual_ms = actual.as_millis() as i128;
@@ -620,8 +625,8 @@ mod tests {
     fn status_spinner_partial_mutates_only_status_cell() {
         let area = Rect::new(0, 0, 8, 2);
         let mut buffer = Buffer::empty(area);
-        buffer.set_string(0, 0, "abcdefgh", Style::default().fg(Color::White));
-        buffer.set_string(0, 1, "ABCDEFGH", Style::default().fg(Color::Blue));
+        buffer.set_string(0, 0, "abcdefgh", Style::default().fg_compat(Color::Mono(MonoColor::White)));
+        buffer.set_string(0, 1, "ABCDEFGH", Style::default().fg_compat(Color::Mono(Ansi16::Blue)));
         let before = buffer.clone();
 
         let status_area = Rect::new(2, 1, 6, 1);

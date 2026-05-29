@@ -1,13 +1,14 @@
+use ftui_style::{Ansi16, MonoColor};
 use super::*;
-use unicode_width::UnicodeWidthStr;
-use ftui::Frame;
 use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
+use ftui_render::frame::Frame;
 use ftui_style::{Color, Style};
 use ftui_text::text::Line;
+use ftui_widgets::Widget;
 use ftui_widgets::block::Alignment;
 use ftui_widgets::paragraph::Paragraph;
-use ftui_widgets::Widget;
+use unicode_width::UnicodeWidthStr;
 
 #[cfg(target_os = "macos")]
 pub(crate) const COPY_BADGE_ALT_LABEL: &str = "⌥";
@@ -51,7 +52,7 @@ fn rgb_to_packed(color: Color) -> PackedRgba {
 }
 
 fn selection_fg_for(base_fg: Option<Color>) -> Option<Color> {
-    base_fg.map(|fg| blend_color(fg, Color::White, 0.15))
+    base_fg.map(|fg| blend_color(fg, Color::Mono(MonoColor::White), 0.15))
 }
 
 fn highlight_line_selection(
@@ -162,7 +163,7 @@ pub(crate) fn copy_badge_reserved_width(
     reserved
 }
 
-pub(super) fn compute_visible_margins(
+pub(crate) fn compute_visible_margins(
     lines: &[Line],
     visible_user_indices: &[usize],
     area: Rect,
@@ -191,7 +192,8 @@ pub(super) fn compute_visible_margins(
 
             if centered {
                 let total_margin = area.width.saturating_sub(used);
-                let effective_alignment = lines[row].alignment.unwrap_or(Alignment::Center);
+                // ftui Line has no per-line alignment field; default to Center
+                let effective_alignment = Alignment::Center;
                 let (left_margin, right_margin) = match effective_alignment {
                     Alignment::Left => (0, total_margin),
                     Alignment::Center => {
@@ -446,7 +448,7 @@ pub(super) fn draw_messages(
 
     if visible_lines.len() < visible_height {
         visible_lines.extend(std::iter::repeat_n(
-            Line::from(""),
+            Line::from_spans(vec![]),
             visible_height - visible_lines.len(),
         ));
     }
@@ -564,8 +566,10 @@ pub(super) fn draw_messages(
                 line.spans.push(Span::styled("[⇧]", shift_style));
                 line.spans.push(Span::raw(" "));
                 line.spans.push(Span::styled("[E]", key_style));
-                line.spans
-                    .push(Span::styled(badge_text, Style::new().fg(rgb_to_packed(dim_color()))));
+                line.spans.push(Span::styled(
+                    badge_text,
+                    Style::new().fg(rgb_to_packed(dim_color())),
+                ));
             }
         }
     }
@@ -580,27 +584,27 @@ pub(super) fn draw_messages(
             let max_content_width = (content_area.width as usize).saturating_sub(reserved);
             truncate_line_in_place_to_width(line, max_content_width);
 
-let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
-                    Style::new().fg(rgb_to_packed(queued_color())).bold()
-                } else {
-                    Style::new().fg(rgb_to_packed(dim_color()))
-                };
-                let shift_style = if copy_badge_ui.shift_is_active(copy_badge_now) {
-                    Style::new().fg(rgb_to_packed(queued_color())).bold()
-                } else {
-                    Style::new().fg(rgb_to_packed(dim_color()))
-                };
-                let key_style = if copy_badge_ui.key_is_active(key, copy_badge_now) {
-                    Style::new().fg(rgb_to_packed(accent_color())).bold()
-                } else {
-                    Style::new().fg(rgb_to_packed(dim_color()))
-                };
+            let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
+                Style::new().fg(rgb_to_packed(queued_color())).bold()
+            } else {
+                Style::new().fg(rgb_to_packed(dim_color()))
+            };
+            let shift_style = if copy_badge_ui.shift_is_active(copy_badge_now) {
+                Style::new().fg(rgb_to_packed(queued_color())).bold()
+            } else {
+                Style::new().fg(rgb_to_packed(dim_color()))
+            };
+            let key_style = if copy_badge_ui.key_is_active(key, copy_badge_now) {
+                Style::new().fg(rgb_to_packed(accent_color())).bold()
+            } else {
+                Style::new().fg(rgb_to_packed(dim_color()))
+            };
 
             if let Some(success) = copy_badge_ui.feedback_for_key(key, copy_badge_now) {
                 let feedback_style = if success {
                     Style::new().fg(rgb_to_packed(ai_color())).bold()
                 } else {
-                    Style::new().fg(rgb_to_packed(Color::Red)).bold()
+                    Style::new().fg(rgb_to_packed(Color::Mono(Ansi16::Red))).bold()
                 };
                 let feedback_text = if success {
                     " ✓ Copied!"
@@ -657,7 +661,7 @@ let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
         }
     }
 
-    Paragraph::new(ftui_text::Text::from(visible_lines)).render(content_area, frame);
+    Paragraph::new(ftui_text::Text::from_lines(visible_lines)).render(content_area, frame);
 
     let centered = app.centered_mode();
     let diagram_mode = app.diagram_mode();
@@ -698,10 +702,13 @@ let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
                             false,
                         );
                         if rows == 0 {
-                            Paragraph::new(ftui_text::Text::from(Line::from(Span::styled(
+                            Paragraph::new(ftui_text::Text::from_line(Line::from_spans(vec![
+                                Span::styled(
                                     "↗ mermaid diagram unavailable",
                                     Style::new().fg(rgb_to_packed(dim_color())),
-                                )))).render(image_area, frame);
+                                ),
+                            ])))
+                            .render(image_area, frame);
                         }
                     }
                 } else {
@@ -740,7 +747,10 @@ let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
                 width: 1,
                 height: 1,
             };
-            let bar = Paragraph::new(ftui_text::Text::from(Span::styled("│", Style::new().fg(rgb_to_packed(user_color())))));
+            let bar = Paragraph::new(ftui_text::Text::from_line(Span::styled(
+                "│",
+                Style::new().fg(rgb_to_packed(user_color())),
+            )));
             bar.render(bar_area, frame);
         }
     }
@@ -753,10 +763,10 @@ let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
             width: indicator.len() as u16,
             height: 1,
         };
-        Paragraph::new(ftui_text::Text::from(Line::from(vec![Span::styled(
-                indicator,
-                Style::new().fg(rgb_to_packed(dim_color())),
-            )]))).render(indicator_area, frame);
+        Paragraph::new(ftui_text::Text::from_line(Line::from_spans(vec![
+            Span::styled(indicator, Style::new().fg(rgb_to_packed(dim_color()))),
+        ])))
+        .render(indicator_area, frame);
     }
 
     if crate::config::config().display.prompt_preview && scroll > 0 {
@@ -786,7 +796,7 @@ let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
 
                 let preview_lines: Vec<Line<'static>> = if !is_long {
                     vec![
-                        Line::from(vec![
+                        Line::from_spans(vec![
                             Span::styled(num_str.clone(), dim_style.fg(dim_color()).bg(user_bg())),
                             Span::styled("› ", dim_style.fg(user_color()).bg(user_bg())),
                             Span::styled(text_flat, dim_style.fg(user_text()).bg(user_bg())),
@@ -799,7 +809,7 @@ let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
                     let tail_start = text_chars.len().saturating_sub(half);
                     let tail: String = text_chars[tail_start..].iter().collect();
 
-                    let first = Line::from(vec![
+                    let first = Line::from_spans(vec![
                         Span::styled(num_str.clone(), dim_style.fg(dim_color()).bg(user_bg())),
                         Span::styled("› ", dim_style.fg(user_color()).bg(user_bg())),
                         Span::styled(
@@ -810,7 +820,7 @@ let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
                     .alignment(align);
 
                     let padding: String = " ".repeat(prefix_len);
-                    let second = Line::from(vec![
+                    let second = Line::from_spans(vec![
                         Span::styled(padding, dim_style.bg(user_bg())),
                         Span::styled(
                             format!("... {}", tail.trim_start()),
@@ -830,7 +840,8 @@ let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
                     height: line_count,
                 };
                 clear_area(frame, preview_area);
-                Paragraph::new(ftui_text::Text::from(preview_lines)).render(preview_area, frame);
+                Paragraph::new(ftui_text::Text::from_lines(preview_lines))
+                    .render(preview_area, frame);
             }
         }
     }
@@ -843,10 +854,10 @@ let alt_style = if copy_badge_ui.alt_is_active(copy_badge_now) {
             width: indicator.len() as u16,
             height: 1,
         };
-        Paragraph::new(ftui_text::Text::from(Line::from(vec![Span::styled(
-                indicator,
-                Style::new().fg(rgb_to_packed(queued_color())),
-            )]))).render(indicator_area, frame);
+        Paragraph::new(ftui_text::Text::from_line(Line::from_spans(vec![
+            Span::styled(indicator, Style::new().fg(rgb_to_packed(queued_color()))),
+        ])))
+        .render(indicator_area, frame);
     }
 
     if let Some(scrollbar_area) = scrollbar_area {

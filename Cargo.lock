@@ -4186,12 +4186,12 @@ dependencies = [
  "base64 0.22.1",
  "dirs",
  "ftui",
+ "ftui-core",
  "ftui-tty",
  "ftui-widgets",
  "image",
  "jcode-tui-workspace",
  "mermaid-rs-renderer",
- "ratatui",
  "resvg",
  "serde",
  "serde_json",
@@ -4224,7 +4224,6 @@ dependencies = [
  "ftui-style",
  "ftui-text",
  "ftui-widgets",
- "ratatui",
  "unicode-width 0.2.2",
 ]
 

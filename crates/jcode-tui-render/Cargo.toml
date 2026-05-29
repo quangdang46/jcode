@@ -5,7 +5,6 @@ edition = "2024"
 publish = false
 
 [dependencies]
-ratatui = "0.28"
 ftui = { path = "/data/projects/frankentui/crates/ftui" }
 ftui-core = { path = "/data/projects/frankentui/crates/ftui-core" }
 ftui-style = { path = "/data/projects/frankentui/crates/ftui-style" }

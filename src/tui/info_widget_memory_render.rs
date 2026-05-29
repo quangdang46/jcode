@@ -1,8 +1,8 @@
 use super::*;
 use ftui_core::geometry::Rect;
-use ftui_style::{Color, Modifier, Style};
+use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span};
-use unicode_width::UnicodeWidthStr;;
+use unicode_width::UnicodeWidthStr;
 
 pub(super) fn render_memory_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<'static>> {
     let Some(info) = &data.memory_info else {
@@ -94,7 +94,7 @@ fn render_memory_header_line(
         ));
     }
 
-    Line::from(spans)
+    Line::from_spans(spans)
 }
 
 fn render_memory_count_line(info: &MemoryInfo, max_width: usize) -> Option<Line<'static>> {
@@ -102,7 +102,7 @@ fn render_memory_count_line(info: &MemoryInfo, max_width: usize) -> Option<Line<
         return None;
     }
 
-    Some(Line::from(vec![Span::styled(
+    Some(Line::from_spans(vec![Span::styled(
         truncate_with_ellipsis(&memory_count_label(info.total_count), max_width.max(8)),
         Style::new().fg(rgb(160, 160, 170)).bold(),
     )]))
@@ -217,7 +217,7 @@ fn render_memory_model_line(info: &MemoryInfo, max_width: usize) -> Option<Line<
     }
 
     let available = max_width.saturating_sub(7);
-    Some(Line::from(vec![
+    Some(Line::from_spans(vec![
         Span::styled("Model: ", Style::new().fg(rgb(120, 120, 130))),
         Span::styled(
             truncate_with_ellipsis(model, available),
@@ -270,7 +270,7 @@ fn render_memory_status_line(activity: &MemoryActivity, max_width: usize) -> Lin
         spans.push(Span::styled(age, Style::new().fg(rgb(120, 120, 130))));
     }
 
-    Line::from(spans)
+    Line::from_spans(spans)
 }
 
 fn render_memory_pipeline_lines(pipeline: &PipelineState, max_width: usize) -> Vec<Line<'static>> {
@@ -437,7 +437,7 @@ fn render_memory_last_trace_line(
         return None;
     }
 
-    Some(Line::from(vec![
+    Some(Line::from_spans(vec![
         Span::styled("Trace: ", Style::new().fg(rgb(120, 120, 130))),
         Span::styled(format!("{} ", icon), Style::new().fg(color)),
         Span::styled(
@@ -505,7 +505,7 @@ fn render_memory_step_line(
         rgb(80, 80, 92)
     };
 
-    Line::from(vec![
+    Line::from_spans(vec![
         Span::styled(prefix.to_string(), Style::new().fg(rail_color)),
         Span::styled(format!("{} ", marker), Style::new().fg(marker_color)),
         Span::styled(
@@ -614,7 +614,7 @@ pub(super) fn render_memory_compact(info: &MemoryInfo, inner_width: u16) -> Vec<
         rgb(140, 200, 255)
     };
 
-    vec![Line::from(vec![
+    vec![Line::from_spans(vec![
         Span::styled("🧠 ", Style::new().fg(rgb(200, 150, 255))),
         Span::styled(title, Style::new().fg(rgb(180, 180, 190)).bold()),
         Span::styled(" · ", Style::new().fg(rgb(100, 100, 110))),

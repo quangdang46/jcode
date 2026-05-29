@@ -1,4 +1,4 @@
-use ratatui::text::{Line, Span};
+use ftui_text::text::{Line, Span};
 use std::sync::Arc;
 
 #[cfg(test)]

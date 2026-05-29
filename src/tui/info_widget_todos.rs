@@ -1,8 +1,8 @@
 use super::*;
 use ftui_core::geometry::Rect;
-use ftui_style::{Color, Modifier, Style};
+use ftui_style::{Color, Style};
 use ftui_text::text::Line;
-use ftui_text::text::{Line, Span};
+use ftui_text::text::Span;
 
 fn todo_confidence_weight(priority: &str) -> u32 {
     match priority {
@@ -110,14 +110,14 @@ pub(super) fn render_todos_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
         ),
     ];
     push_aggregate_confidence_suffix(&mut header, data);
-    lines.push(Line::from(header));
+    lines.push(Line::from_spans(header));
 
     // Mini progress bar
     let bar_width = inner.width.saturating_sub(2).min(20) as usize;
     if bar_width >= 4 && total > 0 {
         let filled = ((completed as f64 / total as f64) * bar_width as f64).round() as usize;
         let empty = bar_width.saturating_sub(filled);
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled("[", Style::new().fg(rgb(90, 90, 100))),
             Span::styled("█".repeat(filled), Style::new().fg(rgb(100, 180, 100))),
             Span::styled("░".repeat(empty), Style::new().fg(rgb(50, 50, 60))),
@@ -185,14 +185,14 @@ pub(super) fn render_todos_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
                 Style::new().fg(rgb(100, 100, 110)),
             ));
         }
-        lines.push(Line::from(spans));
+        lines.push(Line::from_spans(spans));
     }
 
     // Show count of remaining items
     let shown = available_lines.min(5).min(sorted_todos.len());
     if data.todos.len() > shown {
         let remaining = data.todos.len() - shown;
-        lines.push(Line::from(vec![Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             format!("  +{} more", remaining),
             Style::new().fg(rgb(100, 100, 110)),
         )]));
@@ -229,14 +229,14 @@ pub(super) fn render_todos_expanded(data: &InfoWidgetData, inner: Rect) -> Vec<L
         ),
     ];
     push_aggregate_confidence_suffix(&mut header, data);
-    lines.push(Line::from(header));
+    lines.push(Line::from_spans(header));
 
     // Mini progress bar
     let bar_width = inner.width.saturating_sub(2).min(20) as usize;
     if bar_width >= 4 && total > 0 {
         let filled = ((completed as f64 / total as f64) * bar_width as f64).round() as usize;
         let empty = bar_width.saturating_sub(filled);
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled("[", Style::new().fg(rgb(90, 90, 100))),
             Span::styled("█".repeat(filled), Style::new().fg(rgb(100, 180, 100))),
             Span::styled("░".repeat(empty), Style::new().fg(rgb(50, 50, 60))),
@@ -323,7 +323,7 @@ pub(super) fn render_todos_expanded(data: &InfoWidgetData, inner: Rect) -> Vec<L
             ));
         }
 
-        lines.push(Line::from(spans));
+        lines.push(Line::from_spans(spans));
     }
 
     // Show count of remaining items
@@ -342,7 +342,7 @@ pub(super) fn render_todos_expanded(data: &InfoWidgetData, inner: Rect) -> Vec<L
         } else {
             format!("  +{} more", remaining)
         };
-        lines.push(Line::from(vec![Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             desc,
             Style::new().fg(rgb(100, 100, 110)),
         )]));
@@ -385,10 +385,10 @@ pub(super) fn render_todos_compact(data: &InfoWidgetData, _inner: Rect) -> Vec<L
     push_aggregate_confidence_suffix(&mut summary, data);
 
     vec![
-        Line::from(vec![Span::styled(
+        Line::from_spans(vec![Span::styled(
             "Todos",
             Style::new().fg(rgb(180, 180, 190)).bold(),
         )]),
-        Line::from(summary),
+        Line::from_spans(summary),
     ]
 }

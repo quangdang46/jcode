@@ -4,8 +4,12 @@ use ftui_text::text::Line;
 #[derive(Debug, Clone)]
 pub struct MessageCacheContext;
 
-pub fn centered_wrap_width(_area_width: u16) -> usize { 80 }
-pub fn get_cached_message_lines(_msg_id: u64) -> Vec<Line<'static>> { Vec::new() }
+pub fn centered_wrap_width(_area_width: u16) -> usize {
+    80
+}
+pub fn get_cached_message_lines(_msg_id: u64) -> Vec<Line<'static>> {
+    Vec::new()
+}
 pub fn left_pad_lines_for_centered_mode(_lines: &mut [Line<'static>], _area_width: u16) {}
 
 #[derive(Debug, Clone)]
@@ -86,23 +90,40 @@ impl TranscriptPreviewLabels {
     pub const DESKTOP: Self = Self;
 }
 
-pub fn display_messages_from_rendered_messages(_messages: &[DisplayMessage]) -> Vec<Line<'static>> { Vec::new() }
+pub fn display_messages_from_rendered_messages(_messages: &[DisplayMessage]) -> Vec<Line<'static>> {
+    Vec::new()
+}
 pub fn latest_user_transcript_preview<'a, I>(_messages: I, _char_limit: usize) -> Option<String>
 where
     I: DoubleEndedIterator<Item = (&'a str, &'a str)>,
-{ None }
-pub fn normalize_transcript_preview_text(_text: &str) -> String { String::new() }
+{
+    None
+}
+pub fn normalize_transcript_preview_text(_text: &str) -> String {
+    String::new()
+}
 pub fn transcript_preview_line(
     _role: &str,
     _content: &str,
     _char_limit: usize,
     _labels: TranscriptPreviewLabels,
-) -> Option<String> { None }
-pub fn transcript_preview_lines<'a, I>(_messages: I, _limit: usize, _char_limit: usize, _labels: TranscriptPreviewLabels) -> Vec<String>
+) -> Option<String> {
+    None
+}
+pub fn transcript_preview_lines<'a, I>(
+    _messages: I,
+    _limit: usize,
+    _char_limit: usize,
+    _labels: TranscriptPreviewLabels,
+) -> Vec<String>
 where
     I: DoubleEndedIterator<Item = (&'a str, &'a str)>,
-{ Vec::new() }
-pub fn truncate_transcript_preview(_preview: &str, _max_lines: usize) -> String { String::new() }
+{
+    Vec::new()
+}
+pub fn truncate_transcript_preview(_preview: &str, _max_lines: usize) -> String {
+    String::new()
+}
 
 #[derive(Debug, Clone)]
 pub struct CopyTarget;
@@ -117,7 +138,9 @@ pub struct PreparedMessages;
 #[derive(Debug, Clone)]
 pub struct PreparedSection;
 #[derive(Debug, Clone)]
-pub enum PreparedSectionKind { Unknown }
+pub enum PreparedSectionKind {
+    Unknown,
+}
 
 #[derive(Debug, Clone)]
 pub struct WrappedLineMap;

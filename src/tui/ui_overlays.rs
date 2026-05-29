@@ -1,3 +1,5 @@
+use crate::tui::compat::StyleCompatExt;
+use ftui_style::{Ansi16, MonoColor};
 use super::{
     accent_color, ai_color, ai_text, asap_color, clear_area, dim_color, get_grouped_changelog,
     header_icon_color, header_name_color, header_session_color, pending_color, queued_color, rgb,
@@ -7,12 +9,13 @@ use crate::tui::TuiState;
 use crate::tui::info_widget::WidgetPlacement;
 use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
-use ftui_style::{Color, Modifier, Style};
+use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span, Text};
 use ftui_widgets::{
-    block::{Alignment, Block, Borders},
-    paragraph::Paragraph,
     Widget,
+    block::{Alignment, Block},
+    borders::Borders,
+    paragraph::Paragraph,
 };
 
 pub(super) fn draw_changelog_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usize) {
@@ -22,30 +25,28 @@ pub(super) fn draw_changelog_overlay(frame: &mut ftui::Frame, area: Rect, scroll
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     if groups.is_empty() {
-        lines.push(Line::from(Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             "No changelog entries available.",
             Style::default().fg(dim_color()),
-        )));
+        )]));
     } else {
         for group in &groups {
             let heading = match &group.released_at {
                 Some(released_at) => format!("  {} · {}", group.version, released_at),
                 None => format!("  {}", group.version),
             };
-            lines.push(Line::from(Span::styled(
+            lines.push(Line::from_spans(vec![Span::styled(
                 heading,
-                Style::default()
-                    .fg(rgb(200, 200, 220))
-                    .add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(""));
+                Style::default().fg(rgb(200, 200, 220)).bold(),
+            )]));
+            lines.push(Line::from_spans(vec![]));
             for entry in &group.entries {
-                lines.push(Line::from(vec![
+                lines.push(Line::from_spans(vec![
                     Span::styled("    • ", Style::default().fg(dim_color())),
                     Span::styled(entry.clone(), Style::default().fg(rgb(170, 170, 185))),
                 ]));
             }
-            lines.push(Line::from(""));
+            lines.push(Line::from_spans(vec![]));
         }
     }
 
@@ -69,30 +70,31 @@ pub(super) fn draw_changelog_overlay(frame: &mut ftui::Frame, area: Rect, scroll
     let block = Block::new()
         .title(Span::styled(
             title,
-            Style::default()
-                .fg(rgb(200, 200, 220))
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(rgb(200, 200, 220)).bold(),
         ))
-        .title_bottom(Line::from(Span::styled(
+        .title_bottom(Line::from_spans(vec![Span::styled(
             " Esc to close · mouse wheel/j/k scroll · Space/PageUp page ",
             Style::default().fg(dim_color()),
-        )))
+        )]))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(dim_color()));
 
-    let paragraph = Paragraph::new(Text::from(lines))
+    let paragraph = Paragraph::new(Text::from_lines(lines))
         .block(block)
         .scroll((scroll as u16, 0));
 
     paragraph.render(area, frame);
 }
 
-pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usize, app: &dyn TuiState) {
+pub(super) fn draw_help_overlay(
+    frame: &mut ftui::Frame,
+    area: Rect,
+    scroll: usize,
+    app: &dyn TuiState,
+) {
     clear_area(frame, area);
 
-    let section_style = Style::default()
-        .fg(accent_color())
-        .add_modifier(Modifier::BOLD);
+    let section_style = Style::default().fg(accent_color()).bold();
     let cmd_style = Style::default().fg(rgb(230, 230, 240));
     let desc_style = Style::default().fg(rgb(150, 150, 165));
     let key_style = Style::default().fg(rgb(200, 180, 120));
@@ -101,14 +103,14 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
     let mut lines: Vec<Line<'static>> = Vec::new();
 
     let separator = || -> Line<'static> {
-        Line::from(Span::styled(
+        Line::from_spans(vec![Span::styled(
             "  ─────────────────────────────────────────────────",
             sep_style,
-        ))
+        )])
     };
 
     let help_entry = |cmd: &str, desc: &str| -> Line<'static> {
-        Line::from(vec![
+        Line::from_spans(vec![
             Span::styled("    ", Style::default()),
             Span::styled(cmd.to_string(), cmd_style),
             Span::styled("  ", Style::default()),
@@ -117,17 +119,20 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
     };
 
     let key_entry = |key: &str, desc: &str| -> Line<'static> {
-        Line::from(vec![
+        Line::from_spans(vec![
             Span::styled("    ", Style::default()),
             Span::styled(format!("{:<22}", key), key_style),
             Span::styled(desc.to_string(), desc_style),
         ])
     };
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
 
-    lines.push(Line::from(Span::styled("  Commands", section_style)));
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![Span::styled(
+        "  Commands",
+        section_style,
+    )]));
+    lines.push(Line::from_spans(vec![]));
     lines.push(help_entry("/help", "Show this help overlay"));
     lines.push(help_entry(
         "/help <command>",
@@ -176,12 +181,15 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
         "Show recent changes in this build",
     ));
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
     lines.push(separator());
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
 
-    lines.push(Line::from(Span::styled("  Session", section_style)));
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![Span::styled(
+        "  Session",
+        section_style,
+    )]));
+    lines.push(Line::from_spans(vec![]));
     lines.push(help_entry("/clear", "Clear conversation and start fresh"));
     lines.push(help_entry(
         "/compact",
@@ -259,12 +267,15 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
         "Remove bookmark from current session",
     ));
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
     lines.push(separator());
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
 
-    lines.push(Line::from(Span::styled("  Memory & Swarm", section_style)));
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![Span::styled(
+        "  Memory & Swarm",
+        section_style,
+    )]));
+    lines.push(Line::from_spans(vec![]));
     lines.push(help_entry("/memory [on|off]", "Toggle memory features"));
     lines.push(help_entry(
         "/test [claim]",
@@ -276,12 +287,15 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
     ));
     lines.push(help_entry("/swarm [on|off]", "Toggle swarm features"));
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
     lines.push(separator());
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
 
-    lines.push(Line::from(Span::styled("  Auth & Accounts", section_style)));
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![Span::styled(
+        "  Auth & Accounts",
+        section_style,
+    )]));
+    lines.push(Line::from_spans(vec![]));
     lines.push(help_entry("/auth", "Show authentication status"));
     lines.push(help_entry(
         "/login [provider]",
@@ -296,12 +310,15 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
         "Inspect jcode subscription scaffold",
     ));
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
     lines.push(separator());
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
 
-    lines.push(Line::from(Span::styled("  System", section_style)));
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![Span::styled(
+        "  System",
+        section_style,
+    )]));
+    lines.push(Line::from_spans(vec![]));
     lines.push(help_entry("/reload", "Reload to newer binary if available"));
     lines.push(help_entry(
         "/restart",
@@ -323,23 +340,29 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
 
     let skills = app.available_skills();
     if !skills.is_empty() {
-        lines.push(Line::from(""));
+        lines.push(Line::from_spans(vec![]));
         lines.push(separator());
-        lines.push(Line::from(""));
+        lines.push(Line::from_spans(vec![]));
 
-        lines.push(Line::from(Span::styled("  Skills", section_style)));
-        lines.push(Line::from(""));
+        lines.push(Line::from_spans(vec![Span::styled(
+            "  Skills",
+            section_style,
+        )]));
+        lines.push(Line::from_spans(vec![]));
         for skill in &skills {
             lines.push(help_entry(&format!("/{}", skill), "Activate skill"));
         }
     }
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
     lines.push(separator());
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
 
-    lines.push(Line::from(Span::styled("  Navigation", section_style)));
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![Span::styled(
+        "  Navigation",
+        section_style,
+    )]));
+    lines.push(Line::from_spans(vec![]));
     lines.push(key_entry("PageUp / PageDown", "Scroll history"));
     lines.push(key_entry(
         "Up / Down (empty or browsing)",
@@ -352,15 +375,15 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
         "Jump by recency (5 = 5th most recent)",
     ));
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
     lines.push(separator());
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
 
-    lines.push(Line::from(Span::styled(
+    lines.push(Line::from_spans(vec![Span::styled(
         "  Diagrams & Diffs",
         section_style,
-    )));
-    lines.push(Line::from(""));
+    )]));
+    lines.push(Line::from_spans(vec![]));
     lines.push(key_entry(
         crate::tui::keybind::side_panel_toggle_key_label(),
         "Toggle side panel (or diagram pane if empty)",
@@ -379,12 +402,15 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
         "Cycle diff mode (Off/Inline/Pinned)",
     ));
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
     lines.push(separator());
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
 
-    lines.push(Line::from(Span::styled("  Input & Editing", section_style)));
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![Span::styled(
+        "  Input & Editing",
+        section_style,
+    )]));
+    lines.push(Line::from_spans(vec![]));
     lines.push(key_entry(
         "Ctrl+C / Ctrl+D",
         "Quit (press twice to confirm)",
@@ -442,7 +468,7 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
         lines.push(key_entry(&label, "Run configured dictation"));
     }
 
-    lines.push(Line::from(""));
+    lines.push(Line::from_spans(vec![]));
 
     let total_lines = lines.len();
     let visible_height = area.height.saturating_sub(2) as usize;
@@ -464,18 +490,16 @@ pub(super) fn draw_help_overlay(frame: &mut ftui::Frame, area: Rect, scroll: usi
     let block = Block::new()
         .title(Span::styled(
             title,
-            Style::default()
-                .fg(rgb(200, 200, 220))
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(rgb(200, 200, 220)).bold(),
         ))
-        .title_bottom(Line::from(Span::styled(
+        .title_bottom(Line::from_spans(vec![Span::styled(
             " Esc to close · mouse wheel/j/k scroll · Space/PageUp page · /help <cmd> for details ",
             Style::default().fg(dim_color()),
-        )))
+        )]))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(dim_color()));
 
-    let paragraph = Paragraph::new(Text::from(lines))
+    let paragraph = Paragraph::new(Text::from_lines(lines))
         .block(block)
         .scroll((scroll as u16, 0));
 
@@ -490,39 +514,49 @@ pub(super) fn draw_model_status_overlay(
 ) {
     clear_area(frame, area);
 
-    let title_style = Style::default()
-        .fg(accent_color())
-        .add_modifier(Modifier::BOLD);
+    let title_style = Style::default().fg(accent_color()).bold();
     let text_style = Style::default().fg(rgb(210, 210, 220));
     let dim_style = Style::default().fg(dim_color());
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(Line::from(Span::styled("  Model Status", title_style)));
-    lines.push(Line::from(Span::styled(
+    lines.push(Line::from_spans(vec![Span::styled(
+        "  Model Status",
+        title_style,
+    )]));
+    lines.push(Line::from_spans(vec![Span::styled(
         "  Live verification evidence for provider/model behavior in jcode",
         dim_style,
-    )));
-    lines.push(Line::from(""));
+    )]));
+    lines.push(Line::from_spans(vec![]));
 
     for raw in content.lines() {
         if let Some(title) = raw.strip_prefix("# ") {
-            lines.push(Line::from(Span::styled(format!("  {title}"), title_style)));
+            lines.push(Line::from_spans(vec![Span::styled(
+                format!("  {title}"),
+                title_style,
+            )]));
         } else if let Some(title) = raw.strip_prefix("## ") {
-            lines.push(Line::from(Span::styled(format!("  {title}"), title_style)));
+            lines.push(Line::from_spans(vec![Span::styled(
+                format!("  {title}"),
+                title_style,
+            )]));
         } else if raw.trim().is_empty() {
-            lines.push(Line::from(""));
+            lines.push(Line::from_spans(vec![]));
         } else {
-            lines.push(Line::from(Span::styled(format!("  {raw}"), text_style)));
+            lines.push(Line::from_spans(vec![Span::styled(
+                format!("  {raw}"),
+                text_style,
+            )]));
         }
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
+    lines.push(Line::from_spans(vec![]));
+    lines.push(Line::from_spans(vec![Span::styled(
         "  ↑/↓ scroll, PgUp/PgDn page, q/Esc close",
         dim_style,
-    )));
+    )]));
 
-    let paragraph = Paragraph::new(Text::from(lines))
+    let paragraph = Paragraph::new(Text::from_lines(lines))
         .block(
             Block::new()
                 .borders(Borders::ALL)
@@ -540,18 +574,18 @@ pub(super) fn draw_debug_overlay(
     if chunks.len() < 5 {
         return;
     }
-    render_overlay_box(frame, chunks[0], "messages", Color::Red);
-    render_overlay_box(frame, chunks[1], "queued", Color::Yellow);
-    render_overlay_box(frame, chunks[2], "status", Color::Cyan);
-    render_overlay_box(frame, chunks[3], "picker", Color::Magenta);
-    render_overlay_box(frame, chunks[4], "input", Color::Green);
+    render_overlay_box(frame, chunks[0], "messages", Color::Mono(Ansi16::Red));
+    render_overlay_box(frame, chunks[1], "queued", Color::Mono(Ansi16::Yellow));
+    render_overlay_box(frame, chunks[2], "status", Color::Mono(Ansi16::Cyan));
+    render_overlay_box(frame, chunks[3], "picker", Color::Mono(Ansi16::Magenta));
+    render_overlay_box(frame, chunks[4], "input", Color::Mono(Ansi16::Green));
     if chunks.len() > 5 && chunks[5].height > 0 {
-        render_overlay_box(frame, chunks[5], "donut", Color::Blue);
+        render_overlay_box(frame, chunks[5], "donut", Color::Mono(Ansi16::Blue));
     }
 
     for placement in placements {
         let title = format!("widget:{}", placement.kind.as_str());
-        render_overlay_box(frame, placement.rect, &title, Color::Magenta);
+        render_overlay_box(frame, placement.rect, &title, Color::Mono(Ansi16::Magenta));
     }
 }
 
@@ -561,8 +595,8 @@ fn render_overlay_box(frame: &mut ftui::Frame, area: Rect, title: &str, color: C
     }
     let block = Block::new()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(color))
-        .title(Span::styled(title.to_string(), Style::new().fg(color)));
+        .border_style(Style::new().fg_compat(color))
+        .title(Span::styled(title.to_string(), Style::new().fg_compat(color)));
     block.render(area, frame);
 }
 

@@ -1,3 +1,5 @@
+use ftui_style::{Ansi16, MonoColor};
+use crate::tui::compat::StyleCompatExt;
 use super::inline_interactive_ui::format_elapsed;
 use super::tools_ui::{get_tool_summary, summarize_batch_running_tools_compact};
 use super::visual_debug::{self, FrameCaptureBuilder};
@@ -11,13 +13,13 @@ use crate::tui::color_support::rgb;
 use crate::tui::detect_kv_cache_problem;
 use crate::tui::info_widget::occasional_status_tip;
 use crate::tui::layout_utils;
+use ftui_core::geometry::Rect;
+use ftui_render::frame::Frame;
 use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span};
+use ftui_widgets::Widget;
 use ftui_widgets::block::Alignment;
 use ftui_widgets::paragraph::Paragraph;
-use ftui_widgets::Widget;
-use ftui::Frame;
-use ftui_core::geometry::Rect;
 
 fn shell_mode_color() -> Color {
     rgb(110, 214, 151)
@@ -108,7 +110,7 @@ fn command_suggestion_lines(
     let mut lines = Vec::new();
     if suggestions.len() == 1 {
         let (cmd, desc) = &suggestions[0];
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled(cmd.to_string(), Style::default().fg(rgb(255, 213, 128))),
             Span::styled(
                 format!("  {}", desc),
@@ -156,7 +158,7 @@ fn command_suggestion_lines(
                     Style::default().fg(dim_color()),
                 ));
             }
-            lines.push(Line::from(spans));
+            lines.push(Line::from_spans(spans));
         }
     }
     lines
@@ -315,7 +317,7 @@ pub(super) fn draw_queued(frame: &mut Frame, app: &dyn TuiState, area: Rect, sta
             if dim {
                 msg_style = msg_style.dim();
             }
-            Line::from(vec![
+            Line::from_spans(vec![
                 Span::styled(format!("{}", start_num + i), Style::default().fg(num_color)),
                 Span::raw(" "),
                 Span::styled(indicator, Style::default().fg(indicator_color)),
@@ -570,7 +572,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
 
     let line = if let Some(build_progress) = crate::build::read_build_progress() {
         let spinner = super::activity_indicator(elapsed, 12.5);
-        Line::from(vec![
+        Line::from_spans(vec![
             Span::styled(spinner, Style::default().fg(rgb(255, 193, 7))),
             Span::styled(
                 format!(" {}", build_progress),
@@ -591,7 +593,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
         } else {
             format!("{}s", secs)
         };
-        Line::from(vec![
+        Line::from_spans(vec![
             Span::styled(spinner, Style::default().fg(rgb(255, 193, 7))),
             Span::styled(
                 format!(
@@ -605,7 +607,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
         let spinner = super::activity_indicator(elapsed, 12.5);
 
         match app.status() {
-            ProcessingStatus::Idle => Line::from(""),
+            ProcessingStatus::Idle => Line::from_spans(vec![]),
             ProcessingStatus::Sending => {
                 let mut spans = vec![
                     Span::styled(spinner, Style::default().fg(ai_color())),
@@ -620,7 +622,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                         Style::default().fg(queued_color()),
                     ));
                 }
-                Line::from(spans)
+                Line::from_spans(spans)
             }
             ProcessingStatus::Connecting(ref phase) => {
                 let mut label = format!(
@@ -649,7 +651,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                         Style::default().fg(queued_color()),
                     ));
                 }
-                Line::from(spans)
+                Line::from_spans(spans)
             }
             ProcessingStatus::Thinking(_start) => {
                 let mut label = format!(" thinking… {:.1}s", elapsed);
@@ -664,7 +666,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                         Style::default().fg(queued_color()),
                     ));
                 }
-                Line::from(spans)
+                Line::from_spans(spans)
             }
             ProcessingStatus::Streaming => {
                 let time_str = format_elapsed(elapsed);
@@ -702,7 +704,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                     kv_cache_problem.is_some(),
                     &queued_suffix,
                 );
-                Line::from(spans)
+                Line::from_spans(spans)
             }
             ProcessingStatus::WaitingForNetwork { listener } => {
                 let mut spans = vec![
@@ -722,7 +724,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                         Style::default().fg(queued_color()),
                     ));
                 }
-                Line::from(spans)
+                Line::from_spans(spans)
             }
             ProcessingStatus::RunningTool(ref name) => {
                 let half_width = 3;
@@ -844,7 +846,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                         Style::default().fg(queued_color()),
                     ));
                 }
-                Line::from(spans)
+                Line::from_spans(spans)
             }
         }
     } else if let Some((total_in, total_out)) = app.total_session_tokens() {
@@ -867,24 +869,24 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                 } else {
                     rgb(255, 193, 7)
                 };
-            Line::from(vec![
+            Line::from_spans(vec![
                 Span::styled("⚠ ", Style::default().fg(warning_color)),
                 Span::styled(warning, Style::default().fg(warning_color)),
             ])
         } else if let Some(tip) =
             occasional_status_tip(area.width as usize, app.animation_elapsed() as u64)
         {
-            Line::from(vec![Span::styled(tip, Style::default().fg(dim_color()))])
+            Line::from_spans(vec![Span::styled(tip, Style::default().fg(dim_color()))])
         } else {
-            Line::from("")
+            Line::from_spans(vec![])
         }
     } else {
         if let Some(tip) =
             occasional_status_tip(area.width as usize, app.animation_elapsed() as u64)
         {
-            Line::from(vec![Span::styled(tip, Style::default().fg(dim_color()))])
+            Line::from_spans(vec![Span::styled(tip, Style::default().fg(dim_color()))])
         } else {
-            Line::from("")
+            Line::from_spans(vec![])
         }
     };
 
@@ -1003,7 +1005,7 @@ mod tests {
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].content.as_ref(), " · 0/3 done");
         assert_eq!(spans[0].style.fg, Some(anim_color));
-        assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert!(spans[0].style.has_attr(ftui_style::StyleFlags::BOLD));
     }
 
     #[test]
@@ -1350,7 +1352,7 @@ pub(super) fn build_notification_spans(app: &dyn TuiState) -> Vec<Span<'static>>
             let feedback_style = if success {
                 Style::default().fg(ai_color()).bold()
             } else {
-                Style::default().fg(Color::Red).bold()
+                Style::default().fg_compat(Color::Mono(Ansi16::Red)).bold()
             };
             let feedback_text = if success {
                 "✓ Copied! "
@@ -1455,7 +1457,7 @@ pub(super) fn draw_notification(frame: &mut Frame, app: &dyn TuiState, area: Rec
     if spans.is_empty() {
         return;
     }
-    let line = Line::from(spans);
+    let line = Line::from_spans(spans);
     let aligned_line = if app.centered_mode() {
         line.alignment(Alignment::Center)
     } else {
@@ -1509,18 +1511,18 @@ pub(super) fn draw_input(
     } else if let Some(shell_hint) = shell_mode_hint(mode) {
         hint_shown = true;
         hint_line = Some(shell_hint.trim().to_string());
-        lines.push(Line::from(Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             shell_hint,
             Style::default().fg(shell_mode_color()),
-        )));
+        )]));
     } else if app.next_prompt_new_session_armed() {
         hint_shown = true;
         let hint = "  ↗ Next prompt opens a new session";
         hint_line = Some(hint.trim().to_string());
-        lines.push(Line::from(Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             hint,
             Style::default().fg(rgb(120, 200, 255)),
-        )));
+        )]));
     } else if app.is_processing() && !input_text.is_empty() {
         hint_shown = true;
         let hint = if app.queue_mode() {
@@ -1529,10 +1531,10 @@ pub(super) fn draw_input(
             "  Ctrl+Enter to queue"
         };
         hint_line = Some(hint.trim().to_string());
-        lines.push(Line::from(Span::styled(
+        lines.push(Line::from_spans(vec![Span::styled(
             hint,
             Style::default().fg(dim_color()),
-        )));
+        )]));
     }
 
     if let Some(capture) = debug_capture {
@@ -1840,13 +1842,13 @@ pub(crate) fn wrap_input_text<'a>(
 
         if idx == 0 {
             let num_color = rainbow_prompt_color(0);
-            lines.push(Line::from(vec![
+            lines.push(Line::from_spans(vec![
                 Span::styled(num_str.to_string(), Style::default().fg(num_color)),
                 Span::styled(prompt_char.to_string(), Style::default().fg(caret_color)),
                 Span::raw(segment.text.clone()),
             ]));
         } else {
-            lines.push(Line::from(vec![
+            lines.push(Line::from_spans(vec![
                 Span::raw(" ".repeat(prompt_len)),
                 Span::raw(segment.text.clone()),
             ]));
@@ -1897,7 +1899,7 @@ fn draw_send_mode_indicator(frame: &mut Frame, app: &dyn TuiState, area: Rect) {
         width: area.width,
         height: 1,
     };
-    let line = Line::from(Span::styled(icon, Style::default().fg(color)));
+    let line = Line::from_spans(vec![Span::styled(icon, Style::default().fg(color))]);
     let paragraph = Paragraph::new(line).alignment(Alignment::Right);
     paragraph.render(indicator_area, frame);
 }

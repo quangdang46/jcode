@@ -1,10 +1,9 @@
 use super::*;
 use ftui_render::cell::PackedRgba;
+use ftui_render::frame::Frame;
 use ftui_style::{Color, Style};
-use ftui_text::text::Line;
-use ftui_text::text::Text;
-use ftui_widgets::Paragraph;
-use ftui::Frame;
+use ftui_text::text::{Line, Span, Text};
+use ftui_widgets::paragraph::Paragraph;
 
 fn selection_bg_for(base_bg: Option<Color>) -> Color {
     let fallback = rgb(32, 38, 48);
@@ -191,17 +190,17 @@ pub(super) fn file_content_signature(file_path: &str) -> Option<FileContentSigna
 
 fn render_file_diff_row(row: &FileDiffDisplayRow, file_ext: Option<&str>) -> Line<'static> {
     match row.kind {
-        FileDiffDisplayRowKind::Placeholder => Line::from(Span::styled(
+        FileDiffDisplayRowKind::Placeholder => Line::from_spans(vec![Span::styled(
             row.text.clone(),
             Style::default().fg(dim_color()),
-        )),
+        )]),
         FileDiffDisplayRowKind::Normal => {
             let mut spans = vec![Span::styled(
                 row.prefix.clone(),
                 Style::default().fg(dim_color()),
             )];
             spans.extend(markdown::highlight_line(&row.text, file_ext));
-            Line::from(spans)
+            Line::from_spans(spans)
         }
         FileDiffDisplayRowKind::Add => {
             let mut spans = vec![Span::styled(
@@ -211,7 +210,7 @@ fn render_file_diff_row(row: &FileDiffDisplayRow, file_ext: Option<&str>) -> Lin
             for span in markdown::highlight_line(&row.text, file_ext) {
                 spans.push(tint_span_with_diff_color(span, diff_add_color()));
             }
-            Line::from(spans)
+            Line::from_spans(spans)
         }
         FileDiffDisplayRowKind::Del => {
             let mut spans = vec![Span::styled(
@@ -221,7 +220,7 @@ fn render_file_diff_row(row: &FileDiffDisplayRow, file_ext: Option<&str>) -> Lin
             for span in markdown::highlight_line(&row.text, file_ext) {
                 spans.push(tint_span_with_diff_color(span, diff_del_color()));
             }
-            Line::from(spans)
+            Line::from_spans(spans)
         }
     }
 }
@@ -509,7 +508,7 @@ pub(super) fn draw_file_diff_view(
     pane_scroll: usize,
     focused: bool,
 ) {
-    use ratatui::widgets::Paragraph;
+    use ftui_widgets::paragraph::Paragraph;
 
     if area.width < 10 || area.height < 3 {
         return;
@@ -532,7 +531,7 @@ pub(super) fn draw_file_diff_view(
         let Some(inner) = super::draw_right_rail_chrome(
             frame,
             area,
-            Line::from(vec![Span::styled(
+            Line::from_spans(vec![Span::styled(
                 " file ",
                 Style::default().fg(tool_color()),
             )]),
@@ -540,10 +539,10 @@ pub(super) fn draw_file_diff_view(
         ) else {
             return;
         };
-        let msg = Paragraph::new(Line::from(Span::styled(
+        let msg = Paragraph::new(Line::from_spans(vec![Span::styled(
             "No edits visible",
             Style::default().fg(dim_color()),
-        )));
+        )]));
         msg.render(frame, inner);
         return;
     };
@@ -611,7 +610,7 @@ pub(super) fn draw_file_diff_view(
             short_path,
             Style::default()
                 .fg(rgb(180, 200, 255))
-                .add_modifier(ratatui::style::Modifier::BOLD),
+                .bold(),
         ),
     ];
     if additions > 0 || deletions > 0 {
@@ -643,7 +642,7 @@ pub(super) fn draw_file_diff_view(
 
     let border_style = super::right_rail_border_style(focused, tool_color());
     let Some(inner) =
-        super::draw_right_rail_chrome(frame, area, Line::from(title_parts), border_style)
+        super::draw_right_rail_chrome(frame, area, Line::from_spans(title_parts), border_style)
     else {
         return;
     };

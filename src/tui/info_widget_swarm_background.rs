@@ -1,10 +1,11 @@
+use crate::tui::compat::StyleCompatExt;
 use super::{BackgroundInfo, InfoWidgetData, SwarmInfo, truncate_smart};
 use crate::protocol::SwarmMemberStatus;
 use crate::tui::color_support::rgb;
 use ftui_core::geometry::Rect;
 use ftui_style::{Color, Style};
 use ftui_text::text::Line;
-use ftui_text::text::{Line, Span};
+use ftui_text::text::Span;
 
 pub(super) fn render_swarm_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<'static>> {
     let Some(info) = &data.swarm_info else {
@@ -16,7 +17,7 @@ pub(super) fn render_swarm_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Lin
     if info.members.is_empty()
         && let Some(status) = &info.subagent_status
     {
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled("▶ ", Style::new().fg(rgb(255, 200, 100))),
             Span::styled(
                 truncate_smart(status, inner.width.saturating_sub(4) as usize),
@@ -90,19 +91,15 @@ fn swarm_member_line(member: &SwarmMemberStatus, max_width: usize) -> Line<'stat
     let role_prefix = swarm_role_prefix(member);
     let line_text = truncate_smart(&format!("{} {}{}", name, member.status, detail), max_width);
     let (color, icon) = swarm_status_style(&member.status);
-    Line::from(vec![
-        Span::styled(
-            role_prefix.to_string(),
-            Style::new().fg(rgb(255, 200, 100)),
-        ),
-        Span::styled(format!("{} ", icon), Style::new().fg(color)),
+    Line::from_spans(vec![
+        Span::styled(role_prefix.to_string(), Style::new().fg(rgb(255, 200, 100))),
+        Span::styled(format!("{} ", icon), Style::new().fg_compat(color)),
         Span::styled(line_text, Style::new().fg(rgb(140, 140, 150))),
     ])
 }
 
 fn render_swarm_stats_line(info: &SwarmInfo) -> Line<'static> {
-    let mut stats_parts: Vec<Span> =
-        vec![Span::styled("🐝 ", Style::new().fg(rgb(255, 200, 100)))];
+    let mut stats_parts: Vec<Span> = vec![Span::styled("🐝 ", Style::new().fg(rgb(255, 200, 100)))];
 
     if info.session_count > 0 {
         stats_parts.push(Span::styled(
@@ -120,11 +117,11 @@ fn render_swarm_stats_line(info: &SwarmInfo) -> Line<'static> {
         ));
     }
 
-    Line::from(stats_parts)
+    Line::from_spans(stats_parts)
 }
 
 fn render_swarm_name_line(name: &str, max_name_len: usize) -> Line<'static> {
-    Line::from(vec![
+    Line::from_spans(vec![
         Span::styled("  · ", Style::new().fg(rgb(100, 100, 110))),
         Span::styled(
             truncate_smart(name, max_name_len),
@@ -137,7 +134,7 @@ fn render_background_lines(info: &BackgroundInfo, width: usize) -> Vec<Line<'sta
     let Some(summary) = background_summary(info) else {
         return Vec::new();
     };
-    let mut lines = vec![Line::from(vec![
+    let mut lines = vec![Line::from_spans(vec![
         Span::styled("⏳ ", Style::new().fg(rgb(180, 140, 255))),
         Span::styled(summary, Style::new().fg(rgb(160, 160, 170))),
     ])];
@@ -154,7 +151,7 @@ fn render_background_lines(info: &BackgroundInfo, width: usize) -> Vec<Line<'sta
         } else {
             truncate_smart(task, row_width)
         };
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled("  • ", Style::new().fg(rgb(120, 120, 130))),
             Span::styled(row_text, Style::new().fg(rgb(180, 180, 190))),
         ]));
@@ -162,7 +159,7 @@ fn render_background_lines(info: &BackgroundInfo, width: usize) -> Vec<Line<'sta
 
     let hidden = info.running_tasks.len().saturating_sub(3);
     if hidden > 0 {
-        lines.push(Line::from(vec![
+        lines.push(Line::from_spans(vec![
             Span::styled("   ", Style::new().fg(rgb(100, 100, 110))),
             Span::styled(
                 format!("+{} more", hidden),

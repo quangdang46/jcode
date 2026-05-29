@@ -15,7 +15,9 @@ use super::hot_exec::{execute_requested_action, has_requested_action};
 use super::terminal::{
     print_session_resume_hint, set_current_session, spawn_session_signal_watchers,
 };
-use super::terminalinit::{cleanup_tui_runtime, cleanup_tui_runtime_for_run_result, init_tui_runtime};
+use super::terminalinit::{
+    cleanup_tui_runtime, cleanup_tui_runtime_for_run_result, init_tui_runtime,
+};
 
 pub(crate) fn resumed_window_title(session_id: &str) -> String {
     let session_name = crate::process_title::session_name(session_id);
