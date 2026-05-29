@@ -1,4 +1,5 @@
 use super::*;
+use ratatui::DefaultTerminal;
 use crate::message::ToolDefinition;
 
 impl App {

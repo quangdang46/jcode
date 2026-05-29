@@ -1,4 +1,4 @@
-use ftui_style::{Ansi16, MonoColor};
+use ftui_style::MonoColor;
 use crate::tui::compat::StyleCompatExt;
 use super::inline_interactive_ui::format_elapsed;
 use super::tools_ui::{get_tool_summary, summarize_batch_running_tools_compact};
@@ -14,12 +14,12 @@ use crate::tui::detect_kv_cache_problem;
 use crate::tui::info_widget::occasional_status_tip;
 use crate::tui::layout_utils;
 use ftui_core::geometry::Rect;
-use ftui_render::frame::Frame;
+use ftui::Frame;
 use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span};
-use ftui_widgets::Widget;
 use ftui_widgets::block::Alignment;
 use ftui_widgets::paragraph::Paragraph;
+use ftui_widgets::Widget;
 
 fn shell_mode_color() -> Color {
     rgb(110, 214, 151)
@@ -1620,7 +1620,7 @@ pub(super) fn draw_input(
         area.x + prompt_len as u16 + cursor_col as u16
     };
 
-    frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+    frame.set_cursor(Some((cursor_x, cursor_y)));
     draw_send_mode_indicator(frame, app, area);
 }
 

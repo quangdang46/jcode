@@ -4,13 +4,14 @@ use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
 use ftui_render::frame::Frame;
 use ftui_style::{Color, Style};
+use ratatui::style::Modifier;
 use ftui_text::text::Line;
 use ftui_text::text::Text;
-use ftui_text::wrap::WrapMode;
 use ftui_widgets::block::Block;
 use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::paragraph::Paragraph;
 use ftui_widgets::Widget;
+use ftui_widgets::Wrap;
 use serde::Serialize;
 use std::cell::RefCell;
 

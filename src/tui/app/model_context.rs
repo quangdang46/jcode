@@ -1,4 +1,5 @@
 use super::*;
+use ratatui::DefaultTerminal;
 
 impl App {
     fn format_failover_count(value: usize) -> String {

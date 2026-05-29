@@ -5,20 +5,31 @@ use crate::tui::color_support::rgb;
 use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
 use ftui_style::{Color, Style};
+use ratatui::style::Modifier;
 use ftui_text::text::{Line, Span, Text};
-use ftui_widgets::Widget;
-use ftui_widgets::block::{Alignment, Block};
-use ftui_widgets::borders::Borders;
+use ftui_widgets::block::{Alignment, Block, Borders};
 use ftui_widgets::paragraph::Paragraph;
-use ftui_text::wrap::WrapMode;
+use ftui_widgets::Wrap;
+use ftui_widgets::Widget;
 
 mod ui_pinned_table;
 use ui_pinned_table::is_rendered_table_line;
 
 #[path = "ui_pinned_layout.rs"]
 mod layout_support;
+#[path = "ui_pinned_utils.rs"]
+mod util_support;
 #[path = "ui_pinned_selection.rs"]
 mod selection_support;
+
+use layout_support::{
+    estimate_side_panel_image_layout, estimate_side_panel_image_layout_with_font,
+    fit_image_area_with_font, plan_fit_image_render, scaled_image_rows,
+    side_panel_viewport_scroll_x,
+};
+use util_support::{
+    compact_image_label, estimate_side_panel_pane_area, lru_touch, side_panel_content_signature,
+};
 use selection_support::apply_side_selection_highlight;
 
 enum PinnedContentEntry {

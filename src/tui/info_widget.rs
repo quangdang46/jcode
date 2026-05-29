@@ -7,6 +7,7 @@
 
 use crate::tui::compat::StyleCompatExt;
 use super::color_support::rgb;
+use ftui_render::frame::Frame;
 #[path = "info_widget_git.rs"]
 mod git;
 #[path = "info_widget_graph.rs"]

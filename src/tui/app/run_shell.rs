@@ -1,4 +1,5 @@
 use ftui_style::{Ansi16, MonoColor};
+use ratatui::DefaultTerminal;
 use crate::tui::compat::StyleCompatExt;
 use super::*;
 use crate::tui::TuiState;
@@ -471,7 +472,7 @@ impl App {
     ) -> Result<Vec<(f64, ratatui::buffer::Buffer)>> {
         use crate::replay::ReplayEvent;
         #[allow(unused_imports)]
-        use ftui_backend::TestBackend;
+        use ratatui::backend::TestBackend;
 
         let replay_events = crate::replay::timeline_to_replay_events(timeline);
         if replay_events.is_empty() {

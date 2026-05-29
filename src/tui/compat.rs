@@ -5,6 +5,12 @@ use ftui_style::Rgb;
 use ftui_style::Style;
 use ftui_text::text::{Line, Span, Text};
 
+impl From<FtuiColor> for PackedRgba {
+    fn from(color: FtuiColor) -> Self {
+        color_to_packedrgba(&color)
+    }
+}
+
 /// Extension trait to let `Style` accept `Color` directly in `.fg()`.
 /// Use `.fg_compat(color)` instead of `.fg(color)` when `color` is a `ftui_style::Color`.
 pub trait StyleCompatExt {

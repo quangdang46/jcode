@@ -5,7 +5,7 @@ use crate::bus::{
     ClientMaintenanceAction, InputShellCompleted, SessionUpdateStatus, UpdateStatus,
 };
 use crate::tui::TuiState;
-use ftui_backend::Backend;
+use ftui_core::backend::Backend;
 use ftui_core::geometry::Rect;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
