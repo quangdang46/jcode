@@ -24,12 +24,16 @@
 | **Protected paths** | Claude Code defaults: ~/.ssh, ~/.aws, ~/.config/gh, .git, .env | Round 3 QA |
 | **Pack rules** | Yes, Phase 2 in dcg-core — integrate dcg-cli's 50+ security packs | Round 3 QA |
 | **Config format** | TOML (match dcg ecosystem) | Round 3 QA |
-| **MCP permissions** | Needs further discussion — present permission mode first | Round 3 QA |
+| **MCP permissions** | ✅ **Unified pipeline** — MCP tools map `mcp__server__tool`, go through same `Engine::evaluate()`. Unknown MCP tools default = Prompt (ask user). Per-server config in TOML. Inspired by claude-code 3-level matching. | Research + Discussion |
+| **YOLO: model strategy** | ✅ **Reuse active provider** (zero extra cost). 2-stage: Stage 1 fast (64 tokens, block yes/no) → Stage 2 thinking (4096 tokens, CoT) if uncertain. Fail closed on timeout/error. Inspired by claude-code yoloClassifier. | Research + Discussion |
+| **YOLO: fail behavior** | ✅ **Fail closed** — block on all errors/timeouts/unavailable. 3 consecutive YOLO denials → fallback to interactive prompt (circuit breaker). | Research + Discussion |
+| **Swarm/subagent permissions** | ✅ **Option A: inherit + restrict** (opencode pattern). (1) Inherit parent deny rules (session + agent), (2) Default deny recursive capabilities (subagent spawn, todowrite), (3) Children can do LESS, never MORE. | Research + Discussion |
 | **Strict mode** | One-way tightening (from oh-my-claudecode) — cannot be weakened by project config | Discussion |
 | **Path-aware escalation** | Edit .env/secrets/ → auto escalate even in AcceptEdits mode | Discussion |
 | **Consumer-agnostic** | dcg-core exports generic Mode enum, each consumer maps own CLI flags | Discussion |
 | **Bypass safety net** | BypassPermissions should have iteration cap + audit log | Discussion |
 | **slb relationship** | SLB = two-person rule (peer review), complementary to dcg. No YOLO, no LLM, no Rust, Go-only, no library export. Not relevant for YOLO implementation. | Discussion |
+| **Sandboxing** | ❌ **Not doing** — app-level only, no OS sandbox for now | Discussion |
 
 ---
 
@@ -459,10 +463,10 @@ Phase 4 — MCP Permissions (future)
 | # | Question | Why it matters | Options |
 |---|----------|----------------|---------|
 | ~~1~~ | ~~YOLO: trait in dcg-core vs jcode?~~ | ~~RESOLVED~~ | ✅ **YOLO in jcode only.** dcg consumers use CLI hooks (exit codes), not Rust library. Only jcode links dcg-core. A Rust trait in dcg-core is useless for TS/Go consumers. YOLO needs LLM — consumer-specific. |
-| 2 | **YOLO: which LLM provider?** | Affects cost, latency, quality. | (a) Reuse active provider (zero extra cost)<br>(b) Dedicated cheap model (haiku/gpt-4o-mini)<br>(c) Configurable per-user |
-| 3 | **MCP permissions: unified or separate?** | MCP tools are dynamic (not known at startup). Different from builtin tools. | (a) Unified pipeline — MCP tools go through same Engine::evaluate<br>(b) Separate system — MCP has own allow/deny config<br>(c) Phase 4 — defer |
-| 4 | **Sandboxing future?** | App-level only for now, but codex proves OS-level is the gold standard. | (a) Phase 5 — bubblewrap (Linux) + Seatbelt (macOS)<>(b) Never — rely on app-level + user consent<br>(c) Container-based (Docker/Podman wrapper) |
-| 5 | **Multi-agent/swarm permission inheritance** | When jcode spawns subagents, how do permissions propagate? | (a) Inherit parent mode with deny-list restrictions (opencode pattern)<br>(b) Force yolo for subagents (oh-my-pi pattern)<br>(c) Configurable per-spawn |
+| ~~2~~ | ~~YOLO: which LLM provider?~~ | ~~RESOLVED~~ | ✅ **Reuse active provider** (Claude/Gemini/OpenAI — zero extra cost). 2-stage: fast (64 tokens) + thinking (4096 tokens). Fail closed. Inspired by claude-code `yoloClassifier.ts`. |
+| ~~3~~ | ~~MCP permissions: unified or separate?~~ | ~~RESOLVED~~ | ✅ **Unified pipeline**. MCP tools map `mcp__server__tool` → `Engine::evaluate()`. Unknown tools default = Prompt. Per-server config in TOML. Inspired by claude-code 3-level matching (`mcp__server`, `mcp__server__*`, `mcp__server__tool`). |
+| ~~4~~ | ~~Sandboxing future?~~ | ~~NOT DOING~~ | ❌ **App-level only**, no OS sandbox. codex proves OS-level is gold standard but too complex for now. |
+| ~~5~~ | ~~Multi-agent/swarm permission inheritance?~~ | ~~RESOLVED~~ | ✅ **Option A: inherit + restrict** (opencode pattern). (1) Inherit parent deny rules (session + agent), (2) Default deny recursive capabilities (subagent spawn, todowrite), (3) Children can do LESS, never MORE. claude-code adds static deny-list (no Agent nesting, no AskUser, no vault) + worker→leader escalation. |
 
 ---
 
@@ -477,7 +481,9 @@ Phase 4 — MCP Permissions (future)
 - [ ] Protected paths always prompt even in AcceptEdits
 - [ ] Strict mode available and one-way tightening
 - [ ] TOML config overrides work per-tool and per-pattern
-- [ ] YOLO classifier operational (even if rule-based initially)
+- [ ] YOLO classifier: 2-stage (fast 64t + thinking 4096t), reuse active provider, fail closed, 3-consecutive circuit breaker
+- [ ] MCP tools go through unified permission pipeline (`mcp__server__tool` → Engine::evaluate), unknown = Prompt
+- [ ] Subagent permissions: inherit parent deny rules + default deny recursive capabilities
 - [ ] dcg-core dependency via git URL (not local path, not crates.io)
 - [ ] `cargo check` passes with zero errors
 - [ ] Test coverage for all modes + edge cases
