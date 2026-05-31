@@ -6,6 +6,7 @@
     clippy::useless_conversion
 )]
 
+pub mod yolo_classifier;
 pub mod agent;
 pub mod ambient;
 pub mod ambient_runner;

@@ -37,6 +37,8 @@ use std::sync::{LazyLock, Mutex};
 
 use dcg_core::{Decision, Effect, Engine, EngineConfig, Mode, Session, ToolCall};
 
+pub use crate::yolo_classifier::YoloClassifier;
+
 /// Globally configured permission mode. Set once during CLI startup, read
 /// from every `SafetySystem::classify` call.
 ///
@@ -141,11 +143,33 @@ pub fn classify_with_mode(action: &str, mode: Mode) -> BridgeDecision {
     // `Engine::evaluate` because their pre-check semantics are well
     // defined without rule data.
     if matches!(mode, Mode::Default | Mode::Auto) {
-        return if is_legacy_auto_allowed(&lower) {
-            BridgeDecision::Allow
-        } else {
-            BridgeDecision::Prompt
-        };
+        // Legacy auto-allowed tools always allow in both Default and Auto.
+        if is_legacy_auto_allowed(&lower) {
+            return BridgeDecision::Allow;
+        }
+
+        // For Mode::Auto, non-legacy tools go through YOLO classifier.
+        if mode == Mode::Auto {
+            let (tool, effects) = action_to_tool_call(&lower);
+            let effect_strings: Vec<&str> = effects
+                .iter()
+                .map(|e| match e {
+                    Effect::Read => "Read",
+                    Effect::Write => "Write",
+                    Effect::Spawn => "Spawn",
+                    Effect::Fs => "Fs",
+                    Effect::Irreversible => "Irreversible",
+                    Effect::Network => "Network",
+                    Effect::CredentialAccess => "CredentialAccess",
+                    Effect::PrivilegeEscalation => "PrivilegeEscalation",
+                })
+                .collect();
+
+            let classifier = YoloClassifier::get_or_init();
+            return classifier.evaluate(&lower, &format!("{:?}", tool), &effect_strings);
+        }
+
+        return BridgeDecision::Prompt;
     }
 
     let (tool, effects) = action_to_tool_call(&lower);
@@ -240,6 +264,24 @@ fn action_to_tool_call(action_lower: &str) -> (ToolCall, Vec<Effect>) {
         // command is only known once the agent issues it. Phase 2 will
         // need a richer wiring point.
         return (ToolCall::bash(""), vec![Spawn, Write, Irreversible]);
+    }
+
+    // MCP tool actions: mcp__serverName__toolName
+    // Three matching levels:
+    //   mcp__github          → matches ALL tools from github server
+    //   mcp__github__*        → wildcard, same as above
+    //   mcp__github__create_pull_request → exact tool
+    if action_lower.starts_with("mcp__") {
+        let parts: Vec<&str> = action_lower.split("__").collect();
+        if parts.len() >= 2 {
+            // MCP tools carry Read + Write + Spawn effects since they can
+            // read/write data and spawn background processes.
+            // Path is unknown at classify time — use placeholder.
+            return (
+                ToolCall::read(placeholder),
+                vec![Read, Write, Spawn],
+            );
+        }
     }
 
     // Conservative default for unknown / future tools. We still surface a
