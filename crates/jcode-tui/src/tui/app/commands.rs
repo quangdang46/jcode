@@ -3471,6 +3471,7 @@ pub(super) fn handle_dev_command(app: &mut App, trimmed: &str) -> bool {
 
 /// Handle DCP slash commands: /dcp [context|stats|sweep|manual on|off]
 #[cfg(feature = "dcp")]
+#[allow(clippy::collapsible_if)]
 pub(super) fn handle_dcp_command(app: &mut App, trimmed: &str) -> bool {
     // Helper to get DCP plugin from app
     let get_dcp = || app.registry.dcp();
