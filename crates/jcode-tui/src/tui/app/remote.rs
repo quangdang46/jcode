@@ -26,6 +26,8 @@ mod session_persistence;
 mod swarm_plan_core;
 mod workspace;
 
+#[cfg(test)]
+pub(super) use key_handling::reload_stale_remote_server_before_update;
 use queue_recovery::{recover_local_interleave_to_queue, recover_stranded_soft_interrupts};
 // Re-export for sibling modules and tests that access reconnect state and helpers
 // through `super::remote::*` without reaching into private submodules directly.
@@ -280,7 +282,21 @@ pub(super) async fn handle_terminal_event(
             app.update_copy_badge_key_event(key);
             if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
                 handle_remote_key_event(app, key, remote).await?;
-                if let Some(spec) = app.pending_model_switch.take() {
+                if let Some(selection) = app.pending_route_selection.take() {
+                    app.pending_model_switch = None;
+                    match remote.set_route_selection(selection).await {
+                        Ok(_) => {
+                            app.remote_model_switch_in_flight = true;
+                        }
+                        Err(error) => {
+                            app.push_display_message(DisplayMessage::error(format!(
+                                "Failed to request model switch: {}",
+                                error
+                            )));
+                            app.set_status_notice("Model switch failed");
+                        }
+                    }
+                } else if let Some(spec) = app.pending_model_switch.take() {
                     match remote.set_model(&spec).await {
                         Ok(_) => {
                             app.remote_model_switch_in_flight = true;
