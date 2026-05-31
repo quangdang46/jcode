@@ -90,6 +90,8 @@ jemalloc = ["jcode-app-core/jemalloc"]
 jemalloc-prof = ["jcode-app-core/jemalloc-prof"]
 embeddings = ["jcode-app-core/embeddings"]
 pdf = ["jcode-app-core/pdf"]
+# Forward DCP feature to app-core.
+dcp = ["jcode-app-core/dcp"]
 mmdr-size-api = ["jcode-tui-mermaid/mmdr-size-api"]
 # Forwards the application core's `test-support` feature (and onward to
 # jcode-base) so downstream crates' test targets can reach the whole stack's

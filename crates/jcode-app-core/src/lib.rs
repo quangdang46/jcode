@@ -27,6 +27,8 @@ pub mod ambient_runner;
 pub mod ambient_scheduler;
 pub mod catchup;
 pub mod channel;
+#[cfg(feature = "dcp")]
+pub mod dcp_bridge;
 pub mod doctor;
 pub mod export;
 pub mod external_auth;
@@ -49,6 +51,9 @@ pub mod ssh_remote;
 pub mod startup_profile;
 pub mod tool;
 pub mod update;
+
+#[cfg(feature = "dcp")]
+pub mod dcp_plugin;
 
 use std::sync::Mutex;
 

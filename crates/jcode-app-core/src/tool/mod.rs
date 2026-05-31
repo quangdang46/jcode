@@ -341,21 +341,9 @@ impl Registry {
         #[cfg(feature = "dcp")]
         {
             use dcp_compress::{DcpCompressTool, DcpDecompressTool, DcpRecompressTool};
-            Self::insert_tool(
-                &mut tools_map,
-                "dcp_compress",
-                DcpCompressTool::new(),
-            );
-            Self::insert_tool(
-                &mut tools_map,
-                "dcp_decompress",
-                DcpDecompressTool::new(),
-            );
-            Self::insert_tool(
-                &mut tools_map,
-                "dcp_recompress",
-                DcpRecompressTool::new(),
-            );
+            Self::insert_tool(&mut tools_map, "dcp_compress", DcpCompressTool::new());
+            Self::insert_tool(&mut tools_map, "dcp_decompress", DcpDecompressTool::new());
+            Self::insert_tool(&mut tools_map, "dcp_recompress", DcpRecompressTool::new());
         }
 
         let write_start = std::time::Instant::now();

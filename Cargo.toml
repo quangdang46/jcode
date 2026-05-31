@@ -242,8 +242,6 @@ aws-smithy-types = "1.4.7"
 aws-sdk-bedrock = "1.141.0"
 aws-sdk-sts = "1.103.0"
 
-# DCP integration (dynamic_context_pruning)
-dynamic_context_pruning = { git = "https://github.com/quangdang46/dynamic_context_pruning", branch = "main", package = "dynamic_context_pruning", optional = true }
 
 [features]
 # Include local ONNX/tokenizer embeddings in default builds so memory recall,
@@ -267,7 +265,7 @@ jemalloc-prof = [
     "jcode-tui/jemalloc-prof",
 ]
 embeddings = ["dep:jcode-embedding", "jcode-tui/embeddings"]
-dcp = ["dep:dynamic_context_pruning"]
+dcp = ["jcode-tui/dcp"]
 mmdr-size-api = ["jcode-tui-mermaid/mmdr-size-api"]
 pdf = ["dep:jcode-pdf", "jcode-tui/pdf"]
 

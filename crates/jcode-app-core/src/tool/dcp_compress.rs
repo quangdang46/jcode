@@ -12,7 +12,7 @@ use anyhow::Result;
 #[cfg(feature = "dcp")]
 use async_trait::async_trait;
 #[cfg(feature = "dcp")]
-use dynamic_context_pruning::{BlockId, CompressArgs, RangeEntry, MessageEntry};
+use dynamic_context_pruning::{BlockId, CompressArgs, MessageEntry, RangeEntry};
 #[cfg(feature = "dcp")]
 use jcode_tool_core::Tool;
 #[cfg(feature = "dcp")]
@@ -109,7 +109,9 @@ impl Tool for DcpCompressTool {
 
         let dcp_plugin = crate::agent::Agent::get_current_dcp()
             .ok_or_else(|| anyhow::anyhow!("DCP is not available in this context"))?;
-        let mut dcp = dcp_plugin.lock().map_err(|e| anyhow::anyhow!("DCP lock error: {}", e))?;
+        let mut dcp = dcp_plugin
+            .lock()
+            .map_err(|e| anyhow::anyhow!("DCP lock error: {}", e))?;
 
         // Build CompressArgs based on mode
         let args = match params.mode.as_str() {
@@ -130,12 +132,14 @@ impl Tool for DcpCompressTool {
         };
 
         // Get current session messages for DCP processing
-        let session = crate::session::Session::load(&ctx.session_id)
+        let mut session = crate::session::Session::load(&ctx.session_id)
             .map_err(|e| anyhow::anyhow!("Failed to load session: {}", e))?;
         let messages = session.provider_messages();
         let dcp_messages = crate::dcp_bridge::jcode_to_dcp(&messages);
 
-        let result = dcp.pruner_mut().handle_compress(args, &dcp_messages)
+        let result = dcp
+            .pruner_mut()
+            .handle_compress(args, &dcp_messages)
             .map_err(|e| anyhow::anyhow!("DCP compress error: {:?}", e))?;
 
         let total_tokens_saved: u64 = result.blocks.iter().map(|b| b.compressed_tokens).sum();
@@ -205,15 +209,19 @@ impl Tool for DcpDecompressTool {
         })
     }
 
-    async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
+    async fn execute(&self, input: Value, _ctx: ToolContext) -> Result<ToolOutput> {
         let params: DecompressInput = serde_json::from_value(input)?;
 
         let dcp_plugin = crate::agent::Agent::get_current_dcp()
             .ok_or_else(|| anyhow::anyhow!("DCP is not available in this context"))?;
-        let mut dcp = dcp_plugin.lock().map_err(|e| anyhow::anyhow!("DCP lock error: {}", e))?;
+        let mut dcp = dcp_plugin
+            .lock()
+            .map_err(|e| anyhow::anyhow!("DCP lock error: {}", e))?;
 
         let block_id = BlockId(params.block_id);
-        let result = dcp.pruner_mut().decompress(block_id)
+        let result = dcp
+            .pruner_mut()
+            .decompress(block_id)
             .map_err(|e| anyhow::anyhow!("DCP decompress error: {:?}", e))?;
 
         let output = format!(
@@ -280,15 +288,19 @@ impl Tool for DcpRecompressTool {
         })
     }
 
-    async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
+    async fn execute(&self, input: Value, _ctx: ToolContext) -> Result<ToolOutput> {
         let params: RecompressInput = serde_json::from_value(input)?;
 
         let dcp_plugin = crate::agent::Agent::get_current_dcp()
             .ok_or_else(|| anyhow::anyhow!("DCP is not available in this context"))?;
-        let mut dcp = dcp_plugin.lock().map_err(|e| anyhow::anyhow!("DCP lock error: {}", e))?;
+        let mut dcp = dcp_plugin
+            .lock()
+            .map_err(|e| anyhow::anyhow!("DCP lock error: {}", e))?;
 
         let block_id = BlockId(params.block_id);
-        let result = dcp.pruner_mut().recompress(block_id)
+        let result = dcp
+            .pruner_mut()
+            .recompress(block_id)
             .map_err(|e| anyhow::anyhow!("DCP recompress error: {:?}", e))?;
 
         let output = format!(

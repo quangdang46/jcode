@@ -3439,9 +3439,7 @@ pub(super) fn handle_dev_command(app: &mut App, trimmed: &str) -> bool {
 #[cfg(feature = "dcp")]
 pub(super) fn handle_dcp_command(app: &mut App, trimmed: &str) -> bool {
     // Helper to get DCP plugin from app
-    let get_dcp = || {
-        app.registry.dcp()
-    };
+    let get_dcp = || app.registry.dcp();
 
     if trimmed == "/dcp" {
         // Show DCP status
@@ -3488,9 +3486,7 @@ pub(super) fn handle_dcp_command(app: &mut App, trimmed: &str) -> bool {
                 return true;
             }
         }
-        app.push_display_message(DisplayMessage::system(
-            "DCP not available.".to_string(),
-        ));
+        app.push_display_message(DisplayMessage::system("DCP not available.".to_string()));
         return true;
     }
 
@@ -3514,9 +3510,7 @@ pub(super) fn handle_dcp_command(app: &mut App, trimmed: &str) -> bool {
                 return true;
             }
         }
-        app.push_display_message(DisplayMessage::system(
-            "DCP not available.".to_string(),
-        ));
+        app.push_display_message(DisplayMessage::system("DCP not available.".to_string()));
         return true;
     }
 
@@ -3524,7 +3518,8 @@ pub(super) fn handle_dcp_command(app: &mut App, trimmed: &str) -> bool {
         // Note: set_force_apply is pub(crate) in dcp-core and not accessible here.
         // The sweep functionality requires using the DCP compress tool directly.
         app.push_display_message(DisplayMessage::system(
-            "Sweep is triggered automatically when context fills up, or use the dcp_compress tool.".to_string(),
+            "Sweep is triggered automatically when context fills up, or use the dcp_compress tool."
+                .to_string(),
         ));
         return true;
     }
@@ -3539,9 +3534,7 @@ pub(super) fn handle_dcp_command(app: &mut App, trimmed: &str) -> bool {
                 return true;
             }
         }
-        app.push_display_message(DisplayMessage::system(
-            "DCP not available.".to_string(),
-        ));
+        app.push_display_message(DisplayMessage::system("DCP not available.".to_string()));
         return true;
     }
 
@@ -3555,9 +3548,7 @@ pub(super) fn handle_dcp_command(app: &mut App, trimmed: &str) -> bool {
                 return true;
             }
         }
-        app.push_display_message(DisplayMessage::system(
-            "DCP not available.".to_string(),
-        ));
+        app.push_display_message(DisplayMessage::system("DCP not available.".to_string()));
         return true;
     }
 

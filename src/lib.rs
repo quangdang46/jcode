@@ -36,12 +36,6 @@ pub mod skill_distillation;
 pub mod theme;
 pub mod turborag;
 
-#[cfg(feature = "dcp")]
-pub mod dcp_bridge;
-
-#[cfg(feature = "dcp")]
-pub mod dcp_plugin;
-
 use anyhow::Result;
 
 pub async fn run() -> Result<()> {

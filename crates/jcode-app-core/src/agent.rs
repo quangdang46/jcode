@@ -97,11 +97,13 @@ impl Agent {
     /// Access the current agent's DCP plugin for tool execution
     pub(crate) fn get_current_dcp() -> Option<Arc<Mutex<crate::dcp_plugin::DcpPlugin>>> {
         CURRENT_AGENT.with(|cell| {
-            cell.get().map(|ptr| {
-                // SAFETY: ptr is guaranteed valid for the duration of tool execution
-                // because the server clears it when the agent is dropped
-                unsafe { ptr.as_ref() }.registry.dcp()
-            }).flatten()
+            cell.get()
+                .map(|ptr| {
+                    // SAFETY: ptr is guaranteed valid for the duration of tool execution
+                    // because the server clears it when the agent is dropped
+                    unsafe { ptr.as_ref() }.registry.dcp()
+                })
+                .flatten()
         })
     }
 }
@@ -665,8 +667,7 @@ impl Agent {
                 if output.changed {
                     logging::info(&format!(
                         "DCP: pruned {} messages, saved ~{} tokens",
-                        output.removed_count,
-                        output.tokens_saved,
+                        output.removed_count, output.tokens_saved,
                     ));
                 }
 
