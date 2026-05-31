@@ -366,6 +366,7 @@ impl App {
         total_messages: usize,
         visible_messages: usize,
         remaining_messages: usize,
+        hidden_user_prompts: usize,
     ) {
         compact_display_messages_for_storage(&mut messages);
         self.display_messages = messages;
@@ -374,6 +375,7 @@ impl App {
             total_messages,
             visible_messages,
             remaining_messages,
+            hidden_user_prompts,
             pending_request_visible: None,
         };
         self.auto_scroll_paused = true;
@@ -445,11 +447,31 @@ impl App {
     }
 
     fn sync_compacted_history_lazy_from_display_messages(&mut self) {
-        self.compacted_history_lazy = self
+        let mut lazy = self
             .display_messages
             .first()
             .and_then(parse_compacted_history_marker)
             .unwrap_or_default();
+        // The marker text does not encode how many prompts are hidden, so derive
+        // it from the session render info when a compacted window is in effect.
+        // This keeps prompt numbering absolute (the first visible prompt keeps
+        // its real turn number).
+        if lazy.remaining_messages > 0 || lazy.total_messages > 0 {
+            let visible = if lazy.remaining_messages == 0 {
+                usize::MAX
+            } else {
+                lazy.visible_messages
+            };
+            let (_, _, compacted_info) =
+                crate::session::render_messages_and_images_with_compacted_history(
+                    &self.session,
+                    visible,
+                );
+            if let Some(info) = compacted_info {
+                lazy.hidden_user_prompts = info.hidden_user_prompts;
+            }
+        }
+        self.compacted_history_lazy = lazy;
     }
 
     fn apply_local_compacted_history_window(&mut self, visible_messages: usize) {
@@ -478,6 +500,7 @@ impl App {
             compacted_info.total_messages,
             compacted_info.visible_messages,
             compacted_info.remaining_messages,
+            compacted_info.hidden_user_prompts,
         );
     }
 }
@@ -496,6 +519,7 @@ fn parse_compacted_history_marker(message: &DisplayMessage) -> Option<CompactedH
             total_messages: total,
             visible_messages: total,
             remaining_messages: 0,
+            hidden_user_prompts: 0,
             pending_request_visible: None,
         });
     }
@@ -510,6 +534,7 @@ fn parse_compacted_history_marker(message: &DisplayMessage) -> Option<CompactedH
             total_messages: total,
             visible_messages: visible,
             remaining_messages: first,
+            hidden_user_prompts: 0,
             pending_request_visible: None,
         });
     }
@@ -519,6 +544,7 @@ fn parse_compacted_history_marker(message: &DisplayMessage) -> Option<CompactedH
             total_messages: first,
             visible_messages: 0,
             remaining_messages: first,
+            hidden_user_prompts: 0,
             pending_request_visible: None,
         });
     }

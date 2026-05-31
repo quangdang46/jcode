@@ -685,14 +685,23 @@ impl AnthropicProvider {
     /// Automatically refreshes OAuth tokens when expired
     async fn get_access_token(&self) -> Result<(String, bool)> {
         let mode = *self.credential_mode.read().await;
-        if matches!(
-            mode,
-            AnthropicCredentialMode::Auto | AnthropicCredentialMode::ApiKey
-        ) {
-            match load_anthropic_api_key() {
-                Ok(key) => return Ok((key, false)), // false = not OAuth
-                Err(error) if matches!(mode, AnthropicCredentialMode::ApiKey) => return Err(error),
-                Err(_) => {}
+
+        // Explicit API-key mode: use the direct API key and surface an error if
+        // one is not configured (never silently fall back to OAuth).
+        if matches!(mode, AnthropicCredentialMode::ApiKey) {
+            let key = load_anthropic_api_key()?;
+            return Ok((key, false)); // false = not OAuth
+        }
+
+        // Auto mode prefers OAuth (Claude subscription) when credentials are
+        // available, falling back to the direct API key. This matches the
+        // OpenAI provider's OAuth-first Auto behavior and what most Claude
+        // Max/Pro users expect.
+        if matches!(mode, AnthropicCredentialMode::Auto)
+            && auth::claude::load_credentials().is_err()
+        {
+            if let Ok(key) = load_anthropic_api_key() {
+                return Ok((key, false));
             }
         }
 
@@ -789,6 +798,19 @@ impl AnthropicProvider {
         drop(mode_guard);
         if let Ok(mut cached) = self.credentials.try_write() {
             *cached = None;
+        }
+        // Keep the runtime provider identity in sync with the explicit credential
+        // choice so UI surfaces (model picker, header widget) report the auth
+        // method that requests will actually use, instead of inferring it from
+        // credential presence. `Auto` leaves the existing identity untouched.
+        match mode {
+            AnthropicCredentialMode::OAuth => {
+                crate::env::set_var("JCODE_RUNTIME_PROVIDER", "claude");
+            }
+            AnthropicCredentialMode::ApiKey => {
+                crate::env::set_var("JCODE_RUNTIME_PROVIDER", "claude-api");
+            }
+            AnthropicCredentialMode::Auto => {}
         }
         Ok(())
     }
@@ -1102,14 +1124,6 @@ impl AnthropicProvider {
                     name: "Skill".to_string(),
                     description: "Execute a skill within the main conversation".to_string(),
                     input_schema: json!({"type":"object","properties":{"skill":{"type":"string"},"args":{"type":"string"}},"required":["skill"],"additionalProperties":false}),
-                    cache_control: None,
-                },
-                ApiTool {
-                    name: "ToolSearch".to_string(),
-                    description:
-                        "Fetches full schema definitions for deferred tools so they can be called."
-                            .to_string(),
-                    input_schema: json!({"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"number","default":5}},"required":["query","max_results"],"additionalProperties":false}),
                     cache_control: None,
                 },
                 ApiTool {

@@ -328,7 +328,6 @@ fn test_anthropic_signed_thinking_replayed_in_request_blocks() {
 
 #[tokio::test]
 #[ignore = "live smoke: requires ANTHROPIC_API_KEY, or set JCODE_LIVE_ANTHROPIC_ALLOW_OAUTH=1 to use Claude OAuth credentials"]
-#[allow(clippy::await_holding_lock)]
 async fn live_anthropic_reasoning_smoke() -> Result<()> {
     let _env_lock = crate::storage::lock_test_env();
     let using_api_key = std::env::var_os("ANTHROPIC_API_KEY").is_some();
@@ -1065,121 +1064,32 @@ async fn test_sanitize_dangling_tool_ids_with_dots() {
     }
 }
 
-#[cfg(test)]
-mod base_url_override_tests {
-    use super::super::anthropic_base_url_override;
+/// The runtime-provider identity that `set_credential_mode` writes must decode
+/// back to the exact same credential mode. This guards the model picker / header
+/// widget from reporting OAuth when an API key is in use (or vice versa): the
+/// env key is the single source of truth those surfaces read, so an asymmetric
+/// mapping here would surface an inaccurate auth method to the user.
+#[test]
+fn credential_mode_runtime_provider_identity_round_trips() {
+    let _guard = crate::storage::lock_test_env();
+    let previous = std::env::var_os("JCODE_RUNTIME_PROVIDER");
 
-    fn save_keys(keys: &[&'static str]) -> Vec<(&'static str, Option<std::ffi::OsString>)> {
-        keys.iter().map(|k| (*k, std::env::var_os(k))).collect()
-    }
-    fn restore(saved: Vec<(&'static str, Option<std::ffi::OsString>)>) {
-        for (k, v) in saved {
-            unsafe {
-                match v {
-                    Some(val) => std::env::set_var(k, val),
-                    None => std::env::remove_var(k),
-                }
-            }
-        }
-    }
+    crate::env::set_var("JCODE_RUNTIME_PROVIDER", "claude");
+    assert_eq!(
+        AnthropicCredentialMode::from_runtime_env(),
+        AnthropicCredentialMode::OAuth,
+        "OAuth selection must surface as the OAuth runtime identity"
+    );
 
-    #[test]
-    fn returns_none_when_unset() {
-        let _lock = crate::storage::lock_test_env();
-        let saved = save_keys(&["ANTHROPIC_BASE_URL", "JCODE_ANTHROPIC_BASE_URL"]);
-        crate::env::remove_var("ANTHROPIC_BASE_URL");
-        crate::env::remove_var("JCODE_ANTHROPIC_BASE_URL");
+    crate::env::set_var("JCODE_RUNTIME_PROVIDER", "claude-api");
+    assert_eq!(
+        AnthropicCredentialMode::from_runtime_env(),
+        AnthropicCredentialMode::ApiKey,
+        "API-key selection must surface as the API-key runtime identity"
+    );
 
-        assert_eq!(anthropic_base_url_override(), None);
-
-        restore(saved);
-    }
-
-    #[test]
-    fn returns_value_from_jcode_prefix_first() {
-        let _lock = crate::storage::lock_test_env();
-        let saved = save_keys(&["ANTHROPIC_BASE_URL", "JCODE_ANTHROPIC_BASE_URL"]);
-        crate::env::set_var("JCODE_ANTHROPIC_BASE_URL", "https://jcode-proxy.example/");
-        crate::env::set_var("ANTHROPIC_BASE_URL", "https://other-proxy.example/");
-
-        assert_eq!(
-            anthropic_base_url_override().as_deref(),
-            Some("https://jcode-proxy.example/")
-        );
-
-        restore(saved);
-    }
-
-    #[test]
-    fn falls_back_to_anthropic_base_url() {
-        let _lock = crate::storage::lock_test_env();
-        let saved = save_keys(&["ANTHROPIC_BASE_URL", "JCODE_ANTHROPIC_BASE_URL"]);
-        crate::env::remove_var("JCODE_ANTHROPIC_BASE_URL");
-        crate::env::set_var("ANTHROPIC_BASE_URL", "https://corp-proxy.example");
-
-        assert_eq!(
-            anthropic_base_url_override().as_deref(),
-            Some("https://corp-proxy.example")
-        );
-
-        restore(saved);
-    }
-
-    #[test]
-    fn empty_value_treated_as_unset() {
-        let _lock = crate::storage::lock_test_env();
-        let saved = save_keys(&["ANTHROPIC_BASE_URL", "JCODE_ANTHROPIC_BASE_URL"]);
-        crate::env::set_var("ANTHROPIC_BASE_URL", "   ");
-        crate::env::set_var("JCODE_ANTHROPIC_BASE_URL", "");
-
-        assert_eq!(anthropic_base_url_override(), None);
-
-        restore(saved);
-    }
-}
-
-#[cfg(test)]
-mod api_key_env_configured_tests {
-    use super::super::anthropic_api_key_env_configured;
-
-    fn save_key() -> Option<std::ffi::OsString> {
-        std::env::var_os("ANTHROPIC_API_KEY")
-    }
-    fn restore(prev: Option<std::ffi::OsString>) {
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("ANTHROPIC_API_KEY", v),
-                None => std::env::remove_var("ANTHROPIC_API_KEY"),
-            }
-        }
-    }
-
-    #[test]
-    fn returns_false_when_unset() {
-        let _lock = crate::storage::lock_test_env();
-        let prev = save_key();
-        crate::env::remove_var("ANTHROPIC_API_KEY");
-        assert!(!anthropic_api_key_env_configured());
-        restore(prev);
-    }
-
-    #[test]
-    fn returns_true_when_set() {
-        let _lock = crate::storage::lock_test_env();
-        let prev = save_key();
-        crate::env::set_var("ANTHROPIC_API_KEY", "sk-test-123");
-        assert!(anthropic_api_key_env_configured());
-        restore(prev);
-    }
-
-    #[test]
-    fn whitespace_or_empty_is_treated_as_unset() {
-        let _lock = crate::storage::lock_test_env();
-        let prev = save_key();
-        crate::env::set_var("ANTHROPIC_API_KEY", "   ");
-        assert!(!anthropic_api_key_env_configured());
-        crate::env::set_var("ANTHROPIC_API_KEY", "");
-        assert!(!anthropic_api_key_env_configured());
-        restore(prev);
+    match previous {
+        Some(value) => crate::env::set_var("JCODE_RUNTIME_PROVIDER", value),
+        None => crate::env::remove_var("JCODE_RUNTIME_PROVIDER"),
     }
 }

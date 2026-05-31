@@ -1036,6 +1036,43 @@ impl Provider for MultiProvider {
         }
     }
 
+    fn active_auth_method_label(&self) -> Option<&'static str> {
+        match self.active_provider() {
+            ActiveProvider::Claude => {
+                let anthropic = self.anthropic_provider()?;
+                Some(match anthropic.credential_mode_snapshot() {
+                    anthropic::AnthropicCredentialMode::OAuth => "OAuth",
+                    anthropic::AnthropicCredentialMode::ApiKey => "API key",
+                    // Auto prefers OAuth (Claude subscription) when available,
+                    // otherwise falls back to the API key. Mirror that exactly.
+                    anthropic::AnthropicCredentialMode::Auto => {
+                        if crate::auth::claude::load_credentials().is_ok() {
+                            "OAuth"
+                        } else {
+                            "API key"
+                        }
+                    }
+                })
+            }
+            ActiveProvider::OpenAI => {
+                let openai = self.openai_provider()?;
+                Some(match openai.credential_mode_snapshot() {
+                    openai::OpenAICredentialMode::OAuth => "OAuth",
+                    openai::OpenAICredentialMode::ApiKey => "API key",
+                    // Auto resolves to OAuth first when available, otherwise API key.
+                    openai::OpenAICredentialMode::Auto => {
+                        if crate::auth::codex::load_oauth_credentials().is_ok() {
+                            "OAuth"
+                        } else {
+                            "API key"
+                        }
+                    }
+                })
+            }
+            _ => None,
+        }
+    }
+
     fn supports_image_input(&self) -> bool {
         match self.active_provider() {
             ActiveProvider::Claude => self

@@ -749,6 +749,7 @@ pub(super) fn prepare_body_incremental(
 
     let total_prompts = app.display_user_message_count();
     let pending_count = input_ui::pending_prompt_count(app);
+    let prompt_number_offset = app.compacted_hidden_user_prompts();
 
     let mut prompt_num = messages[..prev_msg_count]
         .iter()
@@ -777,25 +778,34 @@ pub(super) fn prepare_body_incremental(
         match role {
             "user" => {
                 prompt_num += 1;
-                // Issue #138: multi-line user input was rendered as a single
-                // Line, which collapsed embedded newlines visually after
-                // submit. Defer to push_user_prompt_lines (used by the full
-                // rebuild path below) so multi-line content keeps its line
-                // breaks here too.
+                new_user_line_indices.push(new_lines.len());
                 new_user_prompt_texts.push(msg.content.clone());
                 let distance = total_prompts + pending_count + 1 - prompt_num;
                 let num_color = rainbow_prompt_color(distance);
-                push_user_prompt_lines(
-                    &mut new_lines,
-                    &mut new_raw_plain_lines,
-                    &mut new_line_raw_overrides,
-                    &mut new_line_copy_offsets,
-                    &mut new_user_line_indices,
-                    prompt_num,
-                    num_color,
-                    &msg.content,
-                    align,
+                let displayed_prompt_num = prompt_num + prompt_number_offset;
+                let raw_line = new_raw_plain_lines.len();
+                new_raw_plain_lines.push(msg.content.clone());
+                let prompt_width = unicode_width::UnicodeWidthStr::width(msg.content.as_str());
+                let prefix_width =
+                    unicode_width::UnicodeWidthStr::width(displayed_prompt_num.to_string().as_str())
+                        + unicode_width::UnicodeWidthStr::width("› ");
+                new_lines.push(
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{}", displayed_prompt_num),
+                            Style::default().fg(num_color),
+                        ),
+                        Span::styled("› ", Style::default().fg(user_color())),
+                        Span::styled(msg.content.clone(), Style::default().fg(user_text())),
+                    ])
+                    .alignment(align),
                 );
+                new_line_raw_overrides.push(Some(WrappedLineMap {
+                    raw_line,
+                    start_col: 0,
+                    end_col: prompt_width,
+                }));
+                new_line_copy_offsets.push(prefix_width);
             }
             "assistant" => {
                 let content_width = width.saturating_sub(4);
@@ -1205,6 +1215,7 @@ pub(super) fn prepare_body(
     markdown::set_center_code_blocks(centered);
     let display_width = width.saturating_sub(4) as usize;
     let mut prompt_num = 0usize;
+    let prompt_number_offset = app.compacted_hidden_user_prompts();
     let total_prompts = app.display_user_message_count();
     let pending_count = input_ui::pending_prompt_count(app);
 
@@ -1223,13 +1234,14 @@ pub(super) fn prepare_body(
                 user_prompt_texts.push(msg.content.clone());
                 let distance = total_prompts + pending_count + 1 - prompt_num;
                 let num_color = rainbow_prompt_color(distance);
+                let displayed_prompt_num = prompt_num + prompt_number_offset;
                 push_user_prompt_lines(
                     &mut lines,
                     &mut raw_plain_lines,
                     &mut line_raw_overrides,
                     &mut line_copy_offsets,
                     &mut user_line_indices,
-                    prompt_num,
+                    displayed_prompt_num,
                     num_color,
                     &msg.content,
                     align,

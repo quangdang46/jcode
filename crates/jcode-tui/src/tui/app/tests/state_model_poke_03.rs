@@ -615,7 +615,7 @@ fn test_tui_cerebras_paste_key_lifecycle_has_no_degraded_success_messages() {
         .expect("login prompt")
         .content
         .clone();
-    assert!(prompt.contains("**Cerebras API Key**"), "{prompt}");
+    assert!(prompt.contains("Cerebras API Key"), "{prompt}");
     assert!(
         prompt.contains("Stored variable: CEREBRAS_API_KEY"),
         "{prompt}"
@@ -628,7 +628,7 @@ fn test_tui_cerebras_paste_key_lifecycle_has_no_degraded_success_messages() {
         prompt.contains("Suggested default model: gpt-oss-120b"),
         "{prompt}"
     );
-    assert!(prompt.contains("**Paste your API key below**"), "{prompt}");
+    assert!(prompt.contains("Paste your API key below"), "{prompt}");
 
     let pending = app
         .pending_login
@@ -655,7 +655,7 @@ fn test_tui_cerebras_paste_key_lifecycle_has_no_degraded_success_messages() {
                     }
                     assert!(login.success, "unexpected failed login event: {login:?}");
                     assert_eq!(login.provider, "Cerebras");
-                    assert!(login.message.contains("**Cerebras API key saved.**"));
+                    assert!(login.message.contains("Cerebras API key saved."));
                     assert!(
                         login
                             .message
@@ -699,7 +699,7 @@ fn test_tui_cerebras_paste_key_lifecycle_has_no_degraded_success_messages() {
                     {
                         assert_eq!(model, "qwen-3-235b-a22b-instruct-2507");
                         assert_eq!(provider_key.as_deref(), Some("cerebras"));
-                        assert!(message.contains("**Cerebras is ready.**"), "{message}");
+                        assert!(message.contains("Cerebras is ready."), "{message}");
                         assert!(!message.contains("wrong-profile-first"), "{message}");
                     }
                     super::local::handle_bus_event(&mut app, Ok(event));
@@ -742,7 +742,7 @@ fn test_tui_cerebras_paste_key_lifecycle_has_no_degraded_success_messages() {
                 activation_events += 1;
                 assert_eq!(model, "qwen-3-235b-a22b-instruct-2507");
                 assert_eq!(provider_key.as_deref(), Some("cerebras"));
-                assert!(message.contains("**Cerebras is ready.**"), "{message}");
+                assert!(message.contains("Cerebras is ready."), "{message}");
             }
             _ => {}
         }
@@ -1877,7 +1877,7 @@ fn test_poke_status_reports_current_state() {
         ));
         assert!(app.display_messages().iter().any(|msg| {
             msg.content
-                .contains("Auto-poke: **ON**. 1 incomplete todo.")
+                .contains("Auto-poke: ON. 1 incomplete todo.")
         }));
 
         app.auto_poke_incomplete_todos = true;
@@ -1897,7 +1897,7 @@ fn test_poke_status_reports_current_state() {
         ));
         assert!(app.display_messages().iter().any(|msg| {
             msg.content
-                .contains("Auto-poke: **ON**. 1 incomplete todo.")
+                .contains("Auto-poke: ON. 1 incomplete todo.")
                 && msg.content.contains("A follow-up poke is queued.")
                 && msg.content.contains("A turn is currently running.")
         }));
@@ -2022,6 +2022,31 @@ fn test_poke_queues_when_turn_is_in_progress() {
         assert!(app.queued_messages()[0].contains("You have 2 incomplete todos"));
         assert!(!app.queued_messages()[0].contains("Pick up the newly discovered task"));
         assert!(!app.queued_messages()[0].contains("/poke off"));
+    });
+}
+
+#[test]
+fn test_btw_does_not_present_as_queued_when_turn_is_in_progress() {
+    with_temp_jcode_home(|| {
+        let mut app = create_test_app();
+        app.is_processing = true;
+
+        assert!(super::commands::handle_session_command(
+            &mut app,
+            "/btw should this fork context?"
+        ));
+
+        assert!(app.is_processing);
+        assert_eq!(app.status_notice(), Some("/btw noted".to_string()));
+        assert!(app.queued_messages().is_empty());
+        assert_eq!(app.hidden_queued_system_messages.len(), 1);
+        assert!(app.display_messages().iter().any(|msg| {
+            msg.content
+                .contains("/btw noted - answer will appear in the side panel.")
+        }));
+        assert!(!app.display_messages().iter().any(|msg| {
+            msg.content.to_ascii_lowercase().contains("queued /btw")
+        }));
     });
 }
 

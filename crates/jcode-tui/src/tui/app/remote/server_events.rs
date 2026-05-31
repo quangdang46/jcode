@@ -894,7 +894,7 @@ pub(in crate::tui::app) fn handle_server_event(
                             .to_string()
                     } else {
                         format!(
-                            "✓ Rewound to message {}. Removed {} message{}. Undo anytime with `/rewind undo`.",
+                            "✓ Rewound to message {}. Removed {} message{}. Undo anytime with /rewind undo.",
                             notice.message_index.unwrap_or_default(),
                             notice.changed_messages,
                             if notice.changed_messages == 1 {
@@ -995,6 +995,7 @@ pub(in crate::tui::app) fn handle_server_event(
             compacted_total,
             compacted_visible,
             compacted_remaining,
+            compacted_hidden_prompts,
             ..
         } => {
             if app.remote_session_id.as_deref() != Some(session_id.as_str()) {
@@ -1021,6 +1022,7 @@ pub(in crate::tui::app) fn handle_server_event(
                 compacted_total,
                 compacted_visible,
                 compacted_remaining,
+                compacted_hidden_prompts,
             );
             true
         }

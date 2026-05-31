@@ -38,6 +38,7 @@ pub use loading::{
     invalidate_session_list_cache, load_cached_sessions_grouped, load_servers, load_sessions,
     load_sessions_grouped,
 };
+pub(crate) use loading::latest_external_cli_session_secs;
 
 const SEARCH_CONTENT_BUDGET_BYTES: usize = 12_000;
 const DEFAULT_SESSION_SCAN_LIMIT: usize = 100;
@@ -327,6 +328,31 @@ impl SessionPicker {
     pub fn activate_catchup_filter(&mut self) {
         self.filter_mode = SessionFilterMode::CatchUp;
         self.rebuild_items();
+    }
+
+    /// Restrict the picker to a single external CLI source (onboarding flow:
+    /// "continue where you left off" in Codex or Claude Code).
+    pub fn activate_external_cli_filter(&mut self, mode: SessionFilterMode) {
+        self.filter_mode = mode;
+        self.rebuild_items();
+    }
+
+    /// Number of sessions currently visible under the active filter.
+    pub fn visible_session_count(&self) -> usize {
+        self.visible_sessions
+            .iter()
+            .filter_map(|session_ref| self.session_by_ref(*session_ref))
+            .count()
+    }
+
+    /// Resume target for the most recently active visible session, used by the
+    /// onboarding flow to auto-select the latest transcript on timeout.
+    pub fn latest_visible_resume_target(&self) -> Option<ResumeTarget> {
+        self.visible_sessions
+            .iter()
+            .filter_map(|session_ref| self.session_by_ref(*session_ref))
+            .max_by_key(|session| session.last_active_at.unwrap_or(session.last_message_time))
+            .map(|session| session.resume_target.clone())
     }
 
     pub fn selected_session(&self) -> Option<&SessionInfo> {

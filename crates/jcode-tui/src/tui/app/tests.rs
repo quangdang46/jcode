@@ -30,6 +30,8 @@ include!("tests/scroll_copy_01/part_02.rs");
 include!("tests/scroll_copy_02/part_01.rs");
 include!("tests/scroll_copy_02/part_02.rs");
 include!("tests/scroll_copy_03.rs");
+include!("tests/onboarding_flow.rs");
+include!("tests/onboarding_golden.rs");
 
 #[test]
 fn kv_cache_signature_prefix_match_allows_appended_messages() {
@@ -206,7 +208,7 @@ fn cache_stats_uses_remote_history_token_usage_totals() {
     ));
     let stats = app.display_messages().last().unwrap().content.clone();
     assert!(
-        stats.contains("- total_tokens_source: `remote_history`"),
+        stats.contains("- total_tokens_source: remote_history"),
         "{stats}"
     );
     assert!(
@@ -214,7 +216,7 @@ fn cache_stats_uses_remote_history_token_usage_totals() {
         "{stats}"
     );
     assert!(
-        stats.contains("- cache_totals_source: `remote_history`"),
+        stats.contains("- cache_totals_source: remote_history"),
         "{stats}"
     );
     assert!(
@@ -222,13 +224,10 @@ fn cache_stats_uses_remote_history_token_usage_totals() {
         "{stats}"
     );
     assert!(
-        stats.contains("- persisted_token_usage_source: `remote_history`"),
+        stats.contains("- persisted_token_usage_source: remote_history"),
         "{stats}"
     );
-    assert!(
-        stats.contains("- messages_with_token_usage: 3"),
-        "{stats}"
-    );
+    assert!(stats.contains("- messages_with_token_usage: 3"), "{stats}");
 }
 
 #[test]
