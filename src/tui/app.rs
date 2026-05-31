@@ -544,6 +544,9 @@ pub struct App {
     /// reminder is injected so the model produces a plan instead of
     /// executing.
     plan_mode: bool,
+    /// Current permission mode for tool-call gating (Shift+Tab cycling).
+    /// Synced with `dcg_bridge::GLOBAL_MODE` at startup and on every cycle.
+    permission_mode: dcg_core::Mode,
     is_processing: bool,
     streaming_text: String,
     should_quit: bool,
@@ -1073,6 +1076,40 @@ impl App {
     const KV_CACHE_OPTIMAL_OK_PCT: u8 = 85;
     const KV_CACHE_MIN_MISSED_TOKENS: u64 = 1_024;
     const KV_CACHE_MAX_MISS_SAMPLES: usize = 12;
+
+    /// Cycle to the next permission mode in the standard order.
+    /// Order: Default → AcceptEdits → Plan → Auto → DontAsk → BypassPermissions → Default
+    pub(super) fn cycle_permission_mode(&mut self) {
+        use dcg_core::Mode;
+        let next = match self.permission_mode {
+            Mode::Default => Mode::AcceptEdits,
+            Mode::AcceptEdits => Mode::Plan,
+            Mode::Plan => Mode::Auto,
+            Mode::Auto => Mode::DontAsk,
+            Mode::DontAsk => Mode::BypassPermissions,
+            Mode::BypassPermissions => Mode::Default,
+        };
+        self.permission_mode = next;
+        crate::dcg_bridge::set_mode(next);
+    }
+
+    /// Set the permission mode explicitly (from `/permission-mode` slash command).
+    pub(super) fn set_permission_mode(&mut self, mode: dcg_core::Mode) {
+        self.permission_mode = mode;
+        crate::dcg_bridge::set_mode(mode);
+    }
+
+    /// Human-readable label for the current permission mode.
+    pub(super) fn permission_mode_label(&self) -> &'static str {
+        match self.permission_mode {
+            dcg_core::Mode::Default => "default",
+            dcg_core::Mode::AcceptEdits => "acceptEdits",
+            dcg_core::Mode::Plan => "plan",
+            dcg_core::Mode::Auto => "auto",
+            dcg_core::Mode::DontAsk => "dontAsk",
+            dcg_core::Mode::BypassPermissions => "bypassPermissions",
+        }
+    }
 
     pub(super) fn begin_kv_cache_request(
         &mut self,

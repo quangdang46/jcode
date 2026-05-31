@@ -2460,6 +2460,15 @@ impl App {
             return Ok(());
         }
 
+        // Shift+Tab: cycle permission mode (Shift+Tab cycles through
+        // default → acceptEdits → plan → auto → dontAsk → bypassPermissions → default)
+        if code == KeyCode::Tab && modifiers.contains(KeyModifiers::SHIFT) {
+            self.cycle_permission_mode();
+            let label = self.permission_mode_label();
+            self.set_status_notice(format!("🔒 {} mode", label));
+            return Ok(());
+        }
+
         // When the model picker preview is visible, arrow keys navigate the picker list
         if self
             .inline_interactive_state

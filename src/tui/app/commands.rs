@@ -1671,6 +1671,37 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
         return true;
     }
 
+    if trimmed == "/permission-mode" || trimmed.starts_with("/permission-mode ") {
+        // Shift+Tab cycles modes. This slash command allows explicit mode selection.
+        //
+        //   /permission-mode           → show current mode
+        //   /permission-mode <mode>    → set mode (default|acceptEdits|plan|auto|dontAsk|bypassPermissions)
+        let rest = trimmed.strip_prefix("/permission-mode").unwrap_or_default().trim();
+        if rest.is_empty() {
+            let label = app.permission_mode_label();
+            app.push_display_message(DisplayMessage::system(format!(
+                "🔒 Permission mode: {}",
+                label
+            )));
+            return true;
+        }
+        let parsed = dcg_core::Mode::parse(rest);
+        if let Some(mode) = parsed {
+            app.set_permission_mode(mode);
+            let label = app.permission_mode_label();
+            app.push_display_message(DisplayMessage::system(format!(
+                "🔒 Permission mode set to: {}",
+                label
+            )));
+        } else {
+            app.push_display_message(DisplayMessage::error(format!(
+                "Unknown permission mode: '{}'. Valid: default, acceptEdits, plan, auto, dontAsk, bypassPermissions",
+                rest
+            )));
+        }
+        return true;
+    }
+
     if trimmed == "/fork" || trimmed.starts_with("/fork ") {
         // Issue #2: fork the current session into a new branch.
         //
