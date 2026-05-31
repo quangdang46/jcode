@@ -40,13 +40,17 @@ use crate::skill::SkillRegistry;
 use crate::tool::{Registry, ToolContext, ToolExecutionMode};
 use anyhow::Result;
 use futures::StreamExt;
+#[cfg(feature = "dcp")]
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::PathBuf;
+#[cfg(feature = "dcp")]
 use std::ptr::NonNull;
-use std::sync::{Arc, LazyLock, Mutex as StdMutex, Mutex};
+#[cfg(feature = "dcp")]
+use std::sync::Mutex;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
 
