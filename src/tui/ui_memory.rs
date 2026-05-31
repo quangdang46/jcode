@@ -1,9 +1,7 @@
 use crate::tui::color_support::rgb;
 use chrono::{DateTime, Utc};
-use ftui_core::geometry::Rect;
-use ftui_render::cell::PackedRgba;
 use ftui_style::{Color, Style};
-use ftui_text::text::{Line, Span, Text};
+use ftui_text::text::{Line, Span};
 
 #[derive(Clone)]
 pub(super) struct MemoryTilePlan {

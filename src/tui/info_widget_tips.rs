@@ -1,6 +1,6 @@
 use super::*;
 use ftui_core::geometry::Rect;
-use ftui_style::{Color, Style};
+use ftui_style::Style;
 use ftui_text::text::Line;
 use ftui_text::text::Span;
 use std::sync::Mutex;

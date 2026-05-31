@@ -1,4 +1,4 @@
-use ftui_text::text::{Line, Span, Text};
+use ftui_text::text::{Line, Span};
 use super::*;
 #[path = "ui_messages_cache.rs"]
 mod cache_support;
@@ -10,7 +10,6 @@ pub(super) use cache_support::get_cached_message_lines;
 use cache_support::{centered_wrap_width, left_pad_lines_for_centered_mode};
 use ftui_render::cell::PackedRgba;
 use ftui_style::Color;
-use ftui_widgets::block::Alignment;
 use std::borrow::Cow;
 use unicode_width::UnicodeWidthStr;
 

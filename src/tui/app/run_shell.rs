@@ -1,6 +1,4 @@
-use ftui_style::{Ansi16, MonoColor};
 use ratatui::DefaultTerminal;
-use crate::tui::compat::StyleCompatExt;
 use super::*;
 use crate::tui::TuiState;
 use crossterm::cursor::{RestorePosition, SavePosition};

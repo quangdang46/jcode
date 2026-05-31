@@ -1,14 +1,11 @@
-use ftui_style::{Ansi16, MonoColor};
-use crate::tui::compat::StyleCompatExt;
+use ftui_style::{Ansi16, Color, MonoColor, Style};
+use ftui_text::text::{Line, Span, Text};
 use crate::auth::AuthState;
 use crate::provider_catalog::LoginProviderDescriptor;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ftui_render::cell::PackedRgba;
-use ftui_style::{Color, Style};
-use ftui_text::text::{Line, Span, Text};
-use ftui_widgets::Widget;
-use ftui_layout::Flex;
 use ftui_text::wrap::WrapMode;
+use ftui_widgets::Widget;
 use ftui_widgets::block::{Alignment, Block};
 use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::paragraph::Paragraph;

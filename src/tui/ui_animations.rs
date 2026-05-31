@@ -2,7 +2,7 @@ use crate::tui::{TuiState, color_support::rgb};
 use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
 use ftui_render::frame::Frame;
-use ftui_style::{Color, Style};
+use ftui_style::Style;
 use ftui_text::text::{Line, Span, Text};
 use ftui_widgets::Widget;
 use ftui_widgets::block::Alignment;

@@ -48,7 +48,7 @@ use super::visual_debug::{
 use super::{DisplayMessage, DisplayMessageRoleExt, ProcessingStatus, TuiState};
 use crate::message::ToolCall;
 use ftui_core::geometry::Rect;
-use ftui_layout::{Constraint, Direction, Flex};
+use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
 use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span};

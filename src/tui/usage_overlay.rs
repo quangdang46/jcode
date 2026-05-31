@@ -5,7 +5,7 @@ use crate::tui::compat::StyleCompatExt;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ftui_core::geometry::Rect;
-use ftui_layout::{Constraint, Direction};
+use ftui_layout::Constraint;
 use ftui_render::frame::Frame;
 use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span, Text};

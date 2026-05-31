@@ -1,6 +1,5 @@
 use ftui_render::cell::PackedRgba;
 use ftui_style::Color as FtuiColor;
-use ftui_style::{Ansi16, MonoColor};
 use ftui_style::Rgb;
 use ftui_style::Style;
 use ftui_text::text::Line as FtuiLine;

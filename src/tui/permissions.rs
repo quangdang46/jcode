@@ -6,7 +6,7 @@ use anyhow::Result;
 use chrono::Utc;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ftui_core::geometry::Rect;
-use ftui_layout::{Constraint, Direction, Flex};
+use ftui_layout::{Constraint, Flex};
 use ftui_render::frame::Frame;
 use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span};

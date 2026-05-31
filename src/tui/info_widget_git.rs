@@ -2,7 +2,7 @@ use super::text::truncate_smart;
 use super::{GitInfo, InfoWidgetData};
 use crate::tui::color_support::rgb;
 use ftui_core::geometry::Rect;
-use ftui_style::{Color, Style};
+use ftui_style::Style;
 use ftui_text::text::{Line, Span};
 
 pub(super) fn render_git_widget(data: &InfoWidgetData, inner: Rect) -> Vec<Line<'static>> {

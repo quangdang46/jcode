@@ -4,8 +4,6 @@
 //! conversation on the right. Sessions are grouped by server for multi-server support.
 
 use super::color_support::rgb;
-use ftui_style::{Ansi16, MonoColor};
-use crate::tui::compat::StyleCompatExt;
 use crate::session::{CrashedSessionsInfo, Session};
 use crate::tui::{DisplayMessage, markdown};
 use anyhow::Result;
@@ -16,9 +14,10 @@ use ftui_core::geometry::Rect;
 use ftui_render::cell::PackedRgba;
 use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span, Text};
-use ftui_layout::{Constraint, Direction, Flex};
-use ftui_widgets::block::{Alignment, Block};
-use ftui_widgets::borders::{BorderType, Borders};
+use ftui_layout::{Alignment, Constraint, Flex};
+use ftui_widgets::borders::BorderType;
+use ftui_widgets::block::Block;
+use ftui_widgets::borders::Borders;
 use ftui_widgets::paragraph::Paragraph;
 use ftui_widgets::list::{List, ListItem, ListState};
 use ftui_text::wrap::WrapMode;

@@ -1,5 +1,5 @@
-use ftui_text::text::{Line, Span, Text};
-use ftui_style::{Ansi16, MonoColor};
+use ftui_text::text::{Line, Span};
+use ftui_style::Ansi16;
 use crate::tui::compat::StyleCompatExt;
 use super::*;
 use crate::tui::ui::{self, WrappedLineMap};

@@ -1,4 +1,4 @@
-use ftui_style::{Ansi16, Color, MonoColor, Style};
+use ftui_style::{Ansi16, Color, Style};
 use crate::tui::compat::StyleCompatExt;
 use ftui_render::frame::Frame;
 use ftui_text::text::{Line, Span};

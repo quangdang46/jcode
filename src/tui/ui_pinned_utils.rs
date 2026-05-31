@@ -1,6 +1,4 @@
 use super::*;
-use ftui_core::geometry::Rect;
-use ftui_style::Color;
 use ftui_style::Style;
 use std::collections::VecDeque;
 

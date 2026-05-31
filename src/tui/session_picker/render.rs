@@ -2,6 +2,7 @@ use ftui_style::MonoColor;
 use crate::tui::compat::StyleCompatExt;
 use super::*;
 use ftui_text::wrap::WrapMode;
+use ftui_widgets::borders::BorderType;
 
 impl SessionPicker {
     pub(super) fn crash_reason_line(session: &SessionInfo) -> Option<Line<'static>> {

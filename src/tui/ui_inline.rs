@@ -1,4 +1,4 @@
-use ftui_text::text::{Line, Span, Text};
+use ftui_text::text::{Line, Span};
 use ftui_style::MonoColor;
 use crate::tui::compat::StyleCompatExt;
 use super::*;

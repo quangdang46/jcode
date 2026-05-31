@@ -1,7 +1,5 @@
-use ftui_style::Rgb;
-use ftui_style::MonoColor;
 use crate::{message::ToolCall, tui::ui::tools_ui};
-use ftui_style::{Color, Style};
+use ftui_style::{Color, MonoColor, Rgb};
 use ftui_text::text::Span;
 
 pub(super) fn diff_add_color() -> Color {

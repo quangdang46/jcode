@@ -1,5 +1,5 @@
 use crate::tui::compat::StyleCompatExt;
-use ftui_style::{Ansi16, MonoColor};
+use ftui_style::Ansi16;
 use super::{
     accent_color, ai_color, ai_text, asap_color, clear_area, dim_color, get_grouped_changelog,
     header_icon_color, header_name_color, header_session_color, pending_color, queued_color, rgb,
@@ -13,7 +13,7 @@ use ftui_style::{Color, Style};
 use ftui_text::text::{Line, Span, Text};
 use ftui_widgets::{
     Widget,
-    block::{Alignment, Block},
+    block::Block,
     borders::Borders,
     paragraph::Paragraph,
 };

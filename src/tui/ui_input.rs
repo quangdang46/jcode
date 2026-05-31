@@ -1,4 +1,3 @@
-use ftui_style::MonoColor;
 use crate::tui::compat::StyleCompatExt;
 use super::inline_interactive_ui::format_elapsed;
 use super::tools_ui::{get_tool_summary, summarize_batch_running_tools_compact};
