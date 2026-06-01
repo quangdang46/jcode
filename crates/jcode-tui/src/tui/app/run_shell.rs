@@ -228,6 +228,17 @@ impl App {
     /// Run the TUI application
     /// Returns Some(session_id) if hot-reload was requested
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<RunResult> {
+        // Warm up the `@`-path file picker now, at the start of the run loop,
+        // so ffs's background filesystem scan overlaps with session startup and
+        // completions are ready before the user types `@`. Previously warm-up
+        // was deferred to the first `@` keystroke, forcing the user to wait out
+        // the full scan (hundreds of ms on a large repo) right when they wanted
+        // results. `ensure` is non-blocking + idempotent and only runs when a
+        // valid working dir is known (otherwise the lazy path still applies).
+        if let Some(dir) = self.session.working_dir.as_deref() {
+            let _ = self.at_picker.borrow_mut().ensure(Some(dir));
+        }
+
         let mut event_stream = EventStream::new();
         let mut redraw_period = crate::tui::redraw_interval(&self);
         let mut redraw_interval = interval(redraw_period);
@@ -329,6 +340,12 @@ impl App {
 
     /// Run the TUI in remote mode, connecting to a server
     pub async fn run_remote(mut self, mut terminal: DefaultTerminal) -> Result<RunResult> {
+        // See `run`: warm up the @-path picker eagerly so its scan overlaps
+        // session startup instead of stalling the first `@` keystroke.
+        if let Some(dir) = self.session.working_dir.as_deref() {
+            let _ = self.at_picker.borrow_mut().ensure(Some(dir));
+        }
+
         let mut event_stream = EventStream::new();
         let mut redraw_period = crate::tui::redraw_interval(&self);
         let mut redraw_interval = interval(redraw_period);
