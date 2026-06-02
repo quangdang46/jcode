@@ -143,6 +143,7 @@ impl AtPicker {
             enable_content_indexing: false,
             cache_budget: None,
             watch: true,
+            follow_symlinks: false,
         };
 
         FilePicker::new_with_shared_state(

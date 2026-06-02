@@ -35,7 +35,9 @@ serde_json = { version = "1", features = ["raw_value"] }
 # Utilities
 anyhow = "1"
 thiserror = "1"
-ffs-search = "=0.1.3"
+# Resolved by [workspace.dependencies] in the root Cargo.toml to point at
+# the fast_file_search main branch (carries the @-mention system).
+ffs-search.workspace = true
 libc = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -105,6 +107,8 @@ test-support = ["jcode-app-core/test-support"]
 # Enables the downstream test-support helpers for *this* crate's own test
 # target. Feature unification applies this only to test/bench/example builds.
 jcode-app-core = { path = "../jcode-app-core", features = ["test-support"] }
+# Used by the test module in `state_ui_messages.rs` for the `Role` enum.
+jcode-message-types = { path = "../jcode-message-types" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 global-hotkey = "0.7"
