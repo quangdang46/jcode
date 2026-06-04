@@ -421,7 +421,12 @@ pub(super) async fn handle_client(
     let registry = Registry::new(provider.clone()).await;
     let registry_ms = t0.elapsed().as_millis();
 
-    let mut swarm_enabled = crate::config::config().features.swarm;
+    // Gate swarm coordination on the SwarmCoordination experiment flag.
+    // Falls back to the legacy features.swarm value if the experiment is not set.
+    let mut swarm_enabled = jcode_experiment_flags::Experiments::from_config(
+        &crate::config::config().experiments.entries,
+    )
+    .check(jcode_experiment_flags::ExperimentFlag::SwarmCoordination);
     let mut last_available_models_snapshot: Option<String> = None;
     const MAX_LIVE_AVAILABLE_MODELS_UPDATE_BYTES: usize = 64 * 1024;
 

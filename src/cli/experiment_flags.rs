@@ -57,3 +57,49 @@ pub fn run_experiment_disable_command(key: &str) -> Result<()> {
     eprintln!("[jcode] Experiment '{key}' disabled.");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jcode_experiment_flags::{ExperimentFlag, Experiments};
+
+    #[test]
+    fn test_run_experiment_list_json_roundtrip() {
+        // Build expected JSON output.
+        let config = crate::config::Config::default();
+        let experiments = Experiments::from_config(&config.experiments.entries);
+        let states = experiments.all_flag_states();
+        let json_str = serde_json::to_string_pretty(&states).unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap();
+        // We should have exactly EXPERIMENT_FLAGS.len() entries.
+        assert_eq!(parsed.len(), jcode_experiment_flags::EXPERIMENT_FLAGS.len());
+        // Each entry should have "flag", "key", "enabled", "default_enabled" fields.
+        for (i, entry) in parsed.iter().enumerate() {
+            assert!(entry.get("flag").is_some(), "missing 'flag' at index {i}");
+            assert!(entry.get("key").is_some(), "missing 'key' at index {i}");
+            assert!(entry.get("enabled").is_some(), "missing 'enabled' at index {i}");
+        }
+    }
+
+    #[test]
+    fn test_run_experiment_enable_disable_roundtrip() {
+        // Use a temp JCODE_HOME to isolate from user config.
+        let tmp = tempfile::tempdir().unwrap();
+        // JCODE_HOME points directly to the jcode data directory.
+        std::env::set_var("JCODE_HOME", tmp.path().to_str().unwrap());
+        // Initially hooks_v2 should be disabled by default.
+        let config = crate::config::Config::load();
+        assert!(!config.experiments.entries.get("hooks_v2").copied().unwrap_or(false));
+        // Enable and verify.
+        run_experiment_enable_command("hooks_v2").unwrap();
+        crate::config::invalidate_config_cache();
+        let config2 = crate::config::Config::load();
+        assert_eq!(config2.experiments.entries.get("hooks_v2"), Some(&true));
+        // Disable and verify.
+        run_experiment_disable_command("hooks_v2").unwrap();
+        crate::config::invalidate_config_cache();
+        let config3 = crate::config::Config::load();
+        assert_eq!(config3.experiments.entries.get("hooks_v2"), Some(&false));
+        std::env::remove_var("JCODE_HOME");
+    }
+}

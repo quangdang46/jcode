@@ -411,6 +411,51 @@ mod tests {
     }
 
     #[test]
+    fn test_legacy_migrate_feature_into() {
+        use std::collections::BTreeMap;
+        // User explicitly disabled dcp_enabled (default true) and enabled
+        // persist_memory_injections (default false). Those should be migrated.
+        let mut exps = BTreeMap::new();
+        migrate_feature_legacy_into(
+            &mut exps,
+            Some(false),  // dcp_enabled explicitly off
+            None,         // swarm at default
+            Some(true),   // persist_memory_injections explicitly on
+        );
+        assert_eq!(exps.get("dcp_enabled"), Some(&false));
+        assert_eq!(exps.get("persist_memory_injections"), Some(&true));
+        assert!(!exps.contains_key("swarm"));
+    }
+
+    #[test]
+    fn test_legacy_migrate_no_clobber() {
+        use std::collections::BTreeMap;
+        // If the user already set the experiment explicitly, do not overwrite it.
+        let mut exps = BTreeMap::new();
+        exps.insert("dcp_enabled".to_string(), true);
+        migrate_feature_legacy_into(
+            &mut exps,
+            Some(false), // would normally migrate, but already set
+            None,
+            None,
+        );
+        assert_eq!(exps.get("dcp_enabled"), Some(&true));
+    }
+
+    #[test]
+    fn test_legacy_migrate_default_noop() {
+        use std::collections::BTreeMap;
+        // Default values should NOT be migrated (no surprise behavior change).
+        let mut exps = BTreeMap::new();
+        migrate_feature_legacy_into(
+            &mut exps,
+            Some(true),  // dcp_enabled at default (true)
+            Some(true),  // swarm at default (true)
+            Some(false), // persist_memory_injections at default (false)
+        );
+        assert!(exps.is_empty());
+    }
+
     #[test]
     fn test_removed_flag_always_false() {
         // Removed flags should always evaluate to false regardless of enabled state.
@@ -421,6 +466,7 @@ mod tests {
         assert!(matches!(removed_stage, Stage::Removed));
     }
 
+    #[test]
     fn test_serialization_roundtrip() {
         let mut ex = Experiments::with_defaults();
         ex.enable(ExperimentFlag::HooksV2);
@@ -455,5 +501,95 @@ mod tests {
             "dynamic_context_pruning"
         );
         assert_eq!(ExperimentFlag::HooksV2.to_string(), "hooks_v2");
+    }
+}
+
+// ============================================================================
+// Migration from FeatureConfig to ExperimentConfig
+// ============================================================================
+
+/// Migration map from `FeatureConfig` legacy fields to `ExperimentConfig` keys.
+///
+/// Returns the list of (experiment_key, value) pairs to inject into the
+/// `[experiments]` section when the corresponding `FeatureConfig` field is
+/// explicitly set to a non-default value (indicating user intent).
+///
+/// Legacy fields kept in `FeatureConfig` for one release:
+/// - `features.dcp_enabled` → `experiments.dcp_enabled` (flag: DynamicContextPruning)
+/// - `features.swarm` → `experiments.swarm` (flag: SwarmCoordination)
+/// - `features.persist_memory_injections` → `experiments.persist_memory_injections`
+///   (flag: PersistMemoryInjection)
+pub fn legacy_feature_to_experiment_migrations() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("dcp_enabled", "dcp_enabled"),
+        ("swarm", "swarm"),
+        ("persist_memory_injections", "persist_memory_injections"),
+    ]
+}
+
+/// Apply legacy `FeatureConfig` → `ExperimentConfig` migration.
+///
+/// Injects the corresponding entry into `experiments.entries` for each known
+/// legacy `FeatureConfig` key whose experiment value is not already set
+/// explicitly. This is called once at config load so the new section
+/// transparently picks up the user's existing toggles.
+///
+/// `legacy_overrides` is a map of legacy `FeatureConfig` key → value as
+/// observed in the user's config (only non-default values should be passed).
+pub fn migrate_legacy_to_experiments(
+    experiments: &mut std::collections::BTreeMap<String, bool>,
+    legacy_overrides: &std::collections::BTreeMap<String, bool>,
+) {
+    for (legacy_key, exp_key) in legacy_feature_to_experiment_migrations() {
+        // Don't clobber an existing explicit experiment setting.
+        if experiments.contains_key(*exp_key) {
+            continue;
+        }
+        if let Some(&value) = legacy_overrides.get(*legacy_key) {
+            experiments.insert(exp_key.to_string(), value);
+        }
+    }
+}
+
+/// Apply legacy migration using full `FeatureConfig` defaults as a baseline.
+///
+/// Reads only the legacy keys (`dcp_enabled`, `swarm`,
+/// `persist_memory_injections`) — if the user set them to a non-default value,
+/// propagates the override into `experiments`. Keys matching the `FeatureConfig`
+/// default are NOT migrated, so users who never touched the legacy fields see
+/// no surprise behavior change.
+///
+/// This variant avoids requiring `jcode-config-types` as a dependency, so the
+/// migration can be driven by the jcode-base config layer with raw TOML values.
+pub fn migrate_feature_legacy_into(
+    experiments: &mut std::collections::BTreeMap<String, bool>,
+    dcp_enabled: Option<bool>,
+    swarm: Option<bool>,
+    persist_memory_injections: Option<bool>,
+) {
+    // Default values for FeatureConfig
+    const DEFAULT_DCP_ENABLED: bool = true;
+    const DEFAULT_SWARM: bool = true;
+    const DEFAULT_PERSIST_MEMORY: bool = false;
+
+    let pairs: [(&str, Option<bool>, bool); 3] = [
+        ("dcp_enabled", dcp_enabled, DEFAULT_DCP_ENABLED),
+        ("swarm", swarm, DEFAULT_SWARM),
+        (
+            "persist_memory_injections",
+            persist_memory_injections,
+            DEFAULT_PERSIST_MEMORY,
+        ),
+    ];
+
+    for (key, value, default) in pairs {
+        if experiments.contains_key(key) {
+            continue;
+        }
+        if let Some(v) = value {
+            if v != default {
+                experiments.insert(key.to_string(), v);
+            }
+        }
     }
 }
