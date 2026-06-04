@@ -63,6 +63,7 @@ members = [
     "crates/jcode-mobile-core",
     "crates/jcode-mobile-sim",
     "crates/jcode-desktop",
+    "crates/jcode-mempalace-adapter",
 ]
 
 # Local override: build against the fast_file_search main branch which
