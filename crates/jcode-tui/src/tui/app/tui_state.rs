@@ -1453,7 +1453,9 @@ impl crate::tui::TuiState for App {
         self.usage_overlay.as_ref()
     }
 
-    fn experiment_popup(&self) -> Option<&RefCell<crate::tui::experiment_popup::ExperimentPopupState>> {
+    fn experiment_popup(
+        &self,
+    ) -> Option<&RefCell<crate::tui::experiment_popup::ExperimentPopupState>> {
         self.experiment_popup.as_ref()
     }
 

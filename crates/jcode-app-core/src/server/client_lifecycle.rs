@@ -2430,9 +2430,7 @@ pub(super) async fn handle_client(
                 let mut config = crate::config::Config::load();
                 config.experiments.entries.insert(key, enabled);
                 if let Err(e) = config.save() {
-                    crate::logging::error(&format!(
-                        "Failed to save experiment config: {e}"
-                    ));
+                    crate::logging::error(&format!("Failed to save experiment config: {e}"));
                 }
                 crate::config::invalidate_config_cache();
                 let _ = client_event_tx.send(ServerEvent::Done { id });

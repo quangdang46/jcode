@@ -2541,9 +2541,10 @@ pub(super) fn handle_modal_key(
                     }
                 }
                 if !changes.is_empty() {
-                    app.push_display_message(jcode_tui_messages::DisplayMessage::system(
-                        format!("Applied {} experiment flag change(s).", changes.len()),
-                    ));
+                    app.push_display_message(jcode_tui_messages::DisplayMessage::system(format!(
+                        "Applied {} experiment flag change(s).",
+                        changes.len()
+                    )));
                 }
                 app.experiment_popup = None;
             }

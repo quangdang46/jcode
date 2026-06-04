@@ -1223,7 +1223,5 @@ pub enum ServerEvent {
 
     /// Current experiment flag states (response to ExperimentList)
     #[serde(rename = "experiment_flags")]
-    ExperimentFlags {
-        flags: Vec<serde_json::Value>,
-    },
+    ExperimentFlags { flags: Vec<serde_json::Value> },
 }

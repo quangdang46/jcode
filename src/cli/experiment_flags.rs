@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
-use jcode_experiment_flags::{
-    Experiments, Stage, EXPERIMENT_FLAGS,
-};
+use jcode_experiment_flags::{EXPERIMENT_FLAGS, Experiments, Stage};
 
 pub fn run_experiment_list_command(json: bool) -> Result<()> {
     let config = crate::config::config();
@@ -77,7 +75,10 @@ mod tests {
         for (i, entry) in parsed.iter().enumerate() {
             assert!(entry.get("flag").is_some(), "missing 'flag' at index {i}");
             assert!(entry.get("key").is_some(), "missing 'key' at index {i}");
-            assert!(entry.get("enabled").is_some(), "missing 'enabled' at index {i}");
+            assert!(
+                entry.get("enabled").is_some(),
+                "missing 'enabled' at index {i}"
+            );
         }
     }
 
@@ -89,7 +90,14 @@ mod tests {
         std::env::set_var("JCODE_HOME", tmp.path().to_str().unwrap());
         // Initially hooks_v2 should be disabled by default.
         let config = crate::config::Config::load();
-        assert!(!config.experiments.entries.get("hooks_v2").copied().unwrap_or(false));
+        assert!(
+            !config
+                .experiments
+                .entries
+                .get("hooks_v2")
+                .copied()
+                .unwrap_or(false)
+        );
         // Enable and verify.
         run_experiment_enable_command("hooks_v2").unwrap();
         crate::config::invalidate_config_cache();

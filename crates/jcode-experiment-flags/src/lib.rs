@@ -34,7 +34,9 @@ pub enum Stage {
 // ============================================================================
 
 /// Unique identifier for each experiment flag (enum-based, type-safe).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, strum::Display)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, strum::Display,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum ExperimentFlag {
     /// Dynamic Context Pruning
@@ -190,10 +192,10 @@ impl Experiments {
     /// Check if a flag is enabled.
     pub fn check(&self, flag: ExperimentFlag) -> bool {
         // Removed flags always evaluate to false
-        if let Some(spec) = EXPERIMENT_FLAGS.iter().find(|s| s.id == flag) {
-            if matches!(spec.stage, Stage::Removed) {
-                return false;
-            }
+        if let Some(spec) = EXPERIMENT_FLAGS.iter().find(|s| s.id == flag)
+            && matches!(spec.stage, Stage::Removed)
+        {
+            return false;
         }
         self.enabled.contains(&flag)
     }
@@ -418,9 +420,9 @@ mod tests {
         let mut exps = BTreeMap::new();
         migrate_feature_legacy_into(
             &mut exps,
-            Some(false),  // dcp_enabled explicitly off
-            None,         // swarm at default
-            Some(true),   // persist_memory_injections explicitly on
+            Some(false), // dcp_enabled explicitly off
+            None,        // swarm at default
+            Some(true),  // persist_memory_injections explicitly on
         );
         assert_eq!(exps.get("dcp_enabled"), Some(&false));
         assert_eq!(exps.get("persist_memory_injections"), Some(&true));
@@ -586,10 +588,10 @@ pub fn migrate_feature_legacy_into(
         if experiments.contains_key(key) {
             continue;
         }
-        if let Some(v) = value {
-            if v != default {
-                experiments.insert(key.to_string(), v);
-            }
+        if let Some(v) = value
+            && v != default
+        {
+            experiments.insert(key.to_string(), v);
         }
     }
 }

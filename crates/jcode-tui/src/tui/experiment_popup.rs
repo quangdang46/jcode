@@ -1,5 +1,5 @@
 use crossterm::event::KeyCode;
-use jcode_experiment_flags::{ExperimentFlag, Experiments, Stage, EXPERIMENT_FLAGS};
+use jcode_experiment_flags::{EXPERIMENT_FLAGS, ExperimentFlag, Experiments, Stage};
 
 /// State for the experiment flags popup overlay.
 #[derive(Debug, Clone)]
