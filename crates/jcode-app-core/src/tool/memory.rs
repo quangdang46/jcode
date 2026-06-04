@@ -137,9 +137,6 @@ impl Tool for MemoryTool {
     }
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
-        
-        
-
         let input: MemoryInput = serde_json::from_value(input)?;
         let action_label = input.action.clone();
         let session_id_for_error = ctx.session_id.clone();
