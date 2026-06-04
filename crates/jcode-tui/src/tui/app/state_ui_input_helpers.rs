@@ -103,6 +103,8 @@ pub(super) const REGISTERED_COMMANDS: &[RegisteredCommand] = &[
     RegisteredCommand::public("/context", "Show the full session context snapshot"),
     RegisteredCommand::public("/version", "Show current version"),
     RegisteredCommand::public("/changelog", "Show recent changes in this build"),
+    RegisteredCommand::public("/experimental", "Toggle experiment flags with a popup"),
+    RegisteredCommand::hidden("/experiments", "Alias for /experimental"),
     RegisteredCommand::public("/info", "Show session info and tokens"),
     RegisteredCommand::public("/usage", "Show connected provider usage limits"),
     RegisteredCommand::public("/feedback", "Send feedback about jcode"),

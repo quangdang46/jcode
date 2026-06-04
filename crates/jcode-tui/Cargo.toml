@@ -85,6 +85,7 @@ jcode-tui-tool-display = { path = "../jcode-tui-tool-display" }
 jcode-tui-usage-overlay = { path = "../jcode-tui-usage-overlay" }
 jcode-terminal-image = { path = "../jcode-terminal-image" }
 jcode-tui-workspace = { path = "../jcode-tui-workspace" }
+jcode-experiment-flags = { path = "../jcode-experiment-flags" }
 
 [features]
 default = ["pdf", "embeddings"]

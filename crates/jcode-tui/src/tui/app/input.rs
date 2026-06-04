@@ -2522,6 +2522,36 @@ pub(super) fn handle_modal_key(
         return Ok(true);
     }
 
+    if app.experiment_popup.is_some() {
+        use crate::tui::experiment_popup::ExperimentPopupAction;
+        let action = {
+            let mut popup = app.experiment_popup.as_ref().unwrap().borrow_mut();
+            popup.handle_key(code)
+        };
+        match action {
+            ExperimentPopupAction::Cancel => {
+                app.experiment_popup = None;
+            }
+            ExperimentPopupAction::Apply { changes } => {
+                for (key, enabled) in &changes {
+                    if *enabled {
+                        let _ = super::commands::handle_experiment_enable_local(app, key);
+                    } else {
+                        let _ = super::commands::handle_experiment_disable_local(app, key);
+                    }
+                }
+                if !changes.is_empty() {
+                    app.push_display_message(jcode_tui_messages::DisplayMessage::system(
+                        format!("Applied {} experiment flag change(s).", changes.len()),
+                    ));
+                }
+                app.experiment_popup = None;
+            }
+            ExperimentPopupAction::Continue => {}
+        }
+        return Ok(true);
+    }
+
     if app.copy_selection_mode {
         if modifiers.contains(KeyModifiers::CONTROL)
             && matches!(code, KeyCode::Char('c') | KeyCode::Char('d'))
@@ -3357,6 +3387,7 @@ impl App {
             || super::commands::handle_feedback_command(self, trimmed)
             || super::state_ui::handle_info_command(self, trimmed)
             || super::auth::handle_auth_command(self, trimmed)
+            || super::commands::handle_experimental_command(self, trimmed)
             || super::tui_lifecycle_runtime::handle_dev_command(self, trimmed);
         if handled {
             if trimmed.starts_with('/') {

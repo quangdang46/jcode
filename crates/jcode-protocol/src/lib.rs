@@ -441,6 +441,8 @@ impl Request {
             Request::CommSubscribeChannel { id, .. } => *id,
             Request::CommUnsubscribeChannel { id, .. } => *id,
             Request::CommAwaitMembers { id, .. } => *id,
+            Request::ExperimentList { id } => *id,
+            Request::ExperimentSet { id, .. } => *id,
         }
     }
 

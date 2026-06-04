@@ -35,6 +35,7 @@ pub mod test_harness;
 mod ui;
 mod ui_diff;
 pub mod usage_overlay;
+pub mod experiment_popup;
 pub mod visual_debug;
 pub mod workspace_client;
 pub use jcode_tui_workspace::workspace_map;
@@ -346,6 +347,8 @@ pub trait TuiState {
     fn account_picker_overlay(&self) -> Option<&std::cell::RefCell<account_picker::AccountPicker>>;
     /// Usage overlay for /usage command
     fn usage_overlay(&self) -> Option<&std::cell::RefCell<usage_overlay::UsageOverlay>>;
+    /// Experiment flags popup for /experimental command
+    fn experiment_popup(&self) -> Option<&std::cell::RefCell<experiment_popup::ExperimentPopupState>> { None }
     /// Working directory for this session
     fn working_dir(&self) -> Option<String>;
     /// Monotonic clock for viewport animations

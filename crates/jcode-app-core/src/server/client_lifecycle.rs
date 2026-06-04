@@ -2409,6 +2409,30 @@ pub(super) async fn handle_client(
                 .await;
             }
 
+            Request::ExperimentList { id: _ } => {
+                let config = crate::config::config();
+                let experiments =
+                    jcode_experiment_flags::Experiments::from_config(&config.experiments.entries);
+                let states = experiments.all_flag_states();
+                let flags: Vec<serde_json::Value> = states
+                    .iter()
+                    .map(|s| serde_json::to_value(s).unwrap())
+                    .collect();
+                let _ = client_event_tx.send(ServerEvent::ExperimentFlags { flags });
+            }
+
+            Request::ExperimentSet { id, key, enabled } => {
+                let mut config = crate::config::Config::load();
+                config.experiments.entries.insert(key, enabled);
+                if let Err(e) = config.save() {
+                    crate::logging::error(&format!(
+                        "Failed to save experiment config: {e}"
+                    ));
+                }
+                crate::config::invalidate_config_cache();
+                let _ = client_event_tx.send(ServerEvent::Done { id });
+            }
+
             // These are handled via channels, not direct requests from TUI
             Request::ClientDebugCommand { id, .. } => {
                 handle_client_debug_command(id, &client_event_tx).await;
