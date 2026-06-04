@@ -40,6 +40,7 @@ pub mod notifications;
 pub mod overnight;
 pub mod perf;
 pub mod prompt_templates;
+pub mod prompt_placeholders;
 pub mod replay;
 pub mod restart_snapshot;
 pub mod sandbox;
