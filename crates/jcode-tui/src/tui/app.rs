@@ -611,10 +611,6 @@ pub struct App {
     kv_cache_miss_samples: Vec<KvCacheMissSample>,
     // Total cost in USD (for API-key providers)
     total_cost: f32,
-    // Estimated cost in USD for subscription/OAuth providers (Anthropic, etc.)
-    // where the user is not billed per token but we can still show what the
-    // equivalent API usage would have cost. None when no estimate is available.
-    estimated_cost: Option<f32>,
     // Cached pricing (input $/1M tokens, output $/1M tokens)
     cached_prompt_price: Option<f32>,
     cached_completion_price: Option<f32>,
@@ -711,8 +707,10 @@ pub struct App {
     thought_line_inserted: bool,
     // Buffer for accumulating thinking content during a thinking session
     thinking_buffer: String,
-    // Whether we've emitted the 💭 prefix for the current thinking session
+    // Whether the legacy single-line thought prefix was emitted this session
     thinking_prefix_emitted: bool,
+    // Whether we are currently streaming reasoning into an open blockquote region
+    reasoning_streaming: bool,
     // Hot-reload: if set, exec into new binary with this session ID (no rebuild)
     reload_requested: Option<String>,
     // Hot-rebuild: if set, do full git pull + cargo build + tests then exec
@@ -763,6 +761,10 @@ pub struct App {
     copy_selection_pending_anchor: Option<crate::tui::CopySelectionPoint>,
     copy_selection_dragging: bool,
     copy_selection_goal_column: Option<usize>,
+    /// While drag-selecting with the mouse held at the top/bottom edge of a pane,
+    /// keep auto-scrolling on every tick (browser-style) until the drag leaves the
+    /// edge or ends. Stores the pane and whether to scroll upward.
+    copy_selection_edge_autoscroll: Option<(crate::tui::CopySelectionPane, bool)>,
     // Debug socket broadcast channel (if enabled)
     debug_tx: Option<tokio::sync::broadcast::Sender<super::backend::DebugEvent>>,
     // Remote provider info (set when running in remote mode)
@@ -880,6 +882,9 @@ pub struct App {
     diagram_pane_ratio_from: u8,
     diagram_pane_ratio_target: u8,
     diagram_pane_anim_start: Option<Instant>,
+    // Set once the user manually resizes the pane (drag or +/- keys), so the
+    // adaptive image-width default stops overriding their explicit choice.
+    diagram_pane_ratio_user_adjusted: bool,
     // Whether the pinned diagram pane is visible
     diagram_pane_enabled: bool,
     // Position of pinned diagram pane (side or top)
@@ -1049,6 +1054,10 @@ pub struct App {
     rate_limit_pending_message: Option<PendingRemoteMessage>,
     // Last turn-level stream error (used by /fix to choose recovery actions)
     last_stream_error: Option<String>,
+    // Raw text of the most recent user prompt that started a turn. Restored to the
+    // input box if the turn fails (e.g. "token refresh needed") so the user does not
+    // lose what they typed and can resend after recovering.
+    last_submitted_input: Option<String>,
     // Store reload info to pass to agent after reconnection (remote mode)
     reload_info: Vec<String>,
     // Debug trace for scripted testing

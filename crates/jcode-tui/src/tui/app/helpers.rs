@@ -438,8 +438,6 @@ pub(super) fn pretty_model_display_name(model: &str) -> String {
         // `-<major>-<minor>` version into `<major>.<minor>` and title-case the
         // family/tier words.
         prettify_claude(core)
-    } else if lower.starts_with("gemini-") {
-        title_case_dashed(core)
     } else {
         title_case_dashed(core)
     };
@@ -701,6 +699,21 @@ pub(super) fn build_resume_command(
             let imported_id = crate::casr_adapter::imported_opencode_session_id(session_id);
             let args = resume_invocation_args(&imported_id, socket);
             let title = format!("◌ OpenCode {}", &session_id[..session_id.len().min(8)]);
+            (exe, args, title)
+        }
+        ResumeTarget::ForeignSession {
+            provider_slug,
+            session_id,
+            ..
+        } => {
+            let exe = launch_client_executable();
+            let imported_id =
+                crate::casr_adapter::imported_session_id_for_provider(&provider_slug, session_id);
+            let args = resume_invocation_args(&imported_id, socket);
+            let title = format!(
+                "💾 {provider_slug} {}",
+                &session_id[..session_id.len().min(8)]
+            );
             (exe, args, title)
         }
     }

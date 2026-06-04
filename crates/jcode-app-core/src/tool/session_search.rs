@@ -28,7 +28,6 @@ use jcode_session_types::{
     session_search_format_datetime as format_datetime,
     session_search_path_matches_query as path_matches_query,
     session_search_raw_matches_query as raw_matches_query,
-    session_search_truncate_title_text as truncate_title_text,
     session_search_working_dir_matches as working_dir_matches,
 };
 use serde::{Deserialize, Serialize};

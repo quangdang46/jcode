@@ -71,11 +71,7 @@ impl ExternalMessageRecord {
         let mut text = msg.content.clone();
         if !msg.tool_calls.is_empty() {
             for tc in &msg.tool_calls {
-                text.push_str(&format!(
-                    "\n[Tool: {}] {}",
-                    tc.name,
-                    tc.arguments.to_string()
-                ));
+                text.push_str(&format!("\n[Tool: {}] {}", tc.name, tc.arguments));
             }
         }
         if !msg.tool_results.is_empty() {
@@ -357,6 +353,165 @@ pub fn list_opencode_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSe
     list_via_casr_for_slug("opencode", Some(scan_limit))
 }
 
+/// Enumerate Gemini sessions via CASR.
+pub fn list_gemini_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("gemini", None)
+}
+
+pub fn list_gemini_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("gemini", Some(scan_limit))
+}
+
+/// Enumerate Cursor sessions via CASR.
+pub fn list_cursor_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("cursor", None)
+}
+
+pub fn list_cursor_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("cursor", Some(scan_limit))
+}
+
+/// Enumerate Cline sessions via CASR.
+pub fn list_cline_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("cline", None)
+}
+
+pub fn list_cline_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("cline", Some(scan_limit))
+}
+
+/// Enumerate Aider sessions via CASR.
+pub fn list_aider_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("aider", None)
+}
+
+pub fn list_aider_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("aider", Some(scan_limit))
+}
+
+/// Enumerate Amp sessions via CASR.
+pub fn list_amp_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("amp", None)
+}
+
+pub fn list_amp_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("amp", Some(scan_limit))
+}
+
+/// Enumerate ChatGPT sessions via CASR.
+pub fn list_chatgpt_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("chatgpt", None)
+}
+
+pub fn list_chatgpt_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("chatgpt", Some(scan_limit))
+}
+
+/// Enumerate ClawdBot sessions via CASR.
+pub fn list_clawdbot_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("clawdbot", None)
+}
+
+pub fn list_clawdbot_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("clawdbot", Some(scan_limit))
+}
+
+/// Enumerate Vibe sessions via CASR.
+pub fn list_vibe_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("vibe", None)
+}
+
+pub fn list_vibe_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("vibe", Some(scan_limit))
+}
+
+/// Enumerate Factory sessions via CASR.
+pub fn list_factory_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("factory", None)
+}
+
+pub fn list_factory_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("factory", Some(scan_limit))
+}
+
+/// Enumerate OpenClaw sessions via CASR.
+pub fn list_openclaw_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("openclaw", None)
+}
+
+pub fn list_openclaw_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("openclaw", Some(scan_limit))
+}
+
+/// Enumerate Kiro sessions via CASR.
+pub fn list_kiro_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("kiro", None)
+}
+
+pub fn list_kiro_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("kiro", Some(scan_limit))
+}
+
+/// Enumerate jcode-native sessions via CASR (rare; jcode is the home
+/// provider — most callers use the local `jcode-base` session store).
+pub fn list_jcode_sessions() -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("jcode", None)
+}
+
+pub fn list_jcode_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCodeSessionInfo>> {
+    list_via_casr_for_slug("jcode", Some(scan_limit))
+}
+
+/// Enumerate every installed CASR provider's sessions in a single pass.
+///
+/// Uses `casr::discovery::ProviderRegistry::default_registry()` to
+/// discover every provider, then for each provider that supports
+/// `list_sessions()` (i.e. the path-based providers; Claude Code, Codex,
+/// etc., but not pure database providers like Amp/ChatGPT) and is
+/// detected as installed, we read its session list via the provider's
+/// own `read_session` to populate a `ClaudeCodeSessionInfo`.
+///
+/// Returns sessions grouped by `provider_slug`. The TUI session picker
+/// and the `session_search` tool both call this when they need a full
+/// multi-provider listing. Returns an empty Vec for any provider
+/// whose `list_sessions()` is not implemented (None) or whose
+/// `detect()` reports it as not installed; a per-provider error is
+/// silently skipped.
+pub fn list_all_casr_sessions(
+    scan_limit: Option<usize>,
+) -> Vec<(String, Vec<ClaudeCodeSessionInfo>)> {
+    let registry = casr::discovery::ProviderRegistry::default_registry();
+    let mut out: Vec<(String, Vec<ClaudeCodeSessionInfo>)> = Vec::new();
+    for provider in registry.installed_providers() {
+        let slug = provider.slug().to_string();
+        let candidates = match provider.list_sessions() {
+            Some(c) => c,
+            None => continue,
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut acc = Vec::new();
+        for (id, path) in candidates {
+            if seen.contains(&id) {
+                continue;
+            }
+            if let Some(limit) = scan_limit
+                && acc.len() >= limit
+            {
+                break;
+            }
+            let canonical = match provider.read_session(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            seen.insert(canonical.session_id.clone());
+            acc.push(info_from_canonical(&path, &canonical));
+        }
+        acc.sort_by(|a, b| b.modified.or(b.created).cmp(&a.modified.or(a.created)));
+        out.push((slug, acc));
+    }
+    out
+}
+
 /// Project-filtered variant (kept for API compatibility; CASR's discovery
 /// is already workspace-aware through `list_sessions`).
 pub fn list_sessions_for_project(_project_filter: &str) -> Result<Vec<ClaudeCodeSessionInfo>> {
@@ -410,6 +565,35 @@ pub fn resolve_resume_target_to_jcode(
         return Ok(native_session_id.to_string());
     }
     Err(anyhow!("unknown provider for resume target: {provider:?}"))
+}
+
+/// Generic `imported_session_id` for **any** CASR-registered provider
+/// (not just the 4 hand-rolled ones). Used by the new
+/// `ForeignSession` arm of `jcode_tui_session_picker::ResumeTarget`
+/// so that the picker can drive the resume command for every CASR
+/// provider without a per-provider match.
+///
+/// Mapping (CASR provider slug → CASR cli alias):
+/// - "claude-code" → "cc"
+/// - "codex"       → "cod"
+/// - "opencode"    → "opc"
+/// - "pi-agent"    → "pi"
+/// - everything else: the slug IS the alias, which is how CASR's
+///   `Provider::cli_alias` is registered in the modern
+///   `ProviderRegistry` (kiro→kr, gemini→gmi, …).
+///
+/// `source_session_id` is the session's own identifier in its
+/// native format. Path-based providers (pi) can be passed a path
+/// here and the resulting id will be stable across re-imports.
+pub fn imported_session_id_for_provider(provider_slug: &str, source_session_id: &str) -> String {
+    let alias = match provider_slug {
+        "claude-code" => "cc",
+        "codex" => "cod",
+        "opencode" => "opc",
+        "pi-agent" => "pi",
+        other => other,
+    };
+    casr::pipeline::derive_target_id(alias, source_session_id)
 }
 
 /// Convenience helper: project the (provider, source_id, native_id)

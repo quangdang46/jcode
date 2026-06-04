@@ -1,5 +1,5 @@
 use super::*;
-use crate::tui::compat::{line_from_spans, text_from_lines};
+use crate::tui::compat::line_from_spans;
 #[path = "ui_messages_cache.rs"]
 mod cache_support;
 use crate::message::{

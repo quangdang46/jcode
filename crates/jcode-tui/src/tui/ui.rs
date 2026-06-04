@@ -1585,19 +1585,48 @@ pub(crate) fn copy_pane_vertical_edge_point(
 ) -> Option<(crate::tui::CopySelectionPoint, bool)> {
     let snapshot = copy_snapshot_for_pane(pane)?;
     let area = snapshot.content_area;
-    if column < area.x || column >= area.x.saturating_add(area.width) || area.height == 0 {
+    if area.width == 0 || area.height == 0 {
         return None;
     }
 
-    let (edge_row, upward) = if row < area.y {
+    // Browser-style edge auto-scroll: terminals clamp the mouse to the visible
+    // viewport, so a drag that "leaves" the top/bottom of the pane is reported on
+    // the boundary row itself. Treat the first/last visible rows as scroll edges so
+    // dragging a selection to the edge keeps pulling in more transcript. The
+    // horizontal position is clamped into the pane so the selection extends no
+    // matter where along the edge the cursor sits (just like a browser window).
+    let last_row = area.y.saturating_add(area.height).saturating_sub(1);
+    let (edge_row, upward) = if row <= area.y {
         (area.y, true)
-    } else if row >= area.y.saturating_add(area.height) {
-        (area.y.saturating_add(area.height).saturating_sub(1), false)
+    } else if row >= last_row {
+        (last_row, false)
     } else {
         return None;
     };
 
-    copy_point_from_snapshot(&snapshot, column, edge_row).map(|point| (point, upward))
+    let clamped_col = column.clamp(area.x, area.x.saturating_add(area.width).saturating_sub(1));
+
+    copy_point_from_snapshot(&snapshot, clamped_col, edge_row).map(|point| (point, upward))
+}
+
+/// Edge point for tick-driven continuous auto-scroll, where there is no live
+/// mouse position. Uses the top/bottom boundary row of the pane and its left
+/// content column so the selection keeps extending to the freshly revealed line.
+pub(crate) fn copy_pane_autoscroll_edge_point(
+    pane: crate::tui::CopySelectionPane,
+    upward: bool,
+) -> Option<crate::tui::CopySelectionPoint> {
+    let snapshot = copy_snapshot_for_pane(pane)?;
+    let area = snapshot.content_area;
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+    let edge_row = if upward {
+        area.y
+    } else {
+        area.y.saturating_add(area.height).saturating_sub(1)
+    };
+    copy_point_from_snapshot(&snapshot, area.x, edge_row)
 }
 
 #[cfg(test)]
@@ -1995,11 +2024,23 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let (chat_area, diff_pane_area) = if needs_side_pane {
         const MIN_DIFF_WIDTH: u16 = 30;
         const MIN_CHAT_WIDTH: u16 = 20;
+        // Pinned images live in a tall narrow column, so a wide image fits to
+        // the pane width and ends up small with empty space below it. When the
+        // pane is showing image content (and the user has not manually resized
+        // it), widen the default split so images use more of the available
+        // horizontal space. Diffs/markdown keep the standard ratio.
+        let image_dominant_pane =
+            has_pinned_content && !has_file_diff_edits && !has_side_panel_content;
+        const ADAPTIVE_IMAGE_RATIO: u32 = 55;
+        let base_ratio = app.diagram_pane_ratio().clamp(25, 100) as u32;
+        let effective_ratio = if image_dominant_pane && !app.diagram_pane_ratio_user_adjusted() {
+            base_ratio.max(ADAPTIVE_IMAGE_RATIO)
+        } else {
+            base_ratio
+        };
         let max_diff = chat_area.width.saturating_sub(MIN_CHAT_WIDTH);
         if max_diff >= MIN_DIFF_WIDTH {
-            let diff_width = (((chat_area.width as u32
-                * app.diagram_pane_ratio().clamp(25, 100) as u32)
-                / 100) as u16)
+            let diff_width = (((chat_area.width as u32 * effective_ratio) / 100) as u16)
                 .max(MIN_DIFF_WIDTH)
                 .min(max_diff);
             let new_chat_width = chat_area.width.saturating_sub(diff_width);

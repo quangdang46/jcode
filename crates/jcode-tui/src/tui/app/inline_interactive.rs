@@ -1745,6 +1745,13 @@ impl App {
                 ResumeTarget::OpenCodeSession { session_id, .. } => {
                     format!("OpenCode {}", &session_id[..session_id.len().min(8)])
                 }
+                ResumeTarget::ForeignSession {
+                    provider_slug,
+                    session_id,
+                    ..
+                } => {
+                    format!("{provider_slug} {}", &session_id[..session_id.len().min(8)])
+                }
             };
             let resolved_target = match target {
                 ResumeTarget::JcodeSession { session_id } => session_id.clone(),
@@ -1760,6 +1767,14 @@ impl App {
                 ResumeTarget::OpenCodeSession { session_id, .. } => {
                     crate::casr_adapter::imported_opencode_session_id(session_id)
                 }
+                ResumeTarget::ForeignSession {
+                    provider_slug,
+                    session_id,
+                    ..
+                } => crate::casr_adapter::imported_session_id_for_provider(
+                    &provider_slug,
+                    session_id,
+                ),
             };
 
             match spawn_resume_target_in_new_terminal(target, &cwd, socket.as_deref()) {
@@ -1850,6 +1865,13 @@ impl App {
             ResumeTarget::OpenCodeSession { session_id, .. } => {
                 format!("OpenCode {}", &session_id[..session_id.len().min(8)])
             }
+            ResumeTarget::ForeignSession {
+                provider_slug,
+                session_id,
+                ..
+            } => {
+                format!("{provider_slug} {}", &session_id[..session_id.len().min(8)])
+            }
         };
 
         let resolved_target = match target {
@@ -1866,6 +1888,11 @@ impl App {
             ResumeTarget::OpenCodeSession { session_id, .. } => {
                 crate::casr_adapter::imported_opencode_session_id(session_id)
             }
+            ResumeTarget::ForeignSession {
+                provider_slug,
+                session_id,
+                ..
+            } => crate::casr_adapter::imported_session_id_for_provider(&provider_slug, session_id),
         };
 
         // The resolved target is a jcode session id (either native for

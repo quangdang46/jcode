@@ -1,7 +1,7 @@
 use crate::message::ToolCall;
-use crate::tui::compat::{line_from_spans, text_from_lines};
 
 use super::{dim_color, rgb, tool_color, truncate_line_preserving_suffix_to_width};
+use crate::tui::compat::line_from_spans;
 use ratatui::prelude::*;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
