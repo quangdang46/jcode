@@ -2421,7 +2421,7 @@ pub(super) async fn handle_client(
                 let states = experiments.all_flag_states();
                 let flags: Vec<serde_json::Value> = states
                     .iter()
-                    .map(|s| serde_json::to_value(s).unwrap())
+                    .filter_map(|s| serde_json::to_value(s).ok())
                     .collect();
                 let _ = client_event_tx.send(ServerEvent::ExperimentFlags { flags });
             }

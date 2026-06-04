@@ -9,10 +9,11 @@ pub fn run_experiment_list_command(json: bool) -> Result<()> {
         let states = experiments.all_flag_states();
         println!("{}", serde_json::to_string_pretty(&states)?);
     } else {
-        println!(
+        let header = format!(
             "{:25} {:25} {:8} {:8}  {}",
             "Key", "Flag", "Default", "Current", "Stage"
         );
+        println!("{}", header);
         println!("{}", "-".repeat(90));
         for spec in EXPERIMENT_FLAGS {
             let enabled = experiments.check(spec.id);
@@ -59,7 +60,7 @@ pub fn run_experiment_disable_command(key: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jcode_experiment_flags::{ExperimentFlag, Experiments};
+    use jcode_experiment_flags::Experiments;
 
     #[test]
     fn test_run_experiment_list_json_roundtrip() {
@@ -87,7 +88,10 @@ mod tests {
         // Use a temp JCODE_HOME to isolate from user config.
         let tmp = tempfile::tempdir().unwrap();
         // JCODE_HOME points directly to the jcode data directory.
-        std::env::set_var("JCODE_HOME", tmp.path().to_str().unwrap());
+        // SAFETY: test-only env mutation, single-threaded test harness.
+        unsafe {
+            std::env::set_var("JCODE_HOME", tmp.path().to_str().unwrap());
+        }
         // Initially hooks_v2 should be disabled by default.
         let config = crate::config::Config::load();
         assert!(
@@ -108,6 +112,9 @@ mod tests {
         crate::config::invalidate_config_cache();
         let config3 = crate::config::Config::load();
         assert_eq!(config3.experiments.entries.get("hooks_v2"), Some(&false));
-        std::env::remove_var("JCODE_HOME");
+        // SAFETY: test-only env mutation, single-threaded test harness.
+        unsafe {
+            std::env::remove_var("JCODE_HOME");
+        }
     }
 }

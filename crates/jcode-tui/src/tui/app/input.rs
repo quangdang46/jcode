@@ -2522,10 +2522,10 @@ pub(super) fn handle_modal_key(
         return Ok(true);
     }
 
-    if app.experiment_popup.is_some() {
+    if let Some(ref popup_cell) = app.experiment_popup {
         use crate::tui::experiment_popup::ExperimentPopupAction;
         let action = {
-            let mut popup = app.experiment_popup.as_ref().unwrap().borrow_mut();
+            let mut popup = popup_cell.borrow_mut();
             popup.handle_key(code)
         };
         match action {
@@ -2533,17 +2533,21 @@ pub(super) fn handle_modal_key(
                 app.experiment_popup = None;
             }
             ExperimentPopupAction::Apply { changes } => {
+                let mut applied = 0usize;
                 for (key, enabled) in &changes {
-                    if *enabled {
-                        let _ = super::commands::handle_experiment_enable_local(app, key);
+                    let result = if *enabled {
+                        super::commands::handle_experiment_enable_local(app, key)
                     } else {
-                        let _ = super::commands::handle_experiment_disable_local(app, key);
+                        super::commands::handle_experiment_disable_local(app, key)
+                    };
+                    if result.is_ok() {
+                        applied += 1;
                     }
                 }
                 if !changes.is_empty() {
                     app.push_display_message(jcode_tui_messages::DisplayMessage::system(format!(
                         "Applied {} experiment flag change(s).",
-                        changes.len()
+                        applied
                     )));
                 }
                 app.experiment_popup = None;
