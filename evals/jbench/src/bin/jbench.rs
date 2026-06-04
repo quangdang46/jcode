@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+#[cfg(feature = "agent-runner")]
+use jcode_jbench::agent_runner::AgentRunConfig;
 use jcode_jbench::{
-    agent_runner::AgentRunConfig,
     judge::{JudgeConfig, judge_with_three_models},
     lessons::{LessonsConfig, append_lessons_to_file, extract_lessons},
     types::{AgentEvalResults, EvalDataV2, EvalRun},
@@ -119,15 +120,20 @@ async fn main() -> Result<()> {
             max_turns,
             timeout_secs,
         } => {
-            run_impl(
-                &eval_file,
-                &agent_id,
-                &output_dir,
-                jcode_binary.as_ref(),
-                max_turns,
-                timeout_secs,
-            )
-            .await?;
+            #[cfg(feature = "agent-runner")]
+            {
+                run_impl(
+                    &eval_file,
+                    &agent_id,
+                    &output_dir,
+                    jcode_binary.as_ref(),
+                    max_turns,
+                    timeout_secs,
+                )
+                .await?;
+            }
+            #[cfg(not(feature = "agent-runner"))]
+            anyhow::bail!("'jbench run' requires the 'agent-runner' feature. Enable with: cargo build --features agent-runner");
         }
         Command::Judge {
             runs_dir,
@@ -156,6 +162,7 @@ async fn gen_evals_impl(_input: &PathBuf, _output: &PathBuf) -> Result<()> {
     todo_step("Phase 5.2: read commit list, fetch each SHA, render EvalDataV2 JSON")
 }
 
+#[cfg(feature = "agent-runner")]
 async fn run_impl(
     eval_file: &PathBuf,
     agent_id: &str,
@@ -182,7 +189,7 @@ async fn run_impl(
         let config = AgentRunConfig {
             agent_id: agent_id.to_owned(),
             prompt: commit.prompt.clone(),
-            repo_path: output_dir.join(&commit.id), // per-commit working dir
+            repo_path: output_dir.join(&commit.id),
             max_turns,
             timeout_secs,
             env: eval_data.env.clone(),
@@ -190,15 +197,23 @@ async fn run_impl(
             ..Default::default()
         };
 
-        let result = tk_timeout(
+        let result = match tk_timeout(
             Duration::from_secs(timeout_secs),
             jcode_jbench::agent_runner::run_agent_in_repo(config),
         )
         .await
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| {
-            Ok(jcode_jbench::types::EvalRun {
+        {
+            Ok(Ok(run)) => run,
+            Ok(Err(err)) => EvalRun {
+                commit_sha: commit.sha.clone(),
+                prompt: commit.prompt.clone(),
+                diff: String::new(),
+                judging: Default::default(),
+                cost_usd: 0.0,
+                duration_ms: 0,
+                error: Some(format!("Agent error: {err:#}")),
+            },
+            Err(_elapsed) => EvalRun {
                 commit_sha: commit.sha.clone(),
                 prompt: commit.prompt.clone(),
                 diff: String::new(),
@@ -206,8 +221,8 @@ async fn run_impl(
                 cost_usd: 0.0,
                 duration_ms: 0,
                 error: Some("Timed out waiting for run_agent_in_repo".to_owned()),
-            })
-        })?;
+            },
+        };
 
         let run_file = output_dir.join(format!("{}.run.json", commit.id));
         let json = serde_json::to_string_pretty(&result).context("failed to serialize EvalRun")?;
@@ -262,7 +277,9 @@ async fn meta_analyze_impl(runs_dir: &PathBuf, output: Option<&PathBuf>) -> Resu
         .sum::<f64>()
         / all_runs.len() as f64;
     let avg_cost = all_runs.iter().map(|r| r.cost_usd).sum::<f64>() / all_runs.len() as f64;
-    let avg_duration = all_runs.iter().map(|r| r.duration_ms).sum::<u64>() / all_runs.len() as u64;
+    let avg_duration = (all_runs.iter().map(|r| r.duration_ms as f64).sum::<f64>()
+        / all_runs.len() as f64)
+        .round() as u64;
 
     let summary = AgentEvalResults {
         agent_id: "unknown".to_owned(),

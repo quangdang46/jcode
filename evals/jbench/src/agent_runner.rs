@@ -112,12 +112,30 @@ pub async fn run_agent_in_repo(config: AgentRunConfig) -> Result<EvalRun> {
     let mut trace_lines = Vec::new();
     let reader = BufReader::new(stdout);
     let mut lines_stream = reader.lines();
-    loop {
+    let timed_out = loop {
         let line = timeout(timeout_duration, lines_stream.next_line()).await;
         match line {
             Ok(Ok(Some(l))) => trace_lines.push(l),
-            _ => break,
+            Ok(Ok(None)) => break false,     // EOF — clean exit
+            Ok(Err(_)) => break false,       // read error
+            Err(_) => break true,            // timeout
         }
+    };
+
+    if timed_out {
+        // Kill the child process so it doesn't become an orphan
+        let _ = child.kill().await;
+        // Consume the exit status after kill
+        let _ = child.wait().await;
+        return Ok(EvalRun {
+            commit_sha: String::new(),
+            prompt: config.prompt,
+            diff: extract_diff_from_repo(&config.repo_path).unwrap_or_default(),
+            judging: Default::default(),
+            cost_usd: 0.0,
+            duration_ms: start.elapsed().as_millis() as u64,
+            error: Some("Timed out waiting for jcode subprocess".to_owned()),
+        });
     }
 
     let status = child

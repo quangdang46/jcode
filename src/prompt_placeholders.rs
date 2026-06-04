@@ -11,7 +11,7 @@
 //!
 //! - `{{FILE_TREE_SMALL}}`   — truncated project tree, max 2500 chars.
 //! - `{{FILE_TREE}}`         — fuller project tree, max 10000 chars.
-//! - `{{KNOWLEDGE_FILES}}`   — concatenated knowledge / context files (no limit).
+//! - `{{KNOWLEDGE_FILES}}`   — concatenated knowledge / context files, max 100000 chars.
 //! - `{{GIT_CHANGES}}`       — `git diff` / status summary, max 30000 chars.
 //! - `{{CURRENT_DATE}}`      — ISO `YYYY-MM-DD` date string.
 //! - `{{REMAINING_STEPS}}`   — remaining-step counter (u32, decimal).
@@ -32,6 +32,9 @@ pub const FILE_TREE_MAX_CHARS: usize = 10_000;
 /// Maximum char count retained for [`PlaceholderContext::git_changes`].
 pub const GIT_CHANGES_MAX_CHARS: usize = 30_000;
 
+/// Maximum char count retained for [`PlaceholderContext::knowledge_files`].
+pub const KNOWLEDGE_FILES_MAX_CHARS: usize = 100_000;
+
 /// Container for values that can be substituted into prompt templates.
 ///
 /// All `String` fields default to empty and `remaining_steps` defaults to 0.
@@ -45,7 +48,8 @@ pub struct PlaceholderContext {
     /// Fuller project file tree. Truncated to [`FILE_TREE_MAX_CHARS`] chars
     /// during substitution.
     pub file_tree: String,
-    /// Concatenated knowledge/context files. No length limit is applied.
+    /// Concatenated knowledge/context files. Truncated to [`KNOWLEDGE_FILES_MAX_CHARS`]
+    /// chars during substitution.
     pub knowledge_files: String,
     /// Git diff / status summary. Truncated to [`GIT_CHANGES_MAX_CHARS`]
     /// chars during substitution.
@@ -89,6 +93,7 @@ pub fn substitute_context_placeholders(prompt: &str, ctx: &PlaceholderContext) -
 
     let file_tree_small = truncate_chars(&ctx.file_tree_small, FILE_TREE_SMALL_MAX_CHARS);
     let file_tree = truncate_chars(&ctx.file_tree, FILE_TREE_MAX_CHARS);
+    let knowledge_files = truncate_chars(&ctx.knowledge_files, KNOWLEDGE_FILES_MAX_CHARS);
     let git_changes = truncate_chars(&ctx.git_changes, GIT_CHANGES_MAX_CHARS);
     let remaining_steps = if ctx.remaining_steps == 0 {
         String::new()
@@ -101,7 +106,7 @@ pub fn substitute_context_placeholders(prompt: &str, ctx: &PlaceholderContext) -
     let replacements: [(&str, &str); 7] = [
         ("{{FILE_TREE_SMALL}}", file_tree_small.as_str()),
         ("{{FILE_TREE}}", file_tree.as_str()),
-        ("{{KNOWLEDGE_FILES}}", ctx.knowledge_files.as_str()),
+        ("{{KNOWLEDGE_FILES}}", knowledge_files.as_str()),
         ("{{GIT_CHANGES}}", git_changes.as_str()),
         ("{{CURRENT_DATE}}", ctx.current_date.as_str()),
         ("{{REMAINING_STEPS}}", remaining_steps.as_str()),
@@ -196,6 +201,19 @@ mod tests {
         let out = substitute_context_placeholders("[{{FILE_TREE_SMALL}}]", &ctx);
         // Two bracket characters plus the cap.
         assert_eq!(out.chars().count(), FILE_TREE_SMALL_MAX_CHARS + 2);
+        assert!(out.starts_with('['));
+        assert!(out.ends_with(']'));
+    }
+
+    #[test]
+    fn knowledge_files_truncated_when_exceeds_cap() {
+        let big: String = "k".repeat(KNOWLEDGE_FILES_MAX_CHARS + 5000);
+        let ctx = PlaceholderContext {
+            knowledge_files: big.clone(),
+            ..Default::default()
+        };
+        let out = substitute_context_placeholders("[{{KNOWLEDGE_FILES}}]", &ctx);
+        assert_eq!(out.chars().count(), KNOWLEDGE_FILES_MAX_CHARS + 2);
         assert!(out.starts_with('['));
         assert!(out.ends_with(']'));
     }

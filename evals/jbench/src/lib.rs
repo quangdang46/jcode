@@ -13,11 +13,13 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "agent-runner")]
 pub mod agent_runner;
 pub mod judge;
 pub mod lessons;
 pub mod types;
 
+#[cfg(feature = "agent-runner")]
 pub use agent_runner::AgentRunConfig;
 pub use judge::JudgeConfig;
 pub use lessons::LessonsConfig;

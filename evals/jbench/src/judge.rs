@@ -375,29 +375,37 @@ pub async fn judge_with_three_models(
 
     let timeout_duration = Duration::from_secs(config.timeout_secs.unwrap_or(JUDGE_TIMEOUT_SECS));
 
+    // Each judge gets its own timeout so a slow model doesn't starve the others.
     let judge_futures: Vec<_> = config
         .models
         .iter()
         .map(|model| {
-            run_single_judge(
-                model,
-                &prompt,
-                &config.api_base,
-                &config.api_key,
-                config.anthropic_api_base.as_deref(),
-                config.anthropic_api_key.as_deref(),
-                http,
-            )
+            let http = http.clone();
+            let prompt = prompt.clone();
+            async move {
+                timeout(
+                    timeout_duration,
+                    run_single_judge(
+                        model,
+                        &prompt,
+                        &config.api_base,
+                        &config.api_key,
+                        config.anthropic_api_base.as_deref(),
+                        config.anthropic_api_key.as_deref(),
+                        &http,
+                    ),
+                )
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+            }
         })
         .collect();
 
-    // Run all three judges in parallel with an overall timeout
-    let valid: Vec<Scorecard> = timeout(timeout_duration, futures::future::join_all(judge_futures))
+    let valid: Vec<Scorecard> = futures::future::join_all(judge_futures)
         .await
-        .ok()
-        .into_iter() // IntoIterator<Item = Vec<Result<Scorecard>>>
-        .flatten() // Iterator<Item = Result<Scorecard>>
-        .filter_map(|r| r.ok())
+        .into_iter()
+        .filter_map(|r| r)
         .collect();
 
     if valid.len() < MIN_JUDGE_SUCCESS_COUNT {
@@ -417,7 +425,7 @@ pub async fn judge_with_three_models(
 
     // Median analysis — sort by overall_score and pick the middle
     let mut sorted = valid.clone();
-    sorted.sort_by(|a, b| a.overall_score.partial_cmp(&b.overall_score).unwrap());
+    sorted.sort_by(|a, b| a.overall_score.partial_cmp(&b.overall_score).unwrap_or(std::cmp::Ordering::Equal));
     let median_idx = sorted.len() / 2;
     let median = &sorted[median_idx];
 

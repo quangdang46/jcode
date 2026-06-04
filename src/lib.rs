@@ -31,7 +31,6 @@ pub mod model_failover;
 pub mod model_routing;
 pub mod orchestration_api;
 pub mod prefix_cache_stable;
-<<<<<<< HEAD
 pub mod process_memory;
 pub mod process_title;
 pub mod prompt;
