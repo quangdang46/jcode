@@ -185,7 +185,10 @@ pub fn is_env_truthy(key: &str) -> bool {
 
 /// Parse a boolean string value: `"1"`, `"true"`, `"yes"`, `"on"` → `true`.
 pub fn is_env_truthy_raw(value: &str) -> bool {
-    matches!(value.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    matches!(
+        value.trim().to_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 /// Parse a comma-separated list env var into a `HashSet`.
@@ -307,7 +310,10 @@ mod tests {
         assert_eq!(DisableFlag::Hooks.env_var(), "JCODE_DISABLE_HOOKS");
         assert_eq!(DisableFlag::Plugins.env_var(), "JCODE_DISABLE_PLUGINS");
         assert_eq!(DisableFlag::Memory.env_var(), "JCODE_DISABLE_MEMORY");
-        assert_eq!(DisableFlag::PowerInhibit.env_var(), "JCODE_DISABLE_POWER_INHIBIT");
+        assert_eq!(
+            DisableFlag::PowerInhibit.env_var(),
+            "JCODE_DISABLE_POWER_INHIBIT"
+        );
     }
 
     #[test]
