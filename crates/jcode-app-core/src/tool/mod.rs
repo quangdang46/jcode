@@ -30,6 +30,8 @@ mod session_search;
 mod side_panel;
 mod skill;
 mod task;
+pub mod task_management;
+mod team;
 mod todo;
 mod webfetch;
 mod websearch;
@@ -252,6 +254,36 @@ impl Registry {
             Self::insert_tool_timed(&mut m, &mut timings, "gmail", gmail::GmailTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "schedule", ambient::ScheduleTool::new);
             Self::insert_tool_timed(&mut m, &mut timings, "selfdev", selfdev::SelfDevTool::new);
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "team_create",
+                team::TeamCreateTool::new,
+            );
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "team_delete",
+                team::TeamDeleteTool::new,
+            );
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "task_create",
+                task_management::TaskCreateTool::new,
+            );
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "task_update",
+                task_management::TaskUpdateTool::new,
+            );
+            Self::insert_tool_timed(
+                &mut m,
+                &mut timings,
+                "task_list",
+                task_management::TaskListTool::new,
+            );
             let nonzero: Vec<String> = timings
                 .iter()
                 .filter(|(_, ms)| *ms > 0)
