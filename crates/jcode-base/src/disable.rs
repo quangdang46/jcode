@@ -78,6 +78,8 @@ pub struct DisableRegistry {
     disabled_tools: HashSet<String>,
     disabled_animations: HashSet<String>,
     disabled_features: HashSet<String>,
+    /// Cached value of deprecated `JCODE_DISABLE_BASE_TOOLS` env var.
+    base_tools_legacy_disabled: bool,
 }
 
 impl DisableRegistry {
@@ -110,12 +112,18 @@ impl DisableRegistry {
         let disabled_animations = parse_comma_list("JCODE_DISABLE_ANIMATION");
         let disabled_features = parse_comma_list("JCODE_DISABLE_FEATURE");
 
+        let base_tools_legacy_disabled = std::env::var("JCODE_DISABLE_BASE_TOOLS")
+            .ok()
+            .map(|v| is_env_truthy_raw(&v))
+            .unwrap_or(false);
+
         Self {
             flags,
             disabled_hooks,
             disabled_tools,
             disabled_animations,
             disabled_features,
+            base_tools_legacy_disabled,
         }
     }
 
@@ -165,11 +173,7 @@ impl DisableRegistry {
     /// This checks both the new `JCODE_DISABLE_TOOL=base` path and the
     /// deprecated `JCODE_DISABLE_BASE_TOOLS=1` env var.
     pub fn base_tools_disabled(&self) -> bool {
-        self.disabled_tools.contains("base")
-            || std::env::var("JCODE_DISABLE_BASE_TOOLS")
-                .ok()
-                .map(|v| is_env_truthy_raw(&v))
-                .unwrap_or(false)
+        self.disabled_tools.contains("base") || self.base_tools_legacy_disabled
     }
 }
 

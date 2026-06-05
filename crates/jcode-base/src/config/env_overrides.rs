@@ -151,9 +151,9 @@ impl Config {
         if let Ok(v) = std::env::var("JCODE_DISABLE_BASE_TOOLS")
             && let Some(parsed) = parse_env_bool(&v)
         {
-            if parsed {
-                self.tools.disable_base_tools = true;
-            }
+            // Explicit boolean assignment preserves backward compat:
+            // `=false` overrides registry to re-enable base tools.
+            self.tools.disable_base_tools = parsed;
         }
 
         // ACP adapter
