@@ -290,13 +290,34 @@ impl Rng {
 }
 
 const WORDS: &[&str] = &[
-    "alpha", "beta", "gamma", "delta", "x", "y", "z", "the", "quick", "brown",
-    "fox", "中文", "데이터", "emoji", "lorem", "ipsum", "a", "I", "we", "code",
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "x",
+    "y",
+    "z",
+    "the",
+    "quick",
+    "brown",
+    "fox",
+    "中文",
+    "데이터",
+    "emoji",
+    "lorem",
+    "ipsum",
+    "a",
+    "I",
+    "we",
+    "code",
 ];
 
 fn gen_words(rng: &mut Rng, max: usize) -> String {
     let n = 1 + rng.below(max);
-    (0..n).map(|_| *rng.pick(WORDS)).collect::<Vec<_>>().join(" ")
+    (0..n)
+        .map(|_| *rng.pick(WORDS))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Generate an inline fragment (no leading/trailing block structure).
@@ -307,7 +328,11 @@ fn gen_inline(rng: &mut Rng, depth: usize) -> String {
         2 => format!("_{}_", gen_words(rng, 3)),
         3 => format!("`{}`", gen_words(rng, 2)),
         4 => format!("~~{}~~", gen_words(rng, 2)),
-        5 => format!("[{}](http://example.com/{})", gen_words(rng, 2), rng.below(99)),
+        5 => format!(
+            "[{}](http://example.com/{})",
+            gen_words(rng, 2),
+            rng.below(99)
+        ),
         6 => format!("${}+{}$", rng.pick(WORDS), rng.pick(WORDS)),
         7 => format!("${}", rng.below(999)), // currency
         _ => format!(
@@ -536,8 +561,3 @@ fn fuzz_random_documents_wrapped_parity() {
             .join("\n\n")
     );
 }
-
-
-
-
-

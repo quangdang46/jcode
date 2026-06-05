@@ -116,9 +116,9 @@ pub async fn run_agent_in_repo(config: AgentRunConfig) -> Result<EvalRun> {
         let line = timeout(timeout_duration, lines_stream.next_line()).await;
         match line {
             Ok(Ok(Some(l))) => trace_lines.push(l),
-            Ok(Ok(None)) => break false,     // EOF — clean exit
-            Ok(Err(_)) => break false,       // read error
-            Err(_) => break true,            // timeout
+            Ok(Ok(None)) => break false, // EOF — clean exit
+            Ok(Err(_)) => break false,   // read error
+            Err(_) => break true,        // timeout
         }
     };
 
@@ -130,7 +130,9 @@ pub async fn run_agent_in_repo(config: AgentRunConfig) -> Result<EvalRun> {
         return Ok(EvalRun {
             commit_sha: String::new(),
             prompt: config.prompt,
-            diff: extract_diff_from_repo(&config.repo_path).await.unwrap_or_default(),
+            diff: extract_diff_from_repo(&config.repo_path)
+                .await
+                .unwrap_or_default(),
             judging: Default::default(),
             cost_usd: 0.0,
             duration_ms: start.elapsed().as_millis() as u64,

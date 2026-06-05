@@ -131,7 +131,9 @@ async fn main() -> Result<()> {
                 .await?;
             }
             #[cfg(not(feature = "agent-runner"))]
-            anyhow::bail!("'jbench run' requires the 'agent-runner' feature. Enable with: cargo build --features agent-runner");
+            anyhow::bail!(
+                "'jbench run' requires the 'agent-runner' feature. Enable with: cargo build --features agent-runner"
+            );
         }
         Command::Judge {
             runs_dir,
@@ -190,11 +192,7 @@ async fn pick_commits_impl(
         }
 
         let sha = lines[0].trim();
-        let parent_sha = lines[1]
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let parent_sha = lines[1].split_whitespace().next().unwrap_or("").to_string();
         let subject = lines[2].trim();
 
         // Skip root commits (no parent).
@@ -287,13 +285,8 @@ async fn gen_evals_impl(input: &PathBuf, output: &PathBuf) -> Result<()> {
         })?;
 
         // git diff to get the full unified diff.
-        let full_diff = run_git(&[
-            "diff",
-            &format!("{}..{}", pc.parent_sha, pc.sha),
-        ])
-        .with_context(|| {
-            format!("git diff failed for {}..{}", pc.parent_sha, pc.sha)
-        })?;
+        let full_diff = run_git(&["diff", &format!("{}..{}", pc.parent_sha, pc.sha)])
+            .with_context(|| format!("git diff failed for {}..{}", pc.parent_sha, pc.sha))?;
 
         let file_diffs = parse_diffs(&name_status, &full_diff);
 
@@ -318,8 +311,8 @@ async fn gen_evals_impl(input: &PathBuf, output: &PathBuf) -> Result<()> {
         eval_commits,
     };
 
-    let json = serde_json::to_string_pretty(&eval_data)
-        .context("failed to serialize EvalDataV2")?;
+    let json =
+        serde_json::to_string_pretty(&eval_data).context("failed to serialize EvalDataV2")?;
     std::fs::write(output, &json)
         .with_context(|| format!("failed to write output file {}", output.display()))?;
 
@@ -562,7 +555,11 @@ fn parse_diffs(name_status: &str, full_diff: &str) -> Vec<jcode_jbench::types::F
             r if r.starts_with('R') => {
                 // Renamed: "R100\told_path\tnew_path"
                 if parts.len() >= 3 {
-                    (FileDiffStatus::Renamed, parts[2].to_owned(), Some(parts[1].to_owned()))
+                    (
+                        FileDiffStatus::Renamed,
+                        parts[2].to_owned(),
+                        Some(parts[1].to_owned()),
+                    )
                 } else {
                     (FileDiffStatus::Modified, parts[1].to_owned(), None)
                 }
@@ -583,10 +580,7 @@ fn parse_diffs(name_status: &str, full_diff: &str) -> Vec<jcode_jbench::types::F
     // Build FileDiff structs, matching by path.
     let mut result = Vec::with_capacity(file_entries.len());
     for (status, path, old_path) in file_entries {
-        let diff_text = file_diffs_map
-            .get(&path)
-            .cloned()
-            .unwrap_or_default();
+        let diff_text = file_diffs_map.get(&path).cloned().unwrap_or_default();
         result.push(FileDiff {
             path,
             status,
@@ -611,11 +605,7 @@ fn split_diff_by_file(full_diff: &str) -> std::collections::HashMap<String, Stri
                 map.insert(p.clone(), current_chunk.clone());
             }
             // Extract the post-image path from "diff --git a/path b/path".
-            let path = line
-                .splitn(2, " b/")
-                .nth(1)
-                .unwrap_or("")
-                .to_owned();
+            let path = line.splitn(2, " b/").nth(1).unwrap_or("").to_owned();
             current_path = Some(path);
             current_chunk.clear();
         }

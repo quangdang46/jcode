@@ -118,10 +118,10 @@ pub fn resolve_model(
         return override_id;
     }
 
-    if let Some(tier) = prefer_tier {
-        if let Some(tier_model) = tier.read_user_override() {
-            return tier_model;
-        }
+    if let Some(tier) = prefer_tier
+        && let Some(tier_model) = tier.read_user_override()
+    {
+        return tier_model;
     }
 
     current_session_model.to_string()

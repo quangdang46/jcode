@@ -36,7 +36,7 @@ pub struct TeamTask {
     pub id: String,
     pub subject: String,
     pub description: String,
-    pub status: String,       // "pending" | "in_progress" | "completed"
+    pub status: String,        // "pending" | "in_progress" | "completed"
     pub owner: Option<String>, // member name
 }
 
@@ -141,11 +141,10 @@ impl Tool for TeamCreateTool {
         team.save()?;
 
         let output = serde_json::to_string_pretty(&team)?;
-        Ok(ToolOutput::new(format!(
-            "Team '{}' created.\n\n{}",
-            params.name, output
-        ))
-        .with_title(format!("Team '{}' created", params.name)))
+        Ok(
+            ToolOutput::new(format!("Team '{}' created.\n\n{}", params.name, output))
+                .with_title(format!("Team '{}' created", params.name)),
+        )
     }
 }
 
@@ -201,11 +200,10 @@ impl Tool for TeamDeleteTool {
             Ok(ToolOutput::new(format!("Team '{}' deleted.", params.name))
                 .with_title(format!("Team '{}' deleted", params.name)))
         } else {
-            Ok(ToolOutput::new(format!(
-                "Team '{}' did not exist (no-op).",
-                params.name
-            ))
-            .with_title(format!("Team '{}' not found", params.name)))
+            Ok(
+                ToolOutput::new(format!("Team '{}' did not exist (no-op).", params.name))
+                    .with_title(format!("Team '{}' not found", params.name)),
+            )
         }
     }
 }

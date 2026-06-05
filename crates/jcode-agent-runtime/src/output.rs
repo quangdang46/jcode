@@ -5,9 +5,9 @@
 //!
 //! - `LastMessage`: parent receives only the agent's final assistant turn.
 //!   Default. Good for "research-and-summarize" agents like file-picker.
-//! - `AllMessages`: parent receives the full child message history (text
-//!   + tool calls + tool results). Good for editor-like agents that need
-//!   to expose their full edit trace.
+//! - `AllMessages`: parent receives the full child message history
+//!   (text + tool calls + tool results). Good for editor-like agents
+//!   that need to expose their full edit trace.
 //! - `StructuredOutput`: agent must call `set_output` with a JSON value
 //!   that conforms to `output_schema`. Good for judge agents, lessons
 //!   extractors, structured planners.

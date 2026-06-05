@@ -386,7 +386,10 @@ fn build_tools_strips_additional_properties_for_gemini_schema_compatibility() {
     assert!(!schema_contains_key(parameters, "additionalProperties"));
     assert!(!schema_contains_key(parameters, "$schema"));
     // Real schema content is preserved.
-    assert_eq!(parameters["properties"]["file_path"]["type"], json!("string"));
+    assert_eq!(
+        parameters["properties"]["file_path"]["type"],
+        json!("string")
+    );
     assert_eq!(
         parameters["properties"]["opts"]["properties"]["limit"]["type"],
         json!("integer")

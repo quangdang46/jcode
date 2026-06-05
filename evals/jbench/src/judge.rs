@@ -425,7 +425,11 @@ pub async fn judge_with_three_models(
 
     // Median analysis — sort by overall_score and pick the middle
     let mut sorted = valid.clone();
-    sorted.sort_by(|a, b| a.overall_score.partial_cmp(&b.overall_score).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(|a, b| {
+        a.overall_score
+            .partial_cmp(&b.overall_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let median_idx = sorted.len() / 2;
     let median = &sorted[median_idx];
 

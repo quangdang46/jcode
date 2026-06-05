@@ -396,8 +396,9 @@ impl Agent {
                         // answer renders as a normal paragraph rather than as reasoning.
                         if reasoning_open && !text.trim().is_empty() {
                             reasoning_open = false;
-                            let _ = event_tx
-                                .send(ServerEvent::ReasoningDone { duration_secs: None });
+                            let _ = event_tx.send(ServerEvent::ReasoningDone {
+                                duration_secs: None,
+                            });
                         }
                         text_content.push_str(&text);
                         if !text_wrapped_detected {
@@ -430,8 +431,9 @@ impl Agent {
                     StreamEvent::ToolUseStart { id, name } => {
                         if reasoning_open {
                             reasoning_open = false;
-                            let _ = event_tx
-                                .send(ServerEvent::ReasoningDone { duration_secs: None });
+                            let _ = event_tx.send(ServerEvent::ReasoningDone {
+                                duration_secs: None,
+                            });
                         }
                         let _ = event_tx.send(ServerEvent::ToolStart {
                             id: id.clone(),
@@ -595,8 +597,9 @@ impl Agent {
                         // step) so the client flushes its live partial line.
                         if reasoning_open {
                             reasoning_open = false;
-                            let _ = event_tx
-                                .send(ServerEvent::ReasoningDone { duration_secs: None });
+                            let _ = event_tx.send(ServerEvent::ReasoningDone {
+                                duration_secs: None,
+                            });
                         }
                         if reason.is_some() {
                             stop_reason = reason;

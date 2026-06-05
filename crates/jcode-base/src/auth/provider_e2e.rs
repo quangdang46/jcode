@@ -1321,8 +1321,8 @@ impl NativeProviderKind {
     /// Returns an error only when the runtime cannot be constructed at all (e.g.
     /// Copilot with no credential file); model selection happens later.
     fn build_runtime(self) -> anyhow::Result<std::sync::Arc<dyn crate::provider::Provider>> {
-        use anyhow::Context as _;
         use crate::provider::Provider;
+        use anyhow::Context as _;
         let runtime: std::sync::Arc<dyn Provider> = match self {
             Self::OpenAi => {
                 let credentials = crate::auth::codex::load_credentials().unwrap_or_else(|_| {
@@ -1337,9 +1337,7 @@ impl NativeProviderKind {
                 std::sync::Arc::new(crate::provider::openai::OpenAIProvider::new(credentials))
             }
             Self::Gemini => std::sync::Arc::new(crate::provider::gemini::GeminiProvider::new()),
-            Self::Cursor => {
-                std::sync::Arc::new(crate::provider::cursor::CursorCliProvider::new())
-            }
+            Self::Cursor => std::sync::Arc::new(crate::provider::cursor::CursorCliProvider::new()),
             Self::Copilot => {
                 // `new()` requires a loadable GitHub token; fall back to an empty
                 // token so the offline tier can still construct the runtime for
@@ -1354,18 +1352,14 @@ impl NativeProviderKind {
                 crate::env::set_var("JCODE_COPILOT_PREFETCH_STARTUP_GRACE_MS", "0");
                 let runtime = match crate::provider::copilot::CopilotApiProvider::new() {
                     Ok(runtime) => runtime,
-                    Err(_) => crate::provider::copilot::CopilotApiProvider::new_with_token(
-                        String::new(),
-                    ),
+                    Err(_) => {
+                        crate::provider::copilot::CopilotApiProvider::new_with_token(String::new())
+                    }
                 };
                 std::sync::Arc::new(runtime)
             }
-            Self::Bedrock => {
-                std::sync::Arc::new(crate::provider::bedrock::BedrockProvider::new())
-            }
-            Self::Jcode => {
-                std::sync::Arc::new(crate::provider::jcode::JcodeProvider::new())
-            }
+            Self::Bedrock => std::sync::Arc::new(crate::provider::bedrock::BedrockProvider::new()),
+            Self::Jcode => std::sync::Arc::new(crate::provider::jcode::JcodeProvider::new()),
             Self::Azure => {
                 // Azure OpenAI is the OpenRouter transport configured via Azure
                 // env; apply that env (endpoint/key/header wiring) before building
@@ -1696,8 +1690,14 @@ pub async fn run_generic_native_e2e(
                 ));
             }
         } else {
-            run_generic_native_api_checks(runtime.as_ref(), &selected, spec.label, &mut checks, &mut spend)
-                .await;
+            run_generic_native_api_checks(
+                runtime.as_ref(),
+                &selected,
+                spec.label,
+                &mut checks,
+                &mut spend,
+            )
+            .await;
         }
     } else {
         for checkpoint in API_DEPENDENT_CHECKPOINTS {

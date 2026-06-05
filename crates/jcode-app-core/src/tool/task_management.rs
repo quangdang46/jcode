@@ -1,5 +1,5 @@
-use super::{Tool, ToolContext, ToolOutput};
 use super::team::{TeamConfig, TeamTask};
+use super::{Tool, ToolContext, ToolOutput};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -154,10 +154,7 @@ impl Tool for TaskUpdateTool {
         let mut team = match TeamConfig::load(&params.team_name)? {
             Some(t) => t,
             None => {
-                return Err(anyhow::anyhow!(
-                    "Team '{}' not found.",
-                    params.team_name
-                ));
+                return Err(anyhow::anyhow!("Team '{}' not found.", params.team_name));
             }
         };
 
@@ -233,10 +230,7 @@ impl Tool for TaskListTool {
         let team = match TeamConfig::load(&params.team_name)? {
             Some(t) => t,
             None => {
-                return Err(anyhow::anyhow!(
-                    "Team '{}' not found.",
-                    params.team_name
-                ));
+                return Err(anyhow::anyhow!("Team '{}' not found.", params.team_name));
             }
         };
 
@@ -246,11 +240,22 @@ impl Tool for TaskListTool {
             params.team_name,
             team.tasks.len(),
             team.tasks.iter().filter(|t| t.status == "pending").count(),
-            team.tasks.iter().filter(|t| t.status == "in_progress").count(),
-            team.tasks.iter().filter(|t| t.status == "completed").count(),
+            team.tasks
+                .iter()
+                .filter(|t| t.status == "in_progress")
+                .count(),
+            team.tasks
+                .iter()
+                .filter(|t| t.status == "completed")
+                .count(),
         );
 
-        Ok(ToolOutput::new(format!("{}\n\n{}", summary, output))
-            .with_title(format!("{} tasks in '{}'", team.tasks.len(), params.team_name)))
+        Ok(
+            ToolOutput::new(format!("{}\n\n{}", summary, output)).with_title(format!(
+                "{} tasks in '{}'",
+                team.tasks.len(),
+                params.team_name
+            )),
+        )
     }
 }

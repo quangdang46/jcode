@@ -325,8 +325,8 @@ impl Agent {
     fn apply_selfdev_tool_surface(tools: &mut [ToolDefinition], is_canary: bool) {
         for tool in tools.iter_mut() {
             if tool.name == "selfdev" {
-                tool.description = crate::tool::selfdev::SelfDevTool::description_for(is_canary)
-                    .to_string();
+                tool.description =
+                    crate::tool::selfdev::SelfDevTool::description_for(is_canary).to_string();
                 tool.input_schema = crate::tool::selfdev::SelfDevTool::schema_for(is_canary);
             }
         }

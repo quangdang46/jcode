@@ -1341,7 +1341,10 @@ pub async fn run_live_native_provider_smoke(
     .with_duration_ms(started.elapsed().as_millis() as u64)
     .with_evidence("model", serde_json::json!(model))
     .with_evidence("matched_expected_content", serde_json::json!(true))
-    .with_evidence("stop_reason", serde_json::json!(outcome.stop_reason.clone()));
+    .with_evidence(
+        "stop_reason",
+        serde_json::json!(outcome.stop_reason.clone()),
+    );
     if let Some(usage) = outcome.usage_evidence() {
         stage = stage.with_evidence("usage", usage);
     }
@@ -1429,7 +1432,10 @@ pub async fn run_live_native_provider_stream_smoke(
     .with_evidence("attempts", serde_json::json!(attempts))
     .with_evidence("total_events", serde_json::json!(outcome.total_events))
     .with_evidence("matched_expected_content", serde_json::json!(true))
-    .with_evidence("stop_reason", serde_json::json!(outcome.stop_reason.clone()));
+    .with_evidence(
+        "stop_reason",
+        serde_json::json!(outcome.stop_reason.clone()),
+    );
     if let Some(usage) = outcome.usage_evidence() {
         stage = stage.with_evidence("usage", usage);
     }

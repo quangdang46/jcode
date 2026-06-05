@@ -160,7 +160,10 @@ pub fn session_mode(session_id: &str) -> Option<Mode> {
 /// Call sites that know the agent's `PermissionMode` (e.g. subagent tool
 /// execution) should use this instead of [`classify`].
 #[must_use]
-pub fn classify_for_agent(action: &str, agent_permission_mode: Option<PermissionMode>) -> BridgeDecision {
+pub fn classify_for_agent(
+    action: &str,
+    agent_permission_mode: Option<PermissionMode>,
+) -> BridgeDecision {
     let mode = agent_permission_mode
         .map(permission_mode_to_dcg)
         .unwrap_or_else(current_mode);
@@ -468,7 +471,10 @@ mod tests {
         assert_eq!(permission_mode_to_dcg(PM::AcceptEdits), Mode::AcceptEdits);
         assert_eq!(permission_mode_to_dcg(PM::Plan), Mode::Plan);
         assert_eq!(permission_mode_to_dcg(PM::DontAsk), Mode::DontAsk);
-        assert_eq!(permission_mode_to_dcg(PM::BypassPermissions), Mode::BypassPermissions);
+        assert_eq!(
+            permission_mode_to_dcg(PM::BypassPermissions),
+            Mode::BypassPermissions
+        );
         assert_eq!(permission_mode_to_dcg(PM::Auto), Mode::Auto);
     }
 

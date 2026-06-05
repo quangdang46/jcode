@@ -452,7 +452,10 @@ fn skills_command_marks_active_skill_in_remote_mode() {
     assert!(content.contains("- /optimization (active)"), "{content}");
     assert!(content.contains("- /firefox-browser\n"), "{content}");
     // Endorsed list should mark remote-installed skills as installed.
-    assert!(content.contains("/firefox-browser [installed]"), "{content}");
+    assert!(
+        content.contains("/firefox-browser [installed]"),
+        "{content}"
+    );
 }
 
 #[test]

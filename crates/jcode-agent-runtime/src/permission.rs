@@ -28,11 +28,12 @@ use std::fmt;
 /// This enum intentionally mirrors `dcg_core::Mode` (from the
 /// `destructive_command_guard` crate) so that `jcode-agent-runtime`
 /// does not need to depend on `dcg-core` directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PermissionMode {
     /// Rule-based classification using the legacy `AUTO_ALLOWED` list.
     /// Read-only tools auto-allowed; writes require permission.
+    #[default]
     Default,
     /// File operations (edit, write, patch) auto-allowed. Network,
     /// spawn, and irreversible operations still prompt.
@@ -47,12 +48,6 @@ pub enum PermissionMode {
     BypassPermissions,
     /// LLM-based classifier decides per tool call.
     Auto,
-}
-
-impl Default for PermissionMode {
-    fn default() -> Self {
-        PermissionMode::Default
-    }
 }
 
 impl PermissionMode {
@@ -113,10 +108,7 @@ mod tests {
             PermissionMode::parse("accept-edits"),
             Some(PermissionMode::AcceptEdits)
         );
-        assert_eq!(
-            PermissionMode::parse("plan"),
-            Some(PermissionMode::Plan)
-        );
+        assert_eq!(PermissionMode::parse("plan"), Some(PermissionMode::Plan));
         assert_eq!(
             PermissionMode::parse("DONTASK"),
             Some(PermissionMode::DontAsk)
@@ -133,10 +125,7 @@ mod tests {
             PermissionMode::parse("bypass-permissions"),
             Some(PermissionMode::BypassPermissions)
         );
-        assert_eq!(
-            PermissionMode::parse("auto"),
-            Some(PermissionMode::Auto)
-        );
+        assert_eq!(PermissionMode::parse("auto"), Some(PermissionMode::Auto));
         assert_eq!(PermissionMode::parse(""), None);
         assert_eq!(PermissionMode::parse("nonsense"), None);
     }
