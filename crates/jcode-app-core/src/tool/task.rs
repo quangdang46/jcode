@@ -1,12 +1,14 @@
 use super::{Registry, Tool, ToolContext, ToolOutput};
 use crate::agent::Agent;
 use crate::bus::{Bus, BusEvent, ToolSummary, ToolSummaryState};
+use crate::dcg_bridge;
 use crate::logging;
 use crate::protocol::HistoryMessage;
 use crate::provider::Provider;
 use crate::session::Session;
 use anyhow::Result;
 use async_trait::async_trait;
+use jcode_agent_runtime::permission::PermissionMode;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -55,6 +57,11 @@ struct SubagentInput {
     session_id: Option<String>,
     #[serde(default)]
     output_mode: SubagentOutputMode,
+    /// Optional permission mode override from the agent definition.
+    /// When set, the child session runs under this mode instead of
+    /// the session-global permission mode.
+    #[serde(default)]
+    permission_mode: Option<PermissionMode>,
     #[serde(rename = "command", default)]
     _command: Option<String>,
 }
@@ -115,6 +122,11 @@ impl Tool for SubagentTool {
                     "enum": ["answer", "compact", "full_transcript"],
                     "description": "Return mode. 'answer' returns the final answer only, 'compact' adds a user-visible transcript, and 'full_transcript' adds raw persisted messages. Defaults to 'answer'."
                 },
+                "permission_mode": {
+                    "type": "string",
+                    "enum": ["default", "accept-edits", "plan", "dont-ask", "bypass-permissions", "auto"],
+                    "description": "Permission mode override from the agent definition. When set, the child session uses this mode instead of the session-global permission mode."
+                },
                 "command": {
                     "type": "string",
                     "description": "Source command."
@@ -152,6 +164,20 @@ impl Tool for SubagentTool {
         }
 
         session.save()?;
+
+        // Propagate the agent definition's permission mode to the child
+        // session so that `dcg_bridge::classify_for_agent` / `session_mode`
+        // observe it during the child's tool execution.
+        let child_session_id = session.id.clone();
+        if let Some(pm) = params.permission_mode {
+            let dcg_mode = dcg_bridge::permission_mode_to_dcg(pm);
+            dcg_bridge::set_session_mode(&child_session_id, dcg_mode);
+            logging::info(&format!(
+                "[tool:subagent] session {} permission mode: {} (from agent definition)",
+                child_session_id,
+                pm.as_str(),
+            ));
+        }
 
         let mut allowed: HashSet<String> = self.registry.tool_names().await.into_iter().collect();
         for blocked in ["subagent", "task", "todo", "todowrite", "todoread"] {
@@ -215,17 +241,21 @@ impl Tool for SubagentTool {
         );
 
         let start = std::time::Instant::now();
-        let final_text = agent.run_once_capture(&params.prompt).await.map_err(|err| {
-            logging::warn(&format!(
-                "[tool:subagent] subagent failed description={} type={} session_id={} model={} error={}",
-                params.description,
-                params.subagent_type,
-                agent.session_id(),
-                resolved_model,
-                err
-            ));
-            err
-        })?;
+        let final_text = match agent.run_once_capture(&params.prompt).await {
+            Ok(text) => text,
+            Err(err) => {
+                logging::warn(&format!(
+                    "[tool:subagent] subagent failed description={} type={} session_id={} model={} error={}",
+                    params.description,
+                    params.subagent_type,
+                    agent.session_id(),
+                    resolved_model,
+                    err
+                ));
+                dcg_bridge::clear_session_mode(&child_session_id);
+                return Err(err);
+            }
+        };
         let sub_session_id = agent.session_id().to_string();
         let history = if params.output_mode == SubagentOutputMode::Compact {
             Some(agent.get_history())
@@ -244,6 +274,9 @@ impl Tool for SubagentTool {
             params.description,
             start.elapsed().as_secs_f64()
         ));
+
+        // Clean up per-session permission mode to prevent unbounded growth.
+        dcg_bridge::clear_session_mode(&child_session_id);
 
         listener.abort();
 
@@ -382,6 +415,7 @@ mod tests {
             model: None,
             session_id: None,
             output_mode: SubagentOutputMode::Answer,
+            permission_mode: None,
             _command: None,
         };
 
