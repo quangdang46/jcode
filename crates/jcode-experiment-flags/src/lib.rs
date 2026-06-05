@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 // ============================================================================
 
 /// Lifecycle stage of an experiment flag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Stage {
     /// Internal-only, not stable enough for users. Emits warning when enabled.
@@ -180,12 +180,14 @@ impl Experiments {
         }
     }
 
-    /// Apply user overrides and validate, emitting warnings for unstable flags.
+    /// Apply user overrides and validate.
+    ///
+    /// Note: startup warnings are NOT emitted here. Call `emit_startup_warnings()`
+    /// once at process startup instead — `from_config()` may be called per-client.
     pub fn from_config(toml_entries: &BTreeMap<String, bool>) -> Self {
         let mut ex = Experiments::with_defaults();
         ex.apply_map(toml_entries);
         ex.normalize_dependencies();
-        ex.warn_flag_states();
         ex
     }
 

@@ -311,6 +311,9 @@ impl Config {
         if let Ok(v) = std::env::var("JCODE_SWARM_ENABLED") {
             if let Some(parsed) = parse_env_bool(&v) {
                 self.features.swarm = parsed;
+                self.experiments
+                    .entries
+                    .insert("swarm".to_string(), parsed);
             }
         }
         if let Ok(v) = std::env::var("JCODE_MESSAGE_TIMESTAMPS") {
@@ -321,6 +324,9 @@ impl Config {
         if let Ok(v) = std::env::var("JCODE_PERSIST_MEMORY_INJECTIONS") {
             if let Some(parsed) = parse_env_bool(&v) {
                 self.features.persist_memory_injections = parsed;
+                self.experiments
+                    .entries
+                    .insert("persist_memory_injections".to_string(), parsed);
             }
         }
         if let Ok(v) = std::env::var("JCODE_UPDATE_CHANNEL") {

@@ -40,6 +40,11 @@ pub fn run_experiment_list_command(json: bool) -> Result<()> {
 }
 
 pub fn run_experiment_enable_command(key: &str) -> Result<()> {
+    if Experiments::resolve_key(key).is_none() {
+        anyhow::bail!(
+            "Unknown experiment flag '{key}'. Use 'jcode experiment list' to see valid flags."
+        );
+    }
     let mut config = crate::config::Config::load();
     config.experiments.entries.insert(key.to_string(), true);
     config.save().context("Failed to save config")?;
@@ -49,6 +54,11 @@ pub fn run_experiment_enable_command(key: &str) -> Result<()> {
 }
 
 pub fn run_experiment_disable_command(key: &str) -> Result<()> {
+    if Experiments::resolve_key(key).is_none() {
+        anyhow::bail!(
+            "Unknown experiment flag '{key}'. Use 'jcode experiment list' to see valid flags."
+        );
+    }
     let mut config = crate::config::Config::load();
     config.experiments.entries.insert(key.to_string(), false);
     config.save().context("Failed to save config")?;

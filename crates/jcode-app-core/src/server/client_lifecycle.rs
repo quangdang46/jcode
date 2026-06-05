@@ -2419,9 +2419,15 @@ pub(super) async fn handle_client(
                 let experiments =
                     jcode_experiment_flags::Experiments::from_config(&config.experiments.entries);
                 let states = experiments.all_flag_states();
-                let flags: Vec<serde_json::Value> = states
+                let flags: Vec<jcode_protocol::ExperimentFlagWire> = states
                     .iter()
-                    .filter_map(|s| serde_json::to_value(s).ok())
+                    .map(|s| jcode_protocol::ExperimentFlagWire {
+                        flag: format!("{:?}", s.flag),
+                        key: s.key.to_string(),
+                        stage: format!("{:?}", s.stage),
+                        enabled: s.enabled,
+                        default_enabled: s.default_enabled,
+                    })
                     .collect();
                 let _ = client_event_tx.send(ServerEvent::ExperimentFlags { flags });
             }
@@ -2431,9 +2437,15 @@ pub(super) async fn handle_client(
                 config.experiments.entries.insert(key, enabled);
                 if let Err(e) = config.save() {
                     crate::logging::error(&format!("Failed to save experiment config: {e}"));
+                    let _ = client_event_tx.send(ServerEvent::Error {
+                        id,
+                        message: format!("Failed to save experiment config: {e}"),
+                        retry_after_secs: None,
+                    });
+                } else {
+                    crate::config::invalidate_config_cache();
+                    let _ = client_event_tx.send(ServerEvent::Done { id });
                 }
-                crate::config::invalidate_config_cache();
-                let _ = client_event_tx.send(ServerEvent::Done { id });
             }
 
             // These are handled via channels, not direct requests from TUI

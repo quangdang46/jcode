@@ -1250,5 +1250,15 @@ pub enum ServerEvent {
 
     /// Current experiment flag states (response to ExperimentList)
     #[serde(rename = "experiment_flags")]
-    ExperimentFlags { flags: Vec<serde_json::Value> },
+    ExperimentFlags { flags: Vec<ExperimentFlagWire> },
+}
+
+/// Typed wire representation of a single experiment flag state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExperimentFlagWire {
+    pub flag: String,
+    pub key: String,
+    pub stage: String,
+    pub enabled: bool,
+    pub default_enabled: bool,
 }
