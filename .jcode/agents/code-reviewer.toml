@@ -33,6 +33,7 @@ output_mode = "last_message"
 
 # Reviewer is read-only — plan mode denies writes without prompting.
 permission_mode = "plan"
+max_turns = 15
 
 tool_names = [
     "read",

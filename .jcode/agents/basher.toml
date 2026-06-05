@@ -40,6 +40,7 @@ reasoning = "minimal"
 # Basher runs terminal commands — auto-approve file ops so the parent
 # doesn't need to re-approve every bash call. Network/spawn still prompt.
 permission_mode = "accept-edits"
+max_turns = 10
 
 include_message_history = false
 inherit_parent_system_prompt = false

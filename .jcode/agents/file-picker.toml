@@ -28,6 +28,7 @@ output_mode = "last_message"
 
 # File picker is read-only — plan mode denies writes without prompting.
 permission_mode = "plan"
+max_turns = 5
 
 # Tools required: read project file tree + glob fallback. Whitelist is
 # checked at runtime against the tool registry; unknown tools fail loudly
