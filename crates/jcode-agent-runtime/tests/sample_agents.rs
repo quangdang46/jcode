@@ -9,7 +9,9 @@
 
 use std::path::PathBuf;
 
-use jcode_agent_runtime::{AgentRegistry, ModelTier, OutputMode, ReasoningEffort, SourceKind};
+use jcode_agent_runtime::{
+    AgentRegistry, ModelTier, OutputMode, PermissionMode, ReasoningEffort, SourceKind,
+};
 
 /// Path to the project-root sample agents directory, relative to the
 /// crate manifest. Deliberately constructed via `CARGO_MANIFEST_DIR` so
@@ -71,6 +73,11 @@ fn file_picker_sample_has_expected_shape() {
     assert_eq!(agent.output_mode, OutputMode::LastMessage);
     assert!(agent.tool_names.iter().any(|t| t == "read"));
     assert!(agent.spawnable_agents.is_empty(), "leaf agent");
+    assert_eq!(
+        agent.permission_mode,
+        Some(PermissionMode::Plan),
+        "file-picker is read-only (plan mode)"
+    );
 
     // Resolve model with no env vars set should fall back to the
     // session's current model.
@@ -106,6 +113,11 @@ fn code_reviewer_uses_inherit_parent_system_prompt_for_cache_hit() {
         "reviewer needs context of the change it's reviewing"
     );
     assert_eq!(agent.prefer_tier, Some(ModelTier::Thinking));
+    assert_eq!(
+        agent.permission_mode,
+        Some(PermissionMode::Plan),
+        "code-reviewer is read-only (plan mode)"
+    );
 }
 
 #[test]
@@ -151,6 +163,11 @@ fn basher_sample_has_expected_shape() {
     assert_eq!(agent.output_mode, OutputMode::LastMessage);
     assert_eq!(agent.tool_names, vec!["bash"]);
     assert!(agent.spawnable_agents.is_empty(), "leaf agent");
+    assert_eq!(
+        agent.permission_mode,
+        Some(PermissionMode::AcceptEdits),
+        "basher auto-approves file ops"
+    );
 
     // No tier env var set → resolve falls back to the session model.
     let resolved = agent.resolve_model("session-model");
@@ -207,4 +224,9 @@ fn editor_sample_has_expected_shape() {
         );
     }
     assert!(agent.spawnable_agents.is_empty(), "leaf agent");
+    assert_eq!(
+        agent.permission_mode,
+        Some(PermissionMode::AcceptEdits),
+        "editor auto-approves file ops"
+    );
 }

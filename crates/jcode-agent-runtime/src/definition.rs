@@ -33,6 +33,7 @@
 //!   Phase 2); for now agents are pure prompted.
 
 use crate::output::OutputMode;
+use crate::permission::PermissionMode;
 use crate::reasoning::ReasoningEffort;
 use crate::tier::ModelTier;
 
@@ -151,6 +152,24 @@ pub struct AgentDefinition {
     /// (file-picker doesn't need to see edit chatter).
     #[serde(default)]
     pub include_message_history: bool,
+
+    // -----------------------------------------------------------------
+    // Permissions
+    // -----------------------------------------------------------------
+    /// Optional permission mode override for this agent's tool execution.
+    /// When set, the agent runs under this permission mode instead of the
+    /// session-global mode (set via CLI `--permission-mode` or cycled in
+    /// the TUI).
+    ///
+    /// Useful for:
+    /// - Restricting sub-agents: reviewer runs in `Plan` (read-only).
+    /// - Elevating leaf agents: `basher` runs in `AcceptEdits`.
+    /// - Background agents: CI runner uses `DontAsk`.
+    ///
+    /// If `None`, the agent inherits the session's current permission mode.
+    /// See `permission.rs` for the full mode descriptions.
+    #[serde(default)]
+    pub permission_mode: Option<PermissionMode>,
 
     // -----------------------------------------------------------------
     // Output
@@ -407,6 +426,7 @@ mod tests {
             spawner_prompt: None,
             inherit_parent_system_prompt: false,
             include_message_history: false,
+            permission_mode: None,
             output_mode: OutputMode::LastMessage,
             output_schema: None,
         }

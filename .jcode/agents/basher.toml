@@ -37,6 +37,10 @@ version = "0.1.0"
 prefer_tier = "routine"
 reasoning = "minimal"
 
+# Basher runs terminal commands — auto-approve file ops so the parent
+# doesn't need to re-approve every bash call. Network/spawn still prompt.
+permission_mode = "accept-edits"
+
 include_message_history = false
 inherit_parent_system_prompt = false
 output_mode = "last_message"

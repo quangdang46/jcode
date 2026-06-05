@@ -38,6 +38,10 @@ version = "0.1.0"
 prefer_tier = "thinking"
 reasoning = "medium"
 
+# Editor makes code edits — auto-approve file operations so the parent
+# agent doesn't need to re-approve every str_replace/write call.
+permission_mode = "accept-edits"
+
 inherit_parent_system_prompt = true
 include_message_history = true
 output_mode = "all_messages"

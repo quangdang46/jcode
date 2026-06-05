@@ -373,6 +373,7 @@ mod tests {
             spawner_prompt: None,
             inherit_parent_system_prompt: false,
             include_message_history: false,
+            permission_mode: None,
             output_mode: OutputMode::LastMessage,
             output_schema: None,
         };

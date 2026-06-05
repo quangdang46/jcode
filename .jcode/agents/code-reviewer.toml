@@ -31,6 +31,9 @@ inherit_parent_system_prompt = true
 include_message_history = true
 output_mode = "last_message"
 
+# Reviewer is read-only — plan mode denies writes without prompting.
+permission_mode = "plan"
+
 tool_names = [
     "read",
     "grep",
