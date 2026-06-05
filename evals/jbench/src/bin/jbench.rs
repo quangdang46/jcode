@@ -9,11 +9,9 @@ use clap::{Parser, Subcommand};
 
 #[cfg(feature = "agent-runner")]
 use jcode_jbench::agent_runner::AgentRunConfig;
-use jcode_jbench::{
-    judge::{JudgeConfig, judge_with_three_models},
-    lessons::{LessonsConfig, append_lessons_to_file, extract_lessons},
-    types::{AgentEvalResults, EvalDataV2, EvalRun},
-};
+#[cfg(feature = "agent-runner")]
+use jcode_jbench::types::EvalDataV2;
+use jcode_jbench::types::EvalRun;
 
 /// Top-level `jbench` CLI.
 #[derive(Debug, Parser)]
@@ -113,22 +111,22 @@ async fn main() -> Result<()> {
             gen_evals_impl(&input, &output).await?;
         }
         Command::Run {
-            eval_file,
-            agent_id,
-            output_dir,
-            jcode_binary,
-            max_turns,
-            timeout_secs,
+            eval_file: _eval_file,
+            agent_id: _agent_id,
+            output_dir: _output_dir,
+            jcode_binary: _jcode_binary,
+            max_turns: _max_turns,
+            timeout_secs: _timeout_secs,
         } => {
             #[cfg(feature = "agent-runner")]
             {
                 run_impl(
-                    &eval_file,
-                    &agent_id,
-                    &output_dir,
-                    jcode_binary.as_ref(),
-                    max_turns,
-                    timeout_secs,
+                    &_eval_file,
+                    &_agent_id,
+                    &_output_dir,
+                    _jcode_binary.as_ref(),
+                    _max_turns,
+                    _timeout_secs,
                 )
                 .await?;
             }
@@ -303,5 +301,5 @@ async fn meta_analyze_impl(runs_dir: &PathBuf, output: Option<&PathBuf>) -> Resu
 
 fn todo_step(phase: &str) -> Result<()> {
     eprintln!("{phase}");
-    std::process::exit(0);
+    std::process::exit(2);
 }

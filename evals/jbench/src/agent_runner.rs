@@ -130,7 +130,7 @@ pub async fn run_agent_in_repo(config: AgentRunConfig) -> Result<EvalRun> {
         return Ok(EvalRun {
             commit_sha: String::new(),
             prompt: config.prompt,
-            diff: extract_diff_from_repo(&config.repo_path).unwrap_or_default(),
+            diff: extract_diff_from_repo(&config.repo_path).await.unwrap_or_default(),
             judging: Default::default(),
             cost_usd: 0.0,
             duration_ms: start.elapsed().as_millis() as u64,
@@ -143,7 +143,7 @@ pub async fn run_agent_in_repo(config: AgentRunConfig) -> Result<EvalRun> {
         .await
         .context("failed to wait for jcode subprocess")?;
 
-    let diff = extract_diff_from_repo(&config.repo_path)?;
+    let diff = extract_diff_from_repo(&config.repo_path).await?;
     let error = if !status.success() {
         Some(format!("jcode exited with status {:?}", status))
     } else {
@@ -163,19 +163,24 @@ pub async fn run_agent_in_repo(config: AgentRunConfig) -> Result<EvalRun> {
 
 /// Produce a unified diff describing all uncommitted changes in
 /// `repo_path` against its currently-checked-out HEAD.
-pub fn extract_diff_from_repo(repo_path: &Path) -> Result<String> {
-    let output = std::process::Command::new("git")
-        .args(["diff", "--no-color", "HEAD"])
-        .current_dir(repo_path)
-        .output()
-        .context("git diff failed")?;
+pub async fn extract_diff_from_repo(repo_path: &Path) -> Result<String> {
+    let repo_path = repo_path.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let output = std::process::Command::new("git")
+            .args(["diff", "--no-color", "HEAD"])
+            .current_dir(&repo_path)
+            .output()
+            .context("git diff failed")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git diff exited with error: {stderr}");
-    }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("git diff exited with error: {stderr}");
+        }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    })
+    .await
+    .context("spawn_blocking panicked")?
 }
 
 #[cfg(test)]
@@ -184,7 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn extract_diff_from_repo_nonexistent() {
-        let result = extract_diff_from_repo(Path::new("/tmp/does-not-exist"));
+        let result = extract_diff_from_repo(Path::new("/tmp/does-not-exist")).await;
         assert!(result.is_err());
     }
 }
