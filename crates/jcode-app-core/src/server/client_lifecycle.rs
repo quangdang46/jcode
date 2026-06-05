@@ -418,7 +418,7 @@ pub(super) async fn handle_client(
 
     let provider = provider_template.fork();
     let t0 = std::time::Instant::now();
-    let registry = Registry::new(provider.clone()).await;
+    let registry = Registry::new(provider.clone(), None).await;
     let registry_ms = t0.elapsed().as_millis();
 
     let mut swarm_enabled = crate::config::config().features.swarm;

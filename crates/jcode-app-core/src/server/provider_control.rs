@@ -1242,7 +1242,7 @@ mod tests {
     ) {
         let provider = Arc::new(TestEffortProvider::default());
         let provider_dyn: Arc<dyn Provider> = provider.clone();
-        let registry = crate::tool::Registry::new(Arc::clone(&provider_dyn)).await;
+        let registry = crate::tool::Registry::new(Arc::clone(&provider_dyn), None).await;
         let mut session =
             crate::session::Session::create_with_id(session_id.to_string(), None, None);
         session.model = Some(provider.model());

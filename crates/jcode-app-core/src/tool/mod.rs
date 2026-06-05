@@ -275,7 +275,10 @@ impl Registry {
         tools
     }
 
-    pub async fn new(provider: Arc<dyn Provider>) -> Self {
+    pub async fn new(
+        provider: Arc<dyn Provider>,
+        agent_registry: Option<Arc<jcode_agent_runtime::AgentRegistry>>,
+    ) -> Self {
         let start = std::time::Instant::now();
         let skills_start = std::time::Instant::now();
         let skills = Self::shared_skills_registry();
@@ -324,7 +327,7 @@ impl Registry {
             Self::insert_tool(
                 &mut tools_map,
                 "subagent",
-                task::SubagentTool::new(provider, registry.clone(), None),
+                task::SubagentTool::new(provider, registry.clone(), agent_registry),
             );
             Self::insert_tool(
                 &mut tools_map,
