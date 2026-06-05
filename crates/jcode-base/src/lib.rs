@@ -29,6 +29,7 @@ pub mod compaction;
 pub mod config;
 pub mod copilot_usage;
 pub mod dictation;
+pub mod disable;
 #[cfg(feature = "embeddings")]
 pub mod embedding;
 #[cfg(not(feature = "embeddings"))]

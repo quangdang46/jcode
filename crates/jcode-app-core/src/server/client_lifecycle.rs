@@ -418,7 +418,7 @@ pub(super) async fn handle_client(
 
     let provider = provider_template.fork();
     let t0 = std::time::Instant::now();
-    let registry = Registry::new(provider.clone()).await;
+    let registry = Registry::new(provider.clone(), crate::tool::shared_agent_registry()).await;
     let registry_ms = t0.elapsed().as_millis();
 
     // Gate swarm coordination on the SwarmCoordination experiment flag.

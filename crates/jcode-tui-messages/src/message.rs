@@ -381,6 +381,7 @@ mod tests {
                 name: "read".to_string(),
                 input,
                 intent: None,
+                thought_signature: None,
             }),
         }
     }
