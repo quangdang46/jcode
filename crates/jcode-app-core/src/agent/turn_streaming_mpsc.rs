@@ -246,7 +246,11 @@ impl Agent {
                 crate::provider::stores_reasoning_content_for_context(&provider_name);
             let mut reasoning_content = String::new();
             let mut reasoning_signature = String::new();
-            let mut reasoning_fmt = crate::agent::reasoning_format::ReasoningStreamFormatter::new();
+            // Whether a live reasoning region is currently streaming to the client.
+            // Raw reasoning deltas are sent as `ReasoningDelta`; the client owns the
+            // dim/italic styling and live partial-line rendering. We close the region
+            // (via `ReasoningDone`) before real output or a tool call begins.
+            let mut reasoning_open = false;
             let mut openai_reasoning_items: Vec<ContentBlock> = Vec::new();
             let mut openai_native_compaction: Option<(String, usize)> = None;
             let mut tool_id_to_name: std::collections::HashMap<String, String> =
@@ -367,33 +371,33 @@ impl Agent {
                     }
                     StreamEvent::ThinkingDelta(thinking_text) => {
                         // Only send thinking content if enabled in config
-                        if crate::config::config().display.show_thinking {
-                            let formatted = reasoning_fmt.push_delta(&thinking_text);
-                            if !formatted.is_empty() {
-                                let _ = event_tx.send(ServerEvent::TextDelta { text: formatted });
-                            }
+                        if crate::config::config().display.show_thinking
+                            && !thinking_text.is_empty()
+                        {
+                            reasoning_open = true;
+                            let _ = event_tx.send(ServerEvent::ReasoningDelta {
+                                text: thinking_text.clone(),
+                            });
                         }
-                        if store_reasoning_content {
-                            reasoning_content.push_str(&thinking_text);
-                        }
+                        // Always capture reasoning text so it can be persisted as a
+                        // history-only trace, regardless of provider replay support.
+                        reasoning_content.push_str(&thinking_text);
                     }
                     StreamEvent::ThinkingDone { duration_secs } => {
-                        if reasoning_fmt.is_open() {
-                            let closing = reasoning_fmt
-                                .finish(Some(&format!("*Thought for {:.1}s*", duration_secs)));
-                            if !closing.is_empty() {
-                                let _ = event_tx.send(ServerEvent::TextDelta { text: closing });
-                            }
+                        if reasoning_open {
+                            reasoning_open = false;
+                            let _ = event_tx.send(ServerEvent::ReasoningDone {
+                                duration_secs: Some(duration_secs),
+                            });
                         }
                     }
                     StreamEvent::TextDelta(text) => {
-                        // Close any open reasoning blockquote before real output so the
-                        // answer renders as a normal paragraph rather than inside the quote.
-                        if reasoning_fmt.is_open() && !text.trim().is_empty() {
-                            let closing = reasoning_fmt.finish(None);
-                            if !closing.is_empty() {
-                                let _ = event_tx.send(ServerEvent::TextDelta { text: closing });
-                            }
+                        // Close any open reasoning region before real output so the
+                        // answer renders as a normal paragraph rather than as reasoning.
+                        if reasoning_open && !text.trim().is_empty() {
+                            reasoning_open = false;
+                            let _ = event_tx
+                                .send(ServerEvent::ReasoningDone { duration_secs: None });
                         }
                         text_content.push_str(&text);
                         if !text_wrapped_detected {
@@ -424,11 +428,10 @@ impl Agent {
                         }
                     }
                     StreamEvent::ToolUseStart { id, name } => {
-                        if reasoning_fmt.is_open() {
-                            let closing = reasoning_fmt.finish(None);
-                            if !closing.is_empty() {
-                                let _ = event_tx.send(ServerEvent::TextDelta { text: closing });
-                            }
+                        if reasoning_open {
+                            reasoning_open = false;
+                            let _ = event_tx
+                                .send(ServerEvent::ReasoningDone { duration_secs: None });
                         }
                         let _ = event_tx.send(ServerEvent::ToolStart {
                             id: id.clone(),
@@ -440,6 +443,7 @@ impl Agent {
                             name,
                             input: serde_json::Value::Null,
                             intent: None,
+                            thought_signature: None,
                         });
                         current_tool_input.clear();
                     }
@@ -470,6 +474,15 @@ impl Agent {
                                 ));
                             }
                             current_tool_input.clear();
+                        }
+                    }
+                    StreamEvent::ToolUseSignature(signature) => {
+                        // Attach Gemini 3 thought signature to the most recent
+                        // tool call so it can be persisted and replayed.
+                        if let Some(tool) = tool_calls.last_mut()
+                            && !signature.is_empty()
+                        {
+                            tool.thought_signature = Some(signature);
                         }
                     }
                     StreamEvent::ToolResult {
@@ -578,6 +591,13 @@ impl Agent {
                         stop_reason: reason,
                     } => {
                         saw_message_end = true;
+                        // Close any still-open reasoning region (e.g. a reasoning-only
+                        // step) so the client flushes its live partial line.
+                        if reasoning_open {
+                            reasoning_open = false;
+                            let _ = event_tx
+                                .send(ServerEvent::ReasoningDone { duration_secs: None });
+                        }
                         if reason.is_some() {
                             stop_reason = reason;
                         }
@@ -814,13 +834,14 @@ impl Agent {
                     cache_control: None,
                 });
             }
+            crate::message::push_reasoning_blocks(
+                &mut content_blocks,
+                &provider_name,
+                &reasoning_content,
+                Some(&reasoning_signature),
+                store_reasoning_content,
+            );
             if store_reasoning_content {
-                crate::message::push_reasoning_content_block(
-                    &mut content_blocks,
-                    &provider_name,
-                    &reasoning_content,
-                    Some(&reasoning_signature),
-                );
                 content_blocks.extend(openai_reasoning_items.iter().cloned());
             }
             for tc in &tool_calls {
@@ -828,6 +849,7 @@ impl Agent {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
                     input: tc.input.clone(),
+                    thought_signature: None,
                 });
             }
 
@@ -1295,6 +1317,7 @@ mod tests {
             name: name.to_string(),
             input,
             intent: None,
+            thought_signature: None,
         }
     }
 

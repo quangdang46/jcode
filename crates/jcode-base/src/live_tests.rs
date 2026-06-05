@@ -1657,10 +1657,13 @@ fn doctor_tier_for_stage(stage_id: &str) -> &'static str {
     }
 }
 
-/// True when `jcode provider-doctor <provider>` can actually drive this provider
-/// (only OpenAI-compatible providers are supported today).
+/// True when `provider-doctor` can drive `provider_id` end-to-end, either via
+/// the generic OpenAI-compatible driver (any compat profile) or a native-runtime
+/// driver (Claude OAuth, Antigravity). Used to annotate the monitoring roster so
+/// native providers are not perpetually marked "needs native suite".
 fn doctor_supports_provider(provider_id: &str) -> bool {
     crate::provider_catalog::openai_compatible_profile_by_id(provider_id).is_some()
+        || crate::auth::provider_e2e::native_doctor_supports_provider(provider_id)
 }
 
 /// True when a credential for `provider_id` is reachable, either via an
@@ -1684,6 +1687,9 @@ fn provider_has_credential(provider_id: &str) -> bool {
         "openai" | "openai-api" => &["OPENAI_API_KEY"],
         "openrouter" => &["OPENROUTER_API_KEY"],
         "gemini" | "google" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        // Antigravity authenticates only via cached Google OAuth tokens, not an
+        // env var; report a credential when those tokens are present on disk.
+        "antigravity" => return crate::auth::antigravity::has_cached_auth(),
         _ => &[],
     };
     env_candidates.iter().any(|key| {
@@ -1717,9 +1723,14 @@ fn build_provider_roster(providers: &[LiveProviderCoverageSummary]) -> Vec<Provi
             .or_insert_with(|| profile.display_name.to_string());
     }
     for provider in crate::provider_catalog::login_providers() {
+        // Skip non-model login providers: `AutoImport` is a credential-import
+        // pseudo-provider, and `Google`/Gmail is an email-account OAuth
+        // integration with no LLM catalog, so neither belongs in the
+        // provider+model coverage roster.
         if matches!(
             provider.target,
             crate::provider_catalog::LoginProviderTarget::AutoImport
+                | crate::provider_catalog::LoginProviderTarget::Google
         ) {
             continue;
         }
@@ -2205,10 +2216,10 @@ pub fn classify_provider_test_coverage_line(line: &str) -> CoverageLineStyle {
     }
 
     // Per-pair in-progress rows lead with an `N/M` stage count.
-    if let Some(first) = t.split_whitespace().next() {
-        if is_stage_fraction(first) {
-            return if t.contains("failed at") { Fail } else { Warn };
-        }
+    if let Some(first) = t.split_whitespace().next()
+        && is_stage_fraction(first)
+    {
+        return if t.contains("failed at") { Fail } else { Warn };
     }
 
     // Provider-monitor rows end with a `ready/seen` fraction; color by status
