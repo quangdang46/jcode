@@ -23,6 +23,7 @@ mod registry;
 mod route_builders;
 mod routing;
 mod selection;
+pub(crate) mod sse_timeout;
 mod startup;
 mod state;
 
@@ -47,6 +48,7 @@ pub use catalog_routes::{
     remote_model_routes_lightweight_fallback, remote_model_should_offer_copilot_route,
     remote_openai_compatible_route_for_model, simplified_model_routes_for_picker,
 };
+pub use jcode_provider_core::cli_provider_arg_for_session_key;
 pub use jcode_provider_core::{
     ALL_CLAUDE_MODELS, ALL_OPENAI_MODELS, CHEAPNESS_REFERENCE_INPUT_TOKENS,
     CHEAPNESS_REFERENCE_OUTPUT_TOKENS, DEFAULT_CONTEXT_LIMIT, EventStream, JCODE_USER_AGENT,
@@ -57,7 +59,6 @@ pub use jcode_provider_core::{
     normalize_copilot_model_name, provider_from_model_key, shared_http_client,
     summarize_model_catalog_refresh,
 };
-pub use jcode_provider_core::cli_provider_arg_for_session_key;
 pub use jcode_provider_core::{ProviderFailoverPrompt, parse_failover_prompt_message};
 pub use route_builders::{
     build_anthropic_oauth_route, build_copilot_route, build_openai_api_key_route,
@@ -740,6 +741,7 @@ impl MultiProvider {
             }
         } else if self.anthropic_provider().is_none()
             && (crate::auth::claude::load_credentials().is_ok()
+                || anthropic::anthropic_api_key_env_configured()
                 || crate::provider_catalog::load_api_key_from_env_or_config(
                     "ANTHROPIC_API_KEY",
                     "anthropic.env",

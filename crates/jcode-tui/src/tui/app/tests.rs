@@ -202,8 +202,12 @@ fn kv_cache_baseline_from_other_session_is_ignored() {
 
     // Switch to a brand-new, much smaller session and start its first request.
     app.remote_session_id = Some("session_small".to_string());
-    let small_signature =
-        App::kv_cache_request_signature(&[Message::user("hello from small session")], &[], "system", "");
+    let small_signature = App::kv_cache_request_signature(
+        &[Message::user("hello from small session")],
+        &[],
+        "system",
+        "",
+    );
     app.begin_remote_kv_cache_request(small_signature);
 
     let request = app
@@ -262,7 +266,6 @@ fn kv_cache_baseline_same_session_still_compares() {
         "append-only same-session growth keeps the cached prefix"
     );
 }
-
 
 #[test]
 fn remote_token_usage_records_cache_stats_before_done_and_dedupes_snapshots() {
@@ -463,7 +466,10 @@ fn skills_command_marks_active_skill_in_remote_mode() {
     assert!(content.contains("- /optimization (active)"), "{content}");
     assert!(content.contains("- /firefox-browser\n"), "{content}");
     // Endorsed list should mark remote-installed skills as installed.
-    assert!(content.contains("/firefox-browser [installed]"), "{content}");
+    assert!(
+        content.contains("/firefox-browser [installed]"),
+        "{content}"
+    );
 }
 
 #[test]

@@ -30,7 +30,8 @@ export default {
           const stats = await getStats(env);
           return jsonResponse(stats);
         } catch (err) {
-          return jsonResponse({ error: "Internal error", detail: String(err?.message || err) }, 500);
+          console.error("stats error", err);
+          return jsonResponse({ error: "Internal error" }, 500);
         }
       }
       return jsonResponse({ error: "Not found" }, 404);

@@ -71,7 +71,7 @@ fn member(
 
 async fn test_agent_with_working_dir(session_id: &str, working_dir: &str) -> Arc<Mutex<Agent>> {
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
-    let registry = Registry::new(provider.clone()).await;
+    let registry = Registry::new(provider.clone(), None).await;
     let mut session = crate::session::Session::create_with_id(session_id.to_string(), None, None);
     session.model = Some("mock".to_string());
     session.working_dir = Some(working_dir.to_string());
@@ -466,7 +466,11 @@ fn resolve_swarm_spawn_model_inherits_coordinator_auth_route_for_oauth_vs_api() 
     // the same API route, not Claude OAuth (the config default).
     let selection = resolve_swarm_spawn_selection(
         None,
-        &coordinator_identity(Some("claude-opus-4-6"), Some("claude-api"), Some("claude-api")),
+        &coordinator_identity(
+            Some("claude-opus-4-6"),
+            Some("claude-api"),
+            Some("claude-api"),
+        ),
     );
 
     assert_eq!(selection.model.as_deref(), Some("claude-opus-4-6"));
@@ -478,7 +482,11 @@ fn resolve_swarm_spawn_model_inherits_coordinator_auth_route_for_oauth_vs_api() 
 fn resolve_swarm_spawn_model_keeps_provider_key_when_config_matches_coordinator() {
     let selection = resolve_swarm_spawn_selection(
         Some("custom-model".to_string()),
-        &coordinator_identity(Some("custom-model"), Some("custom-provider"), Some("custom-route")),
+        &coordinator_identity(
+            Some("custom-model"),
+            Some("custom-provider"),
+            Some("custom-route"),
+        ),
     );
 
     assert_eq!(selection.model.as_deref(), Some("custom-model"));
@@ -541,8 +549,7 @@ async fn coordinator_identity_falls_back_to_persisted_session_when_agent_busy() 
     // Persist a coordinator session that records a concrete model + auth route.
     // Persist after the agent is built so it reflects the authoritative on-disk
     // snapshot the spawn path will read when the agent lock is unavailable.
-    let mut session =
-        crate::session::Session::create_with_id("coord_busy".to_string(), None, None);
+    let mut session = crate::session::Session::create_with_id("coord_busy".to_string(), None, None);
     session.model = Some("claude-opus-4-6".to_string());
     session.provider_key = Some("claude-api".to_string());
     session.route_api_method = Some("claude-api".to_string());

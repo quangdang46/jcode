@@ -634,10 +634,10 @@ async fn consume_native_stream(
                 // Emitted after the matching `ToolUseEnd`; attach it to the most
                 // recent tool call so probes can replay it on the next turn.
                 StreamEvent::ToolUseSignature(signature) => {
-                    if let Some(tool) = outcome.tool_calls.last_mut() {
-                        if !signature.is_empty() {
-                            tool.thought_signature = Some(signature);
-                        }
+                    if let Some(tool) = outcome.tool_calls.last_mut()
+                        && !signature.is_empty()
+                    {
+                        tool.thought_signature = Some(signature);
                     }
                 }
                 StreamEvent::TokenUsage {
@@ -971,10 +971,7 @@ pub async fn run_live_claude_native_tool_smoke(
     .with_evidence("model", serde_json::json!(model))
     .with_evidence("tool_name", serde_json::json!(tool_call.name))
     .with_evidence("tool_arguments", parsed_arguments)
-    .with_evidence(
-        "followup_consumed_result",
-        serde_json::json!(true),
-    );
+    .with_evidence("followup_consumed_result", serde_json::json!(true));
     if total_input != 0 || total_output != 0 {
         stage = stage.with_evidence("usage", usage_evidence(total_input, total_output, 0, 0));
     }
@@ -1222,7 +1219,10 @@ pub async fn run_live_native_provider_smoke(
     .with_duration_ms(started.elapsed().as_millis() as u64)
     .with_evidence("model", serde_json::json!(model))
     .with_evidence("matched_expected_content", serde_json::json!(true))
-    .with_evidence("stop_reason", serde_json::json!(outcome.stop_reason.clone()));
+    .with_evidence(
+        "stop_reason",
+        serde_json::json!(outcome.stop_reason.clone()),
+    );
     if let Some(usage) = outcome.usage_evidence() {
         stage = stage.with_evidence("usage", usage);
     }
@@ -1310,7 +1310,10 @@ pub async fn run_live_native_provider_stream_smoke(
     .with_evidence("attempts", serde_json::json!(attempts))
     .with_evidence("total_events", serde_json::json!(outcome.total_events))
     .with_evidence("matched_expected_content", serde_json::json!(true))
-    .with_evidence("stop_reason", serde_json::json!(outcome.stop_reason.clone()));
+    .with_evidence(
+        "stop_reason",
+        serde_json::json!(outcome.stop_reason.clone()),
+    );
     if let Some(usage) = outcome.usage_evidence() {
         stage = stage.with_evidence("usage", usage);
     }

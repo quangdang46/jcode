@@ -289,10 +289,13 @@ impl App {
             compacted_history_lazy: CompactedHistoryLazyState::default(),
             input: String::new(),
             command_candidates_cache: RefCell::new(None),
+            at_picker: RefCell::new(crate::tui::app::at_picker::AtPickerSlot::Pending),
             cursor_pos: 0,
             scroll_offset: 0,
             auto_scroll_paused: false,
             active_skill: None,
+            plan_mode: false,
+            permission_mode: crate::dcg_bridge::current_mode(),
             is_processing: false,
             streaming_text: String::new(),
             should_quit: false,
@@ -526,6 +529,8 @@ impl App {
             scroll_bookmark: None,
             typing_scroll_lock: false,
             stashed_input: None,
+            input_history: App::load_input_history(),
+            input_history_index: None,
             input_undo_stack: Vec::new(),
             status_notice: None,
             experimental_feature_warnings_seen: HashSet::new(),
@@ -585,6 +590,7 @@ impl App {
             login_picker_overlay: None,
             account_picker_overlay: None,
             usage_overlay: None,
+            experiment_popup: None,
             usage_report_refreshing: false,
             productivity_refreshing: false,
             last_overnight_card_refresh: None,
@@ -689,10 +695,13 @@ impl App {
             compacted_history_lazy: CompactedHistoryLazyState::default(),
             input: String::new(),
             command_candidates_cache: RefCell::new(None),
+            at_picker: RefCell::new(crate::tui::app::at_picker::AtPickerSlot::Pending),
             cursor_pos: 0,
             scroll_offset: 0,
             auto_scroll_paused: false,
             active_skill: None,
+            plan_mode: false,
+            permission_mode: crate::dcg_bridge::current_mode(),
             is_processing: false,
             streaming_text: String::new(),
             should_quit: false,
@@ -926,6 +935,8 @@ impl App {
             scroll_bookmark: None,
             typing_scroll_lock: false,
             stashed_input: None,
+            input_history: App::load_input_history(),
+            input_history_index: None,
             input_undo_stack: Vec::new(),
             status_notice: None,
             experimental_feature_warnings_seen: HashSet::new(),
@@ -985,6 +996,7 @@ impl App {
             login_picker_overlay: None,
             account_picker_overlay: None,
             usage_overlay: None,
+            experiment_popup: None,
             usage_report_refreshing: false,
             productivity_refreshing: false,
             last_overnight_card_refresh: None,
@@ -1002,6 +1014,8 @@ impl App {
         app.runtime_mode = AppRuntimeMode::TestHarness;
         app.is_remote = false;
         app.is_replay = false;
+        app.input_history.clear();
+        app.input_history_index = None;
         app
     }
 

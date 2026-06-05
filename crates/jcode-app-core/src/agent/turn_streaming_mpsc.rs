@@ -396,8 +396,9 @@ impl Agent {
                         // answer renders as a normal paragraph rather than as reasoning.
                         if reasoning_open && !text.trim().is_empty() {
                             reasoning_open = false;
-                            let _ = event_tx
-                                .send(ServerEvent::ReasoningDone { duration_secs: None });
+                            let _ = event_tx.send(ServerEvent::ReasoningDone {
+                                duration_secs: None,
+                            });
                         }
                         text_content.push_str(&text);
                         if !text_wrapped_detected {
@@ -430,8 +431,9 @@ impl Agent {
                     StreamEvent::ToolUseStart { id, name } => {
                         if reasoning_open {
                             reasoning_open = false;
-                            let _ = event_tx
-                                .send(ServerEvent::ReasoningDone { duration_secs: None });
+                            let _ = event_tx.send(ServerEvent::ReasoningDone {
+                                duration_secs: None,
+                            });
                         }
                         let _ = event_tx.send(ServerEvent::ToolStart {
                             id: id.clone(),
@@ -464,17 +466,25 @@ impl Agent {
                                 name: tool.name.clone(),
                             });
 
-                            tool_calls.push(tool);
+                            // Issue #164: dedup by tool_use_id (see turn_loops.rs).
+                            let tool_id = tool.id.clone();
+                            let tool_name = tool.name.clone();
+                            if !super::tools::push_dedup_by_id(&mut tool_calls, tool) {
+                                logging::warn(&format!(
+                                    "Dropping duplicate tool_use_id={} name={} (already accumulated this turn)",
+                                    tool_id, tool_name
+                                ));
+                            }
                             current_tool_input.clear();
                         }
                     }
                     StreamEvent::ToolUseSignature(signature) => {
                         // Attach Gemini 3 thought signature to the most recent
                         // tool call so it can be persisted and replayed.
-                        if let Some(tool) = tool_calls.last_mut() {
-                            if !signature.is_empty() {
-                                tool.thought_signature = Some(signature);
-                            }
+                        if let Some(tool) = tool_calls.last_mut()
+                            && !signature.is_empty()
+                        {
+                            tool.thought_signature = Some(signature);
                         }
                     }
                     StreamEvent::ToolResult {
@@ -587,8 +597,9 @@ impl Agent {
                         // step) so the client flushes its live partial line.
                         if reasoning_open {
                             reasoning_open = false;
-                            let _ = event_tx
-                                .send(ServerEvent::ReasoningDone { duration_secs: None });
+                            let _ = event_tx.send(ServerEvent::ReasoningDone {
+                                duration_secs: None,
+                            });
                         }
                         if reason.is_some() {
                             stop_reason = reason;
@@ -635,6 +646,7 @@ impl Agent {
                             message_id: self.session.id.clone(),
                             tool_call_id: request_id.clone(),
                             working_dir: self.working_dir().map(PathBuf::from),
+                            sandbox_root: crate::sandbox::current_sandbox_root(),
                             stdin_request_tx: self.stdin_request_tx.clone(),
                             graceful_shutdown_signal: Some(self.graceful_shutdown.clone()),
                             execution_mode: ToolExecutionMode::AgentTurn,
@@ -839,7 +851,9 @@ impl Agent {
                 content_blocks.push(ContentBlock::ToolUse {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
-                    input: tc.input.clone(), thought_signature: None, });
+                    input: tc.input.clone(),
+                    thought_signature: None,
+                });
             }
 
             let assistant_message_id = if !content_blocks.is_empty() {
@@ -1042,6 +1056,7 @@ impl Agent {
                     message_id: message_id.clone(),
                     tool_call_id: tc.id.clone(),
                     working_dir: self.working_dir().map(PathBuf::from),
+                    sandbox_root: crate::sandbox::current_sandbox_root(),
                     stdin_request_tx: self.stdin_request_tx.clone(),
                     graceful_shutdown_signal: Some(self.graceful_shutdown.clone()),
                     execution_mode: ToolExecutionMode::AgentTurn,

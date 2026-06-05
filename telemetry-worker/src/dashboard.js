@@ -230,7 +230,7 @@ async function load(){
   document.getElementById("content").innerHTML = '<div class="mono" style="padding:60px 0;color:var(--ink-faint)"><span class="spin"></span> reading instruments…</div>';
   showApp();
   let res;
-  try { res = await fetch("/v1/stats?token="+encodeURIComponent(TOKEN), { headers:{ "Authorization":"Bearer "+TOKEN } }); }
+  try { res = await fetch("/v1/stats", { headers:{ "Authorization":"Bearer "+TOKEN } }); }
   catch(e){ showGate("network error"); return; }
   if(res.status===401){ localStorage.removeItem("jcode_dash_token"); TOKEN=""; showGate("invalid token"); return; }
   if(!res.ok){ document.getElementById("content").innerHTML='<div class="err">failed to load ('+res.status+')</div>'; return; }
