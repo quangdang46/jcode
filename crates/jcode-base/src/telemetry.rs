@@ -258,6 +258,10 @@ enum DeliveryMode {
 }
 
 pub fn is_enabled() -> bool {
+    if crate::disable::DisableRegistry::global().disabled(crate::disable::DisableFlag::Telemetry) {
+        logging::debug("telemetry disabled by JCODE_DISABLE_TELEMETRY");
+        return false;
+    }
     if std::env::var("JCODE_NO_TELEMETRY").is_ok() || std::env::var("DO_NOT_TRACK").is_ok() {
         logging::debug("telemetry disabled by environment");
         return false;
@@ -330,6 +334,9 @@ fn share_content_marker_path() -> Option<std::path::PathBuf> {
 /// Always false when base telemetry is disabled.
 pub fn content_sharing_enabled() -> bool {
     if !is_enabled() {
+        return false;
+    }
+    if crate::disable::DisableRegistry::global().disabled(crate::disable::DisableFlag::Telemetry) {
         return false;
     }
     if std::env::var("JCODE_NO_TELEMETRY").is_ok() || std::env::var("DO_NOT_TRACK").is_ok() {

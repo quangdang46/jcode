@@ -7,6 +7,26 @@ impl Config {
         reason = "Environment override parsing is intentionally explicit and grouped by config area"
     )]
     pub(crate) fn apply_env_overrides(&mut self) {
+        // Deprecated env vars — still supported but log warning.
+        #[cfg(not(test))]
+        {
+            if std::env::var("JCODE_DISABLED_TOOLS").is_ok() {
+                crate::logging::warn(
+                    "JCODE_DISABLED_TOOLS is deprecated, use JCODE_DISABLE_TOOL=... instead",
+                );
+            }
+            if std::env::var("JCODE_DISABLE_BASE_TOOLS").is_ok() {
+                crate::logging::warn(
+                    "JCODE_DISABLE_BASE_TOOLS is deprecated, use JCODE_DISABLE_TOOL=base instead",
+                );
+            }
+            if std::env::var("JCODE_DISABLED_ANIMATIONS").is_ok() {
+                crate::logging::warn(
+                    "JCODE_DISABLED_ANIMATIONS is deprecated, use JCODE_DISABLE_ANIMATION=... instead",
+                );
+            }
+        }
+
         // Keybindings
         if let Ok(v) = std::env::var("JCODE_SCROLL_UP_KEY") {
             self.keybindings.scroll_up = v;
@@ -109,13 +129,31 @@ impl Config {
         if let Ok(v) = std::env::var("JCODE_TOOLS") {
             self.tools.enabled = parse_env_list(&v);
         }
+        // Disable-related vars are now centralized in DisableRegistry.
+        // Populate Config fields from the registry for backward compat.
+        {
+            let registry = crate::disable::DisableRegistry::global();
+            let tools: Vec<String> = registry.all_disabled_tools().iter().cloned().collect();
+            if !tools.is_empty() {
+                self.tools.disabled = tools;
+            }
+            self.tools.disable_base_tools = registry.base_tools_disabled();
+        }
+        // Backward compat: also read deprecated env vars directly.
         if let Ok(v) = std::env::var("JCODE_DISABLED_TOOLS") {
-            self.tools.disabled = parse_env_list(&v);
+            let parsed = parse_env_list(&v);
+            for tool in parsed {
+                if !self.tools.disabled.contains(&tool) {
+                    self.tools.disabled.push(tool);
+                }
+            }
         }
         if let Ok(v) = std::env::var("JCODE_DISABLE_BASE_TOOLS")
             && let Some(parsed) = parse_env_bool(&v)
         {
-            self.tools.disable_base_tools = parsed;
+            if parsed {
+                self.tools.disable_base_tools = true;
+            }
         }
 
         // ACP adapter
@@ -213,8 +251,21 @@ impl Config {
                 self.display.prompt_entry_animation = parsed;
             }
         }
+        // Animations: populate from DisableRegistry, then merge deprecated env var.
+        {
+            let registry = crate::disable::DisableRegistry::global();
+            let anims: Vec<String> = registry.all_disabled_animations().iter().cloned().collect();
+            if !anims.is_empty() {
+                self.display.disabled_animations = anims;
+            }
+        }
         if let Ok(v) = std::env::var("JCODE_DISABLED_ANIMATIONS") {
-            self.display.disabled_animations = parse_env_list(&v);
+            let parsed = parse_env_list(&v);
+            for anim in parsed {
+                if !self.display.disabled_animations.contains(&anim) {
+                    self.display.disabled_animations.push(anim);
+                }
+            }
         }
         if let Ok(v) = std::env::var("JCODE_PERFORMANCE") {
             let trimmed = v.trim().to_lowercase();

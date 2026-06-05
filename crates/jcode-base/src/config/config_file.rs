@@ -10,6 +10,10 @@ impl Config {
 
     /// Load config from file, with environment variable overrides
     pub fn load() -> Self {
+        // Trigger DisableRegistry initialization early so env vars are read
+        // before any config-dependent code runs.
+        let _ = crate::disable::DisableRegistry::global();
+
         let mut config = Self::load_from_file().unwrap_or_default();
         config.apply_env_overrides();
         config
@@ -20,6 +24,9 @@ impl Config {
     /// Unlike [`Self::load`], this returns TOML/read errors to callers that need
     /// to distinguish a malformed config from an absent config.
     pub fn load_strict() -> anyhow::Result<Self> {
+        // Trigger DisableRegistry initialization early.
+        let _ = crate::disable::DisableRegistry::global();
+
         let mut config = Self::load_from_file_strict()?.unwrap_or_default();
         config.apply_env_overrides();
         Ok(config)
