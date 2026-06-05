@@ -171,6 +171,15 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub permission_mode: Option<PermissionMode>,
 
+    /// Optional maximum number of agentic turns this agent may execute
+    /// before being stopped. Prevents runaway agents from consuming
+    /// unbounded tokens/time.
+    ///
+    /// If `None`, the agent has no per-agent turn limit (the session
+    /// global limit still applies).
+    #[serde(default)]
+    pub max_turns: Option<u32>,
+
     // -----------------------------------------------------------------
     // Output
     // -----------------------------------------------------------------
@@ -427,6 +436,7 @@ mod tests {
             inherit_parent_system_prompt: false,
             include_message_history: false,
             permission_mode: None,
+            max_turns: None,
             output_mode: OutputMode::LastMessage,
             output_schema: None,
         }
@@ -689,5 +699,26 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn toml_max_turns_parses() {
+        let src = r#"
+            id = "test"
+            display_name = "Test"
+            max_turns = 50
+        "#;
+        let d: AgentDefinition = toml::from_str(src).expect("parse");
+        assert_eq!(d.max_turns, Some(50));
+    }
+
+    #[test]
+    fn toml_max_turns_none_when_absent() {
+        let src = r#"
+            id = "test"
+            display_name = "Test"
+        "#;
+        let d: AgentDefinition = toml::from_str(src).expect("parse");
+        assert_eq!(d.max_turns, None);
     }
 }

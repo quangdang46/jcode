@@ -374,6 +374,7 @@ mod tests {
             inherit_parent_system_prompt: false,
             include_message_history: false,
             permission_mode: None,
+            max_turns: None,
             output_mode: OutputMode::LastMessage,
             output_schema: None,
         };
