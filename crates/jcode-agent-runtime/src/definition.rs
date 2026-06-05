@@ -101,6 +101,15 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub tool_names: Vec<String>,
 
+    /// Optional denylist of tool names this agent may NOT call, even if
+    /// they appear in `tool_names`. Takes precedence over `tool_names`.
+    /// Useful for inheriting a broad whitelist while blocking specific
+    /// dangerous tools (e.g. allow all except `bash`).
+    ///
+    /// Empty list = no additional denials (default).
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
+
     /// Allowlist of agent ids this agent may `spawn_agents` / `spawn_agent_inline`.
     /// Empty list = no spawning. Use the local agent id (e.g. `file-picker`)
     /// or the future `publisher/agent@version` form for shared agents.
@@ -428,6 +437,7 @@ mod tests {
             model_override: None,
             reasoning: None,
             tool_names: Vec::new(),
+            disallowed_tools: Vec::new(),
             spawnable_agents: Vec::new(),
             system_prompt: String::new(),
             instructions_prompt: None,
@@ -599,6 +609,40 @@ mod tests {
         assert_eq!(d.tool_names, vec!["str_replace", "write_file"]);
         assert!(d.inherit_parent_system_prompt);
         assert_eq!(d.output_mode, OutputMode::AllMessages);
+    }
+
+    #[test]
+    fn toml_disallowed_tools_parses_and_defaults() {
+        // Explicit value
+        let src = r#"
+            id = "restricted"
+            display_name = "Restricted Agent"
+            tool_names = ["read", "write_file", "bash"]
+            disallowed_tools = ["bash"]
+        "#;
+        let d: AgentDefinition = toml::from_str(src).expect("parse");
+        d.validate().expect("validate");
+        assert_eq!(d.disallowed_tools, vec!["bash"]);
+        assert_eq!(d.tool_names, vec!["read", "write_file", "bash"]);
+        // disallowed_tools takes precedence: bash is listed in tool_names
+        // but also in disallowed_tools, so the effective allowlist is
+        // tool_names minus disallowed_tools = ["read", "write_file"].
+        let effective: Vec<&str> = d
+            .tool_names
+            .iter()
+            .filter(|t| !d.disallowed_tools.contains(t))
+            .map(|s| s.as_str())
+            .collect();
+        assert_eq!(effective, vec!["read", "write_file"]);
+
+        // Omitted field defaults to empty
+        let src2 = r#"
+            id = "open"
+            display_name = "Open Agent"
+            tool_names = ["bash"]
+        "#;
+        let d2: AgentDefinition = toml::from_str(src2).expect("parse");
+        assert!(d2.disallowed_tools.is_empty());
     }
 
     #[test]

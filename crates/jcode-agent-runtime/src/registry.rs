@@ -366,6 +366,7 @@ mod tests {
             model_override: None,
             reasoning: None,
             tool_names: vec![],
+            disallowed_tools: vec![],
             spawnable_agents: vec![],
             system_prompt: String::new(),
             instructions_prompt: None,

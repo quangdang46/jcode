@@ -14,6 +14,11 @@
 #   File picker doesn't need to see prior edit chatter. A clean slate
 #   keeps the prompt short and avoids accidentally biasing path
 #   selection toward already-touched files.
+#
+# Why `inherit_parent_system_prompt = false`:
+#   Like basher, this is a tightly scoped leaf agent. It needs its own
+#   short prompt focused on file discovery, not the parent's full
+#   project/system prompt.
 
 id = "file-picker"
 display_name = "Fletcher the File Fetcher"
@@ -24,6 +29,7 @@ prefer_tier = "routine"
 reasoning = "minimal"
 
 include_message_history = false
+inherit_parent_system_prompt = false
 output_mode = "last_message"
 
 # File picker is read-only — plan mode denies writes without prompting.
