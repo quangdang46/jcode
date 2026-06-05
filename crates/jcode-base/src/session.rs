@@ -131,6 +131,11 @@ pub struct Session {
     /// Optional user-provided label for saved sessions
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub save_label: Option<String>,
+    /// IDs of child sessions spawned from this session.
+    /// Populated at spawn time by SubagentTool. Persisted so the TUI
+    /// can display the agent tree.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<String>,
     /// Environment snapshots for post-mortem debugging
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_snapshots: Vec<EnvSnapshot>,
@@ -469,6 +474,7 @@ impl Session {
             is_debug: self.is_debug,
             saved: self.saved,
             save_label: self.save_label.clone(),
+            children: self.children.clone(),
         }
     }
 
@@ -653,6 +659,7 @@ impl Session {
         self.is_debug = meta.is_debug;
         self.saved = meta.saved;
         self.save_label = meta.save_label;
+        self.children = meta.children;
         self.mark_memory_profile_dirty();
     }
 
@@ -693,6 +700,7 @@ impl Session {
             is_debug,
             saved: false,
             save_label: None,
+            children: Vec::new(),
             env_snapshots: Vec::new(),
             memory_injections: Vec::new(),
             replay_events: Vec::new(),
@@ -754,6 +762,7 @@ impl Session {
             is_debug,
             saved: false,
             save_label: None,
+            children: Vec::new(),
             env_snapshots: Vec::new(),
             memory_injections: Vec::new(),
             replay_events: Vec::new(),
@@ -767,6 +776,14 @@ impl Session {
         };
         session.reset_persist_state(false);
         session
+    }
+
+    /// Register a child session id. Called by SubagentTool after
+    /// creating the child session.
+    pub fn add_child(&mut self, child_id: String) {
+        if !self.children.contains(&child_id) {
+            self.children.push(child_id);
+        }
     }
 
     /// Mark this session as a debug/test session
