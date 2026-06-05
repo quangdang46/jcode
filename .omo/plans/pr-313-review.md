@@ -140,9 +140,9 @@
 
 | Rank | Gap | Effort | Impact | Source repos | Concrete action |
 |------|-----|--------|--------|--------------|-----------------|
-| **1** | `permissionMode` per-agent — wire `SafetySystem` into `AgentDefinition` | 2-3 days | 🔴 Critical (security) | claude-code (`PermissionMode`), opencode (`allow/deny/ask` per action+resource) | Add `permission_mode: Option<PermissionMode>` to `AgentDefinition`; during tool execution, call `SafetySystem.classify()` then check agent's override; default = inherit from parent |
+| **1** | `permissionMode` per-agent — wire `SafetySystem` into `AgentDefinition` | 2-3 days | 🔴 Critical (security) | claude-code (`PermissionMode`), opencode (`allow/deny/ask` per action+resource) | ✅ DONE (commit f84cc127 + 795242b6) — `permission_mode` enum + field added, dcg_bridge wired |
 | **2** | `Agent` tool — model-driven spawn | 1-2 weeks | 🔴 Critical (core feature) | codex (`SpawnAgent`/`WaitAgent`), claude-code (`AgentTool` + `TeamCreateTool`), codebuff (`spawn_agents`) | Phase 2: add `agent` tool that LLM calls; wire `spawnable_agents` whitelist; implement `AgentPath` tree from codex |
-| **3** | `maxTurns` per-agent | 1 day | 🟡 Important (runaway prevention) | claude-code, opencode | Add `max_turns: Option<u32>` to `AgentDefinition`; runtime checks after each turn |
+| **3** | `maxTurns` per-agent | 1 day | 🟡 Important (runaway prevention) | claude-code, opencode | ✅ DONE (commit 844fc412) — `max_turns` field added to `AgentDefinition` |
 | **4** | `handleSteps` — programmatic agents | 1 week | 🟡 Important (flexibility) | codebuff (`handleSteps` Generator), oh-my-pi (`beforeToolCall`/`afterToolCall`) | Phase 2: add optional `handle_steps` field with Rust async generator or callback approach |
 | **5** | Tool concurrency (`shared`/`exclusive`) | 2-3 days | 🟢 Nice-to-have (perf) | oh-my-pi (`AgentTool.concurrency`) | Add `concurrency` field to tool definition; runtime scheduler respects exclusive locks |
 
@@ -205,7 +205,7 @@ fn resolve_permission(action, tool_name, agent_def, parent_approval):
 | Phase | Scope | Dependencies | Estimated |
 |-------|-------|--------------|-----------|
 | **Phase 1** (this PR) | AgentDefinition + tier + registry + JBench scaffold | — | ✅ Done |
-| **Phase 1.5** | `permissionMode` wire-up (SafetySystem + AgentDefinition) | Phase 1 | 2-3 days |
+| **Phase 1.5** | `permissionMode` wire-up (SafetySystem + AgentDefinition) | Phase 1 | ✅ Done |
 | **Phase 2** | Agent runtime engine: spawn, parent-child tree, `Agent` tool, `AgentPath` | Phase 1 | 2-3 weeks |
 | **Phase 2.5** | `handleSteps` (programmatic agents), tool concurrency | Phase 2 | 1-2 weeks |
 | **Phase 3** | Team pipeline (claude-code-style `TeamCreateTool`) | Phase 2 | 1 week |
@@ -228,8 +228,28 @@ fn resolve_permission(action, tool_name, agent_def, parent_approval):
 
 | # | Issue | Severity | File | Fix |
 |---|-------|----------|------|-----|
-| 1 | `extract_diff_from_repo` uses sync `std::process::Command` in async fn | Medium | evals/jbench/src/agent_runner.rs:195 | Use `tokio::task::spawn_blocking` |
-| 2 | `todo_step` calls `std::process::exit(0)` for unimplemented commands | Low | evals/jbench/src/bin/jbench.rs | Use non-zero exit code or `todo!()` |
+| 1 | `extract_diff_from_repo` uses sync `std::process::Command` in async fn | Medium | evals/jbench/src/agent_runner.rs:195 | ✅ FIXED (commit 2d7a020c) |
+| 2 | `todo_step` calls `std::process::exit(0)` for unimplemented commands | Low | evals/jbench/src/bin/jbench.rs | ✅ FIXED (commit 2d7a020c) |
 | 3 | `file-picker.toml` missing explicit `inherit_parent_system_prompt = false` | Low | .jcode/agents/file-picker.toml | Add for consistency with `basher.toml` |
 | 4 | `edition = "2024"` in jbench may cause toolchain issues if workspace uses 2021 | Low | evals/jbench/Cargo.toml | Verify workspace edition consistency |
 | 5 | `meta_analyze_impl` reads all `.run.json` files into memory | Low | evals/jbench/src/bin/jbench.rs:268 | Streaming deserializer for large runs |
+
+---
+
+## 7. Implementation Status (2026-06-05)
+
+| Item | Status | Commit |
+|------|--------|--------|
+| Merge master into branch | ✅ Done | 25d3f21e |
+| Reconcile src/lib.rs with master | ✅ Done | 60a61f0b |
+| Review document (9 repos) | ✅ Done | d2942498 |
+| `permissionMode` enum + field | ✅ Done | f84cc127 |
+| `permissionMode` wire-up (dcg_bridge) | ✅ Done | 795242b6 |
+| `maxTurns` field | ✅ Done | 844fc412 |
+| TOML agents max_turns | ✅ Done | 6d8ecbc6 |
+| Fix jbench warnings | ✅ Done | 2d7a020c |
+| `Agent` tool (model-driven spawn) | 🔲 Phase 2 | — |
+| `handleSteps` (programmatic agents) | 🔲 Phase 2 | — |
+| Tool concurrency (shared/exclusive) | 🔲 Phase 2 | — |
+| Team pipeline (TeamCreateTool) | 🔲 Phase 3 | — |
+| JBench production | 🔲 Phase 4 | — |
