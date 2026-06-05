@@ -253,6 +253,7 @@ async fn run_supervisor(
 
     if child_is_canary {
         registry.register_selfdev_tools().await;
+        registry.register_experimental_tools().await;
     }
 
     let mut agent = Agent::new_with_session(provider, registry, child, None);

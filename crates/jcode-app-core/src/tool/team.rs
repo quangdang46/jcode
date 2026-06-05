@@ -40,9 +40,31 @@ pub struct TeamTask {
     pub owner: Option<String>, // member name
 }
 
+/// Validate that a team name is safe for use as a filename.
+/// Rejects path traversal attempts and special characters.
+fn validate_team_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("Team name cannot be empty");
+    }
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
+        anyhow::bail!(
+            "Team name '{}' is invalid: must not contain '..', '/', or '\\'",
+            name
+        );
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        anyhow::bail!(
+            "Team name '{}' is invalid: only alphanumeric, hyphen, and underscore allowed",
+            name
+        );
+    }
+    Ok(())
+}
+
 impl TeamConfig {
     /// Load a team config from disk by name.
     pub fn load(name: &str) -> Result<Option<Self>> {
+        validate_team_name(name)?;
         let path = teams_dir().join(format!("{name}.json"));
         if !path.exists() {
             return Ok(None);
@@ -53,6 +75,7 @@ impl TeamConfig {
 
     /// Save this team config to disk.
     pub fn save(&self) -> Result<()> {
+        validate_team_name(&self.name)?;
         let dir = teams_dir();
         std::fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}.json", self.name));
@@ -63,6 +86,7 @@ impl TeamConfig {
 
     /// Delete a team config from disk by name.
     pub fn delete(name: &str) -> Result<()> {
+        validate_team_name(name)?;
         let path = teams_dir().join(format!("{name}.json"));
         if path.exists() {
             std::fs::remove_file(&path)?;

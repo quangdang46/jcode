@@ -64,16 +64,15 @@ impl PermissionMode {
         }
     }
 
-    /// Parse a permission mode from a string, accepting common variants.
+    /// Parse a permission mode from a string. Only accepts kebab-case
+    /// variants matching the serde wire format for consistency.
     pub fn parse(s: &str) -> Option<PermissionMode> {
         match s.trim().to_ascii_lowercase().as_str() {
             "default" => Some(PermissionMode::Default),
-            "acceptedits" | "accept_edits" | "accept-edits" => Some(PermissionMode::AcceptEdits),
+            "accept-edits" => Some(PermissionMode::AcceptEdits),
             "plan" => Some(PermissionMode::Plan),
-            "dontask" | "dont_ask" | "dont-ask" => Some(PermissionMode::DontAsk),
-            "bypasspermissions" | "bypass_permissions" | "bypass-permissions" => {
-                Some(PermissionMode::BypassPermissions)
-            }
+            "dont-ask" => Some(PermissionMode::DontAsk),
+            "bypass-permissions" => Some(PermissionMode::BypassPermissions),
             "auto" => Some(PermissionMode::Auto),
             _ => None,
         }
@@ -91,18 +90,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_accepts_common_variants() {
+    fn parse_accepts_kebab_case_only() {
         assert_eq!(
             PermissionMode::parse("default"),
             Some(PermissionMode::Default)
-        );
-        assert_eq!(
-            PermissionMode::parse("AcceptEdits"),
-            Some(PermissionMode::AcceptEdits)
-        );
-        assert_eq!(
-            PermissionMode::parse("accept_edits"),
-            Some(PermissionMode::AcceptEdits)
         );
         assert_eq!(
             PermissionMode::parse("accept-edits"),
@@ -110,16 +101,8 @@ mod tests {
         );
         assert_eq!(PermissionMode::parse("plan"), Some(PermissionMode::Plan));
         assert_eq!(
-            PermissionMode::parse("DONTASK"),
+            PermissionMode::parse("dont-ask"),
             Some(PermissionMode::DontAsk)
-        );
-        assert_eq!(
-            PermissionMode::parse("dont_ask"),
-            Some(PermissionMode::DontAsk)
-        );
-        assert_eq!(
-            PermissionMode::parse("bypass_permissions"),
-            Some(PermissionMode::BypassPermissions)
         );
         assert_eq!(
             PermissionMode::parse("bypass-permissions"),
@@ -128,6 +111,10 @@ mod tests {
         assert_eq!(PermissionMode::parse("auto"), Some(PermissionMode::Auto));
         assert_eq!(PermissionMode::parse(""), None);
         assert_eq!(PermissionMode::parse("nonsense"), None);
+        // Non-kebab-case variants are rejected for serde consistency
+        assert_eq!(PermissionMode::parse("accept_edits"), None);
+        assert_eq!(PermissionMode::parse("AcceptEdits"), None);
+        assert_eq!(PermissionMode::parse("bypass_permissions"), None);
     }
 
     #[test]

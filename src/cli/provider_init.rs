@@ -1780,7 +1780,7 @@ pub async fn init_provider_and_registry(
     model: Option<&str>,
 ) -> Result<(Arc<dyn provider::Provider>, tool::Registry)> {
     let provider = init_provider(choice, model).await?;
-    let registry = tool::Registry::new(provider.clone()).await;
+    let registry = tool::Registry::new(provider.clone(), tool::shared_agent_registry()).await;
     Ok((provider, registry))
 }
 
@@ -1789,7 +1789,7 @@ pub async fn init_provider_and_registry_for_validation(
     model: Option<&str>,
 ) -> Result<(Arc<dyn provider::Provider>, tool::Registry)> {
     let provider = init_provider_for_validation(choice, model).await?;
-    let registry = tool::Registry::new(provider.clone()).await;
+    let registry = tool::Registry::new(provider.clone(), tool::shared_agent_registry()).await;
     Ok((provider, registry))
 }
 

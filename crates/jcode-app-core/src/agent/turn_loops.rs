@@ -14,8 +14,26 @@ impl Agent {
         let mut context_limit_retries = 0u32;
         let mut incomplete_continuations = 0u32;
         let mut empty_post_tool_continuations = 0u32;
+        let mut turn_count = 0u32;
 
         loop {
+            turn_count += 1;
+            if let Some(max) = self.max_turns {
+                if turn_count > max {
+                    logging::info(&format!(
+                        "max_turns limit reached ({}); forcing turn completion",
+                        max
+                    ));
+                    if final_text.is_empty() {
+                        final_text = format!(
+                            "[agent stopped: reached max_turns limit of {}]",
+                            max
+                        );
+                    }
+                    break;
+                }
+            }
+
             let repaired = self.repair_missing_tool_outputs();
             if repaired > 0 {
                 logging::warn(&format!(

@@ -153,6 +153,36 @@ pub fn session_mode(session_id: &str) -> Option<Mode> {
         .and_then(|guard| guard.get(session_id).copied())
 }
 
+/// RAII guard that clears a per-session permission mode on drop.
+///
+/// Use this instead of manual `set_session_mode` / `clear_session_mode`
+/// pairs to guarantee cleanup even when the subagent exits via early
+/// return or error path.
+pub struct SessionModeGuard {
+    session_id: String,
+}
+
+impl SessionModeGuard {
+    /// Set the per-session mode and return a guard that will clear it on
+    /// drop. If `mode` is `None`, no override is set and the guard is a
+    /// no-op on drop (but still safe to hold).
+    #[must_use]
+    pub fn new(session_id: &str, mode: Option<Mode>) -> Self {
+        if let Some(mode) = mode {
+            set_session_mode(session_id, mode);
+        }
+        Self {
+            session_id: session_id.to_string(),
+        }
+    }
+}
+
+impl Drop for SessionModeGuard {
+    fn drop(&mut self) {
+        clear_session_mode(&self.session_id);
+    }
+}
+
 /// Classify an action using the agent-specific permission mode when
 /// provided, falling back to the global mode otherwise.
 ///
@@ -167,6 +197,19 @@ pub fn classify_for_agent(
     let mode = agent_permission_mode
         .map(permission_mode_to_dcg)
         .unwrap_or_else(current_mode);
+    classify_with_mode(action, mode)
+}
+
+/// Classify an action using the per-session mode override when one exists
+/// for `session_id`, falling back to the global mode otherwise.
+///
+/// This is the session-aware variant of [`classify`]. Call sites that
+/// know the session id (e.g. tool execution within a subagent) should
+/// prefer this over the global [`classify`] so that per-session
+/// permission overrides set via [`set_session_mode`] are honoured.
+#[must_use]
+pub fn classify_for_session(action: &str, session_id: &str) -> BridgeDecision {
+    let mode = session_mode(session_id).unwrap_or_else(current_mode);
     classify_with_mode(action, mode)
 }
 

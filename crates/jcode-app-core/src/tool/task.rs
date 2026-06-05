@@ -193,19 +193,39 @@ impl Tool for SubagentTool {
         };
         let parent_subagent_model = Self::preferred_parent_subagent_model(&ctx.session_id);
         let provider_model = self.provider.model();
-        let resolved_model = Self::resolve_model(
-            params.model.as_deref(),
-            session.model.as_deref(),
-            parent_subagent_model.as_deref(),
-            &provider_model,
-        );
+        // When the agent definition specifies model_override or prefer_tier,
+        // use its resolve_model() which honours those fields. Otherwise fall
+        // back to the standard resolution chain.
+        let resolved_model = if let Some(def) = agent_def {
+            if def.model_override.is_some() || def.prefer_tier.is_some() {
+                def.resolve_model(&provider_model)
+            } else {
+                Self::resolve_model(
+                    params.model.as_deref(),
+                    session.model.as_deref(),
+                    parent_subagent_model.as_deref(),
+                    &provider_model,
+                )
+            }
+        } else {
+            Self::resolve_model(
+                params.model.as_deref(),
+                session.model.as_deref(),
+                parent_subagent_model.as_deref(),
+                &provider_model,
+            )
+        };
         session.model = Some(resolved_model.clone());
 
         if let Some(ref working_dir) = ctx.working_dir {
             session.working_dir = Some(working_dir.display().to_string());
         }
 
-        // Register child in parent's session
+        // Register child in parent's session.
+        // NOTE: This load→mutate→save sequence is not atomic. Concurrent
+        // subagent spawns sharing the same parent could clobber each
+        // other's `children` entries. Acceptable for experimental Phase 0;
+        // a file-lock or in-memory session cache would fix this properly.
         if let Ok(mut parent_session) = Session::load(&ctx.session_id) {
             parent_session.add_child(session.id.clone());
             let _ = parent_session.save();
@@ -214,16 +234,19 @@ impl Tool for SubagentTool {
         session.save()?;
 
         // Propagate the effective permission mode to the child session so
-        // that `dcg_bridge::classify_for_agent` / `session_mode` observe it
-        // during the child's tool execution.
+        // that `dcg_bridge::classify_for_session` / `session_mode` observe
+        // it during the child's tool execution. The guard clears the
+        // override on drop (both success and error paths).
         let child_session_id = session.id.clone();
-        if let Some(pm) = effective_permission_mode {
-            let dcg_mode = dcg_bridge::permission_mode_to_dcg(pm);
-            dcg_bridge::set_session_mode(&child_session_id, dcg_mode);
+        let _mode_guard = dcg_bridge::SessionModeGuard::new(
+            &child_session_id,
+            effective_permission_mode.map(dcg_bridge::permission_mode_to_dcg),
+        );
+        if effective_permission_mode.is_some() {
             logging::info(&format!(
                 "[tool:subagent] session {} permission mode: {} (from agent definition)",
                 child_session_id,
-                pm.as_str(),
+                effective_permission_mode.unwrap().as_str(),
             ));
         }
 
@@ -325,8 +348,9 @@ impl Tool for SubagentTool {
                 ));
             }
             if let Some(max_turns) = def.max_turns {
+                agent.set_max_turns(max_turns);
                 logging::info(&format!(
-                    "[tool:subagent] agent definition '{}' specifies max_turns={}",
+                    "[tool:subagent] agent definition '{}' max_turns={} enforced",
                     params.subagent_type, max_turns,
                 ));
             }
@@ -344,7 +368,6 @@ impl Tool for SubagentTool {
                     resolved_model,
                     err
                 ));
-                dcg_bridge::clear_session_mode(&child_session_id);
                 return Err(err);
             }
         };
@@ -367,8 +390,7 @@ impl Tool for SubagentTool {
             start.elapsed().as_secs_f64()
         ));
 
-        // Clean up per-session permission mode to prevent unbounded growth.
-        dcg_bridge::clear_session_mode(&child_session_id);
+        // _mode_guard drops here, clearing the per-session permission override.
 
         listener.abort();
 

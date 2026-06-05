@@ -21,6 +21,7 @@
 //!   session start. Self-dev is welcome to call `reload_from_disk()`.
 
 use crate::definition::{AgentDefinition, DefinitionError};
+use crate::permission::PermissionMode;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -228,6 +229,16 @@ impl AgentRegistry {
                             AgentSource::ProjectLocal { path: path.clone() }
                         }
                     };
+                    let mut definition = definition;
+                    if matches!(source, AgentSource::ProjectLocal { .. })
+                        && definition.permission_mode == Some(PermissionMode::BypassPermissions)
+                    {
+                        tracing::warn!(
+                            agent_id = %definition.id,
+                            "project-local agent definition attempted to set bypass-permissions; downgrading to default"
+                        );
+                        definition.permission_mode = None;
+                    }
                     self.insert(LoadedAgent { definition, source });
                     loaded += 1;
                 }

@@ -270,6 +270,10 @@ pub struct Agent {
     mcp_late_register_resolved: bool,
     /// Override system prompt (used by ambient mode to inject a custom prompt)
     system_prompt_override: Option<String>,
+    /// Maximum number of tool-call turns before the agent is forced to
+    /// stop. `None` means unlimited. Set by `SubagentTool` from the agent
+    /// definition's `max_turns` field.
+    max_turns: Option<u32>,
     /// Whether memory features are enabled for this session
     memory_enabled: bool,
     /// One-step undo snapshot captured before the most recent rewind.
@@ -328,6 +332,7 @@ impl Agent {
             locked_tools: None,
             mcp_late_register_resolved: false,
             system_prompt_override: crate::config::config().provider.system_prompt.clone(),
+            max_turns: None,
             memory_enabled: crate::config::config().features.memory,
             rewind_undo_snapshot: None,
             stdin_request_tx: None,

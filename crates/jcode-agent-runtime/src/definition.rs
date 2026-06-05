@@ -47,7 +47,6 @@ pub const DEFAULT_AGENT_VERSION: &str = "0.1.0";
 /// Intentionally `Clone` so the runtime can hand each spawn its own copy
 /// without locking the registry. Definitions are small (a few KB at most).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct AgentDefinition {
     // -----------------------------------------------------------------
     // Identity
@@ -646,19 +645,15 @@ mod tests {
     }
 
     #[test]
-    fn toml_unknown_field_is_rejected() {
+    fn toml_unknown_field_is_silently_ignored() {
         let src = r#"
             id = "ok"
             display_name = "ok"
             unknown_future_field = "value"
         "#;
-        let err = toml::from_str::<AgentDefinition>(src).unwrap_err();
-        assert!(
-            err.to_string().contains("unknown field")
-                || err.to_string().contains("unknown")
-                || err.to_string().contains("`unknown_future_field`"),
-            "expected denial of unknown field, got: {err}"
-        );
+        let def = toml::from_str::<AgentDefinition>(src).expect("unknown fields should be ignored for forward compat");
+        assert_eq!(def.id, "ok");
+        assert_eq!(def.display_name, "ok");
     }
 
     // -----------------------------------------------------------------

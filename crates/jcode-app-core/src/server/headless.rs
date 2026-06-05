@@ -50,7 +50,7 @@ pub(super) async fn create_headless_session(
     };
 
     let provider = provider_template.fork();
-    let registry = Registry::new(provider.clone(), None).await;
+    let registry = Registry::new(provider.clone(), crate::tool::shared_agent_registry()).await;
 
     registry.enable_memory_test_mode().await;
 

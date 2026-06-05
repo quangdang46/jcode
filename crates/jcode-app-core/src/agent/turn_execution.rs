@@ -215,6 +215,10 @@ impl Agent {
         self.system_prompt_override = Some(prompt.to_string());
     }
 
+    pub fn set_max_turns(&mut self, max: u32) {
+        self.max_turns = Some(max);
+    }
+
     pub fn set_debug(&mut self, is_debug: bool) {
         self.session.set_debug(is_debug);
         if let Err(err) = self.session.save() {
@@ -246,6 +250,7 @@ impl Agent {
     pub(super) async fn tool_definitions(&mut self) -> Vec<ToolDefinition> {
         if self.session.is_canary {
             self.registry.register_selfdev_tools().await;
+            self.registry.register_experimental_tools().await;
         }
 
         // Return locked tools if available (prevents cache invalidation from
@@ -358,6 +363,7 @@ impl Agent {
     pub async fn tool_definitions_for_debug(&self) -> Vec<crate::message::ToolDefinition> {
         if self.session.is_canary {
             self.registry.register_selfdev_tools().await;
+            self.registry.register_experimental_tools().await;
         }
         let mut tools = self.registry.definitions(self.allowed_tools.as_ref()).await;
         if !self.disabled_tools.is_empty() {
