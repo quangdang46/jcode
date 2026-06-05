@@ -509,6 +509,48 @@ impl SkillRegistry {
         let rest = trimmed.strip_prefix('$')?;
         (!rest.is_empty()).then_some(rest)
     }
+
+    /// Return true if a skill with the given name is currently loaded.
+    pub fn contains(&self, name: &str) -> bool {
+        self.skills.contains_key(name)
+    }
+}
+
+/// A skill recommended/curated by jcode that the user may want to install.
+#[derive(Debug, Clone, Copy)]
+pub struct EndorsedSkill {
+    /// Skill name (matches the `name` field in SKILL.md and the slash command).
+    pub name: &'static str,
+    /// One-line description of what the skill does.
+    pub description: &'static str,
+    /// Where users can get the skill (repo path, URL, or short note).
+    pub source: &'static str,
+}
+
+/// Curated list of skills endorsed by jcode. Used by the `/skills` command to
+/// show users which recommended skills they have installed and which they are
+/// missing. This is the single source of truth for endorsed skills.
+pub const ENDORSED_SKILLS: &[EndorsedSkill] = &[
+    EndorsedSkill {
+        name: "optimization",
+        description: "Improve performance, latency, throughput, memory usage, or general efficiency by defining metrics, measuring, attributing bottlenecks, and prioritizing macro-optimizations.",
+        source: "bundled in jcode repo (.jcode/skills/optimization)",
+    },
+    EndorsedSkill {
+        name: "todo-planning-skill",
+        description: "Create thorough, well-structured todo lists for long tasks, including reflection, static analysis, verification, and next-step updates.",
+        source: "bundled with jcode / Claude Code skills",
+    },
+    EndorsedSkill {
+        name: "firefox-browser",
+        description: "Control the user's Firefox browser with their logins and cookies intact to browse, fill forms, click, screenshot, and read authenticated pages.",
+        source: "bundled with jcode / Claude Code skills",
+    },
+];
+
+/// Return the curated list of skills endorsed by jcode.
+pub fn endorsed_skills() -> &'static [EndorsedSkill] {
+    ENDORSED_SKILLS
 }
 
 impl Skill {
@@ -653,6 +695,36 @@ mod tests {
         assert!(registry.get("session-skill").is_some());
     }
 
+    #[test]
+    fn endorsed_skills_have_unique_nonempty_metadata() {
+        let endorsed = endorsed_skills();
+        assert!(!endorsed.is_empty(), "expected at least one endorsed skill");
+
+        let mut seen = std::collections::HashSet::new();
+        for skill in endorsed {
+            assert!(!skill.name.is_empty(), "endorsed skill name must be set");
+            assert!(
+                !skill.description.is_empty(),
+                "endorsed skill {} needs a description",
+                skill.name
+            );
+            assert!(
+                !skill.source.is_empty(),
+                "endorsed skill {} needs a source",
+                skill.name
+            );
+            assert!(
+                !skill.name.starts_with('/'),
+                "endorsed skill name should not include the leading slash"
+            );
+            assert!(
+                seen.insert(skill.name),
+                "duplicate endorsed skill name: {}",
+                skill.name
+            );
+        }
+    }
+
     // Issue #112: repo-level scoping. Walking up from cwd to a `.git`
     // ancestor and loading <repo>/.jcode/skills/.
 
@@ -688,6 +760,16 @@ mod tests {
         if let Some(path) = result {
             assert!(path.ends_with(std::path::Path::new(".jcode/skills")));
         }
+    }
+
+    #[test]
+    fn registry_contains_reports_loaded_skills() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_skill(temp.path(), ".jcode", "present-skill");
+
+        let registry = SkillRegistry::load_for_working_dir(Some(temp.path())).expect("load skills");
+        assert!(registry.contains("present-skill"));
+        assert!(!registry.contains("missing-skill"));
     }
 
     #[test]
@@ -842,5 +924,6 @@ mod invocation_parse_tests {
         );
         let skill = SkillRegistry::parse_skill(&path).unwrap();
         assert_eq!(skill.tags, vec!["rust", "perf"]);
+>>>>>>> origin/master
     }
 }

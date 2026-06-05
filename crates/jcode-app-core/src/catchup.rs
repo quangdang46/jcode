@@ -597,6 +597,7 @@ mod tests {
                 id: "tool_1".to_string(),
                 name: "read".to_string(),
                 input: serde_json::json!({"file_path": "src/tui/session_picker.rs"}),
+                thought_signature: None,
             }],
         );
         session.add_message(

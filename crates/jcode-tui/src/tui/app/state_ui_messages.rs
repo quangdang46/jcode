@@ -42,18 +42,15 @@ fn stored_message_visible_text(message: &crate::session::StoredMessage) -> Strin
 /// `show_thinking` decision without mutating the global config.
 pub(super) fn stored_message_visible_text_with_show_thinking(
     message: &crate::session::StoredMessage,
-    show_thinking: bool,
+    _show_thinking: bool,
 ) -> String {
     let mut parts = Vec::new();
     for block in &message.content {
         match block {
-            ContentBlock::Text { text, .. } => {
+            ContentBlock::Text { text, .. }
+            | ContentBlock::Reasoning { text }
+            | ContentBlock::ReasoningTrace { text } => {
                 if !text.trim().is_empty() {
-                    parts.push(text.trim().to_string());
-                }
-            }
-            ContentBlock::Reasoning { text } => {
-                if show_thinking && !text.trim().is_empty() {
                     parts.push(text.trim().to_string());
                 }
             }

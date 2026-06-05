@@ -33,40 +33,6 @@ impl Agent {
         self.run_turn(false).await
     }
 
-    /// Run a single message with events streamed to a broadcast channel (for server mode)
-    pub async fn run_once_streaming(
-        &mut self,
-        user_message: &str,
-        event_tx: broadcast::Sender<ServerEvent>,
-    ) -> Result<()> {
-        // Inject any pending notifications before the user message
-        let alerts = self.take_alerts();
-        if !alerts.is_empty() {
-            let alert_text = format!(
-                "[NOTIFICATION]\nYou received {} notification(s) from other agents working in this codebase:\n\n{}\n\nUse the communicate tool (actions: list, read, message/broadcast, dm, channel, share) to coordinate with other agents.",
-                alerts.len(),
-                alerts.join("\n\n---\n\n")
-            );
-            self.add_message(
-                Role::User,
-                vec![ContentBlock::Text {
-                    text: alert_text,
-                    cache_control: None,
-                }],
-            );
-        }
-
-        self.add_message(
-            Role::User,
-            vec![ContentBlock::Text {
-                text: user_message.to_string(),
-                cache_control: None,
-            }],
-        );
-        self.session.save()?;
-        self.run_turn_streaming(event_tx).await
-    }
-
     /// Run one conversation turn with streaming events via mpsc channel (per-client)
     pub async fn run_once_streaming_mpsc(
         &mut self,
@@ -345,10 +311,25 @@ impl Agent {
         if !self.disabled_tools.is_empty() {
             tools.retain(|tool| !self.disabled_tools.contains(&tool.name));
         }
-        if !self.session.is_canary {
-            tools.retain(|tool| tool.name != "selfdev");
-        }
+        Self::apply_selfdev_tool_surface(&mut tools, self.session.is_canary);
         tools
+    }
+
+    /// Tailor the `selfdev` tool definition to the session mode.
+    ///
+    /// The registry stores a single shared `selfdev` tool with a default
+    /// (non-self-dev) schema. Self-dev sessions get the full build/test/reload
+    /// surface; every other session keeps the lightweight on-ramp surface
+    /// (`enter`, `setup`, `reload`, `status`, `find-config`). The tool stays
+    /// available in all sessions so the agent can always enter self-dev mode.
+    fn apply_selfdev_tool_surface(tools: &mut [ToolDefinition], is_canary: bool) {
+        for tool in tools.iter_mut() {
+            if tool.name == "selfdev" {
+                tool.description = crate::tool::selfdev::SelfDevTool::description_for(is_canary)
+                    .to_string();
+                tool.input_schema = crate::tool::selfdev::SelfDevTool::schema_for(is_canary);
+            }
+        }
     }
 
     /// Returns true if the registry contains `mcp__*` tools (subject to the
@@ -382,9 +363,7 @@ impl Agent {
         if !self.disabled_tools.is_empty() {
             tools.retain(|tool| !self.disabled_tools.contains(&tool.name));
         }
-        if !self.session.is_canary {
-            tools.retain(|tool| tool.name != "selfdev");
-        }
+        Self::apply_selfdev_tool_surface(&mut tools, self.session.is_canary);
         tools
     }
 
@@ -424,6 +403,7 @@ impl Agent {
                 id: tool_call_id,
                 name: tool_name,
                 input,
+                thought_signature: None,
             }],
         );
         self.session.save()?;
@@ -813,6 +793,7 @@ impl Agent {
                         transcript.push_str(&format!("[Result: {}]\n", preview));
                     }
                     ContentBlock::Reasoning { .. }
+                    | ContentBlock::ReasoningTrace { .. }
                     | ContentBlock::AnthropicThinking { .. }
                     | ContentBlock::OpenAIReasoning { .. } => {}
                     ContentBlock::Image { .. } => {
