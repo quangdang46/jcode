@@ -6618,7 +6618,7 @@ dependencies = [
 [[package]]
 name = "mempalace-core"
 version = "0.1.0"
-source = "git+https://github.com/quangdang46/mempalace_rust?branch=feat%2Fmp-issues-25-35#17a1f0299477aced17f8efcce4d6f58e05208875"
+source = "git+https://github.com/quangdang46/mempalace_rust?branch=main#58be9ed831442e0caee7026a3d6ea8fd0e3ccc78"
 dependencies = [
  "anyhow",
  "async-trait",

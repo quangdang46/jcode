@@ -406,7 +406,6 @@ pub struct AuthConfig {
     pub trusted_external_source_paths: Vec<String>,
 }
 
-/// Agent-specific model defaults.
 /// Which memory backend to use for storage and retrieval.
 ///
 /// `Native` (default) uses jcode's built-in JSON-based MemoryManager.
@@ -441,6 +440,7 @@ impl MemoryBackend {
     }
 }
 
+/// Agent-specific model defaults.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AgentsConfig {
