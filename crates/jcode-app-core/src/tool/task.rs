@@ -227,6 +227,7 @@ impl Tool for SubagentTool {
         // other's `children` entries. Acceptable for experimental Phase 0;
         // a file-lock or in-memory session cache would fix this properly.
         if let Ok(mut parent_session) = Session::load(&ctx.session_id) {
+            session.route_api_method = parent_session.route_api_method.clone();
             parent_session.add_child(session.id.clone());
             let _ = parent_session.save();
         }
