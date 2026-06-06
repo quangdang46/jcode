@@ -1,3 +1,17 @@
+pub mod definition;
+pub mod output;
+pub mod permission;
+pub mod reasoning;
+pub mod registry;
+pub mod tier;
+
+pub use definition::AgentDefinition;
+pub use output::OutputMode;
+pub use permission::PermissionMode;
+pub use reasoning::ReasoningEffort;
+pub use registry::{AgentRegistry, SourceKind};
+pub use tier::ModelTier;
+
 use std::sync::Arc;
 
 /// A soft interrupt message queued for injection at the next safe point.
