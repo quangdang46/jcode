@@ -96,13 +96,16 @@ impl FileTouchService {
     /// Uses the reverse index to bound the forward-index work to only the
     /// paths the session actually touched, falling back to a full scan if the
     /// reverse entry is missing.
+    ///
+    /// Both locks are acquired in `touches → by_session` order (matching
+    /// [`record_touch`]) and held for the entire operation so a concurrent
+    /// `record_touch` cannot re-add entries during the cleanup window.
     pub(crate) async fn clear_session(&self, session_id: &str) {
-        let touched_paths = {
-            let mut reverse = self.by_session.write().await;
-            reverse.remove(session_id)
-        };
-
         let mut touches = self.touches.write().await;
+        let mut reverse = self.by_session.write().await;
+
+        let touched_paths = reverse.remove(session_id);
+
         if let Some(paths) = touched_paths {
             for path in paths {
                 let mut remove_path = false;
@@ -125,6 +128,10 @@ impl FileTouchService {
 
     /// Drop accesses older than `max_age` and rebuild the reverse index from the
     /// surviving forward entries.
+    ///
+    /// The reverse index is rebuilt and written while the forward index lock is
+    /// still held, so a concurrent [`record_touch`] cannot insert stale entries
+    /// into the reverse index between the read and the write.
     pub(crate) async fn expire_older_than(&self, max_age: Duration) {
         let mut touches = self.touches.write().await;
         let now = Instant::now();
@@ -141,7 +148,6 @@ impl FileTouchService {
                     .insert(path.clone());
             }
         }
-        drop(touches);
         *self.by_session.write().await = rebuilt_reverse_index;
     }
 }

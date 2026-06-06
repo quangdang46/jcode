@@ -446,9 +446,14 @@ pub(crate) fn load_anthropic_api_key() -> Result<String> {
     )
     .context("No Anthropic API key found")?;
     if std::env::var("JCODE_LOG_SERVICE_TIER").is_ok() {
-        let prefix: String = key.chars().take(14).collect();
+        // Only show the known prefix — never leak key material to stderr.
+        let display = if key.starts_with("sk-ant-") {
+            "sk-ant-***..."
+        } else {
+            "***..."
+        };
         eprintln!(
-            "[anthropic] resolved API key prefix={prefix}... (len={})",
+            "[anthropic] resolved API key prefix={display} (len={})",
             key.len()
         );
     }

@@ -92,3 +92,131 @@ pub fn reasoning_summary_line_markup(line_count: usize) -> String {
     };
     reasoning_line_markup(&label)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── escape_reasoning_inline_markdown ──────────────────────────────
+
+    #[test]
+    fn test_escape_backslash() {
+        assert_eq!(escape_reasoning_inline_markdown("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn test_escape_asterisk() {
+        assert_eq!(escape_reasoning_inline_markdown("a*b"), "a\\*b");
+    }
+
+    #[test]
+    fn test_escape_underscore() {
+        assert_eq!(escape_reasoning_inline_markdown("a_b"), "a\\_b");
+    }
+
+    #[test]
+    fn test_escape_backtick() {
+        assert_eq!(escape_reasoning_inline_markdown("a`b"), "a\\`b");
+    }
+
+    #[test]
+    fn test_escape_bracket() {
+        assert_eq!(escape_reasoning_inline_markdown("a[b]c"), "a\\[b\\]c");
+    }
+
+    #[test]
+    fn test_escape_angle_bracket() {
+        assert_eq!(escape_reasoning_inline_markdown("a<b>c"), "a\\<b\\>c");
+    }
+
+    #[test]
+    fn test_escape_ampersand() {
+        assert_eq!(escape_reasoning_inline_markdown("a&b"), "a\\&b");
+    }
+
+    #[test]
+    fn test_escape_tilde_pipe_dollar() {
+        assert_eq!(
+            escape_reasoning_inline_markdown("~|$"),
+            "\\~\\|\\$"
+        );
+    }
+
+    #[test]
+    fn test_plain_text_passes_through_unchanged() {
+        assert_eq!(
+            escape_reasoning_inline_markdown("hello world 123"),
+            "hello world 123"
+        );
+    }
+
+    #[test]
+    fn test_empty_string_returns_empty() {
+        assert_eq!(escape_reasoning_inline_markdown(""), "");
+    }
+
+    // ── reasoning_line_markup ─────────────────────────────────────────
+
+    #[test]
+    fn test_line_markup_empty_returns_newline() {
+        assert_eq!(reasoning_line_markup(""), "\n");
+    }
+
+    #[test]
+    fn test_line_markup_wraps_with_sentinel_and_hard_break() {
+        let result = reasoning_line_markup("hello");
+        assert!(result.starts_with(&format!("*{}", REASONING_SENTINEL)));
+        assert!(result.contains("hello"));
+        assert!(result.ends_with("  \n"));
+    }
+
+    #[test]
+    fn test_line_markup_special_chars_are_escaped() {
+        let result = reasoning_line_markup("a*b");
+        assert!(result.contains("a\\*b"));
+        assert!(!result.contains("a*b"));
+    }
+
+    // ── reasoning_partial_markup ───────────────────────────────────────
+
+    #[test]
+    fn test_partial_markup_empty_returns_empty_string() {
+        assert_eq!(reasoning_partial_markup(""), "");
+    }
+
+    #[test]
+    fn test_partial_markup_wraps_with_sentinel_no_newline() {
+        let result = reasoning_partial_markup("partial");
+        assert!(result.starts_with(&format!("*{}", REASONING_SENTINEL)));
+        assert!(result.contains("partial"));
+        assert!(!result.ends_with("\n"));
+    }
+
+    // ── reasoning_summary_line_markup ──────────────────────────────────
+
+    #[test]
+    fn test_summary_zero_lines() {
+        let result = reasoning_summary_line_markup(0);
+        assert!(result.contains("▸ thought"));
+        assert!(!result.contains("lines"));
+    }
+
+    #[test]
+    fn test_summary_one_line() {
+        let result = reasoning_summary_line_markup(1);
+        assert!(result.contains("▸ thought"));
+        assert!(!result.contains("lines"));
+    }
+
+    #[test]
+    fn test_summary_two_lines_includes_count() {
+        let result = reasoning_summary_line_markup(2);
+        assert!(result.contains("▸ thought (2 lines)"));
+    }
+
+    #[test]
+    fn test_summary_many_lines() {
+        let result = reasoning_summary_line_markup(5);
+        assert!(result.contains("▸ thought (5 lines)"));
+    }
+}
