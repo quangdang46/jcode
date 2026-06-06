@@ -114,7 +114,7 @@ jcode-message-types = { path = "../jcode-message-types" }
 jcode-overnight-core = { path = "../jcode-overnight-core" }
 
 # RTCO pre-filter integration (behind feature flag)
-rtco-core = { path = "../../../rust_token_cost_optimizer/crates/rtco-core", optional = true }
+rtco-core = { git = "https://github.com/quangdang46/rust_token_cost_optimizer", rev = "6e6241f75fa7e532070ad95bb9643f0e097ebfcb", optional = true }
 jcode-plan = { path = "../jcode-plan" }
 jcode-swarm-core = { path = "../jcode-swarm-core" }
 jcode-protocol = { path = "../jcode-protocol" }

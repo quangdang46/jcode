@@ -6451,6 +6451,7 @@ dependencies = [
 [[package]]
 name = "rtco-core"
 version = "0.40.0"
+source = "git+https://github.com/quangdang46/rust_token_cost_optimizer?rev=6e6241f75fa7e532070ad95bb9643f0e097ebfcb#6e6241f75fa7e532070ad95bb9643f0e097ebfcb"
 dependencies = [
  "aho-corasick",
  "anyhow",
