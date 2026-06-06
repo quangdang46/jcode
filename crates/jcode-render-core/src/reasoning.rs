@@ -136,10 +136,7 @@ mod tests {
 
     #[test]
     fn test_escape_tilde_pipe_dollar() {
-        assert_eq!(
-            escape_reasoning_inline_markdown("~|$"),
-            "\\~\\|\\$"
-        );
+        assert_eq!(escape_reasoning_inline_markdown("~|$"), "\\~\\|\\$");
     }
 
     #[test]

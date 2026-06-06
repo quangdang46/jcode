@@ -211,7 +211,8 @@ fn kv_cache_baseline_from_other_session_is_ignored() {
     app.begin_remote_kv_cache_request(small_signature);
 
     let request = app
-        .kv_cache.pending_kv_cache_request
+        .kv_cache
+        .pending_kv_cache_request
         .as_ref()
         .expect("request should be pending");
     assert!(
@@ -253,7 +254,8 @@ fn kv_cache_baseline_same_session_still_compares() {
     app.begin_remote_kv_cache_request(grown_signature);
 
     let request = app
-        .kv_cache.pending_kv_cache_request
+        .kv_cache
+        .pending_kv_cache_request
         .as_ref()
         .expect("request should be pending");
     assert!(
@@ -307,9 +309,15 @@ fn remote_token_usage_records_cache_stats_before_done_and_dedupes_snapshots() {
         &mut remote,
     );
 
-    assert_eq!(app.token_accounting.total_cache_reported_input_tokens, 63_762);
+    assert_eq!(
+        app.token_accounting.total_cache_reported_input_tokens,
+        63_762
+    );
     assert_eq!(app.token_accounting.total_cache_read_tokens, 0);
-    assert_eq!(app.token_accounting.last_cache_reported_input_tokens, Some(63_762));
+    assert_eq!(
+        app.token_accounting.last_cache_reported_input_tokens,
+        Some(63_762)
+    );
     assert_eq!(app.token_accounting.total_input_tokens, 63_762);
     assert!(app.last_api_completed.is_some());
     assert!(app.kv_cache.pending_kv_cache_request.is_none());
@@ -324,7 +332,10 @@ fn remote_token_usage_records_cache_stats_before_done_and_dedupes_snapshots() {
         &mut remote,
     );
 
-    assert_eq!(app.token_accounting.total_cache_reported_input_tokens, 63_762);
+    assert_eq!(
+        app.token_accounting.total_cache_reported_input_tokens,
+        63_762
+    );
     assert_eq!(app.token_accounting.total_input_tokens, 63_762);
 
     assert!(super::state_ui::handle_info_command(
