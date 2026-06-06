@@ -7038,14 +7038,13 @@ impl DesktopHotReloader {
                 }
             }
         }
-        if should_drop_worker {
-            if let Some(worker) = self.app_worker.take()
-                && let Err(error) = worker.kill()
-            {
-                desktop_log::warn(format_args!(
-                    "jcode-desktop: failed to clean up stopped app worker: {error:#}"
-                ));
-            }
+        if should_drop_worker
+            && let Some(worker) = self.app_worker.take()
+            && let Err(error) = worker.kill()
+        {
+            desktop_log::warn(format_args!(
+                "jcode-desktop: failed to clean up stopped app worker: {error:#}"
+            ));
         }
         drained
     }
@@ -13123,6 +13122,7 @@ fn workspace_panel_size(rect: Rect) -> PhysicalSize<u32> {
 /// workspace content state. Hashing the inputs lets idle frames reuse the
 /// previously assembled vertex buffer instead of re-transforming ~100k vertices
 /// every redraw.
+#[allow(clippy::too_many_arguments)]
 fn workspace_primitive_vertices_cache_key(
     workspace: &Workspace,
     size: PhysicalSize<u32>,

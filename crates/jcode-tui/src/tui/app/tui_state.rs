@@ -745,6 +745,15 @@ impl crate::tui::TuiState for App {
         self.stashed_input.is_some()
     }
 
+    fn input_history_browse_status(&self) -> Option<(usize, usize)> {
+        let idx = self.input_history_index?;
+        let total = self.input_history.len();
+        if total == 0 {
+            return None;
+        }
+        Some((idx + 1, total))
+    }
+
     fn context_snapshot(&self) -> crate::tui::ContextSnapshot {
         use crate::message::{ContentBlock, Role};
         use std::time::Instant;
@@ -1469,6 +1478,12 @@ impl crate::tui::TuiState for App {
 
     fn usage_overlay(&self) -> Option<&RefCell<crate::tui::usage_overlay::UsageOverlay>> {
         self.usage_overlay.as_ref()
+    }
+
+    fn experiment_popup(
+        &self,
+    ) -> Option<&RefCell<crate::tui::experiment_popup::ExperimentPopupState>> {
+        self.experiment_popup.as_ref()
     }
 
     fn working_dir(&self) -> Option<String> {

@@ -112,6 +112,13 @@ pub enum ProviderChoice {
     Cursor,
     Copilot,
     Gemini,
+    #[value(
+        alias = "gemini-key",
+        alias = "gemini-apikey",
+        alias = "google-ai-studio",
+        alias = "ai-studio"
+    )]
+    GeminiApi,
     Antigravity,
     Google,
     Auto,
@@ -165,6 +172,7 @@ impl ProviderChoice {
             Self::Cursor => "cursor",
             Self::Copilot => "copilot",
             Self::Gemini => "gemini",
+            Self::GeminiApi => "gemini-api",
             Self::Antigravity => "antigravity",
             Self::Google => "google",
             Self::Auto => "auto",
@@ -349,6 +357,10 @@ const PROVIDER_CHOICE_LOGIN_PROVIDERS: &[(ProviderChoice, LoginProviderDescripto
     (
         ProviderChoice::Gemini,
         crate::provider_catalog::GEMINI_LOGIN_PROVIDER,
+    ),
+    (
+        ProviderChoice::GeminiApi,
+        crate::provider_catalog::GEMINI_API_LOGIN_PROVIDER,
     ),
     (
         ProviderChoice::Antigravity,
@@ -1405,6 +1417,13 @@ async fn init_provider_with_options(
             lock_model_provider("openai");
             Arc::new(provider::MultiProvider::with_preference_fast(true))
         }
+        ProviderChoice::GeminiApi => {
+            disable_subscription_runtime_mode();
+            ensure_external_api_key_auth_allowed_for_explicit_choice("GEMINI_API_KEY")?;
+            init_notice("Using Gemini Developer API key provider (provider locked)");
+            lock_model_provider("gemini-api");
+            Arc::new(provider::MultiProvider::with_preference_fast(true))
+        }
         ProviderChoice::Cursor => {
             disable_subscription_runtime_mode();
             ensure_cursor_auth_allowed_for_explicit_choice()?;
@@ -1761,7 +1780,7 @@ pub async fn init_provider_and_registry(
     model: Option<&str>,
 ) -> Result<(Arc<dyn provider::Provider>, tool::Registry)> {
     let provider = init_provider(choice, model).await?;
-    let registry = tool::Registry::new(provider.clone()).await;
+    let registry = tool::Registry::new(provider.clone(), tool::shared_agent_registry()).await;
     Ok((provider, registry))
 }
 
@@ -1770,7 +1789,7 @@ pub async fn init_provider_and_registry_for_validation(
     model: Option<&str>,
 ) -> Result<(Arc<dyn provider::Provider>, tool::Registry)> {
     let provider = init_provider_for_validation(choice, model).await?;
-    let registry = tool::Registry::new(provider.clone()).await;
+    let registry = tool::Registry::new(provider.clone(), tool::shared_agent_registry()).await;
     Ok((provider, registry))
 }
 

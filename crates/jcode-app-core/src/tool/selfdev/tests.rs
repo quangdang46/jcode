@@ -45,6 +45,7 @@ fn create_test_context(session_id: &str, working_dir: Option<std::path::PathBuf>
         message_id: "test-message".to_string(),
         tool_call_id: "test-tool-call".to_string(),
         working_dir,
+        sandbox_root: None,
         stdin_request_tx: None,
         graceful_shutdown_signal: None,
         execution_mode: crate::tool::ToolExecutionMode::Direct,
@@ -324,7 +325,13 @@ fn non_selfdev_schema_only_exposes_onramp_actions() {
         sorted,
         vec!["enter", "find-config", "reload", "setup", "status"]
     );
-    for hidden in ["build", "test", "cancel-build", "socket-info", "socket-help"] {
+    for hidden in [
+        "build",
+        "test",
+        "cancel-build",
+        "socket-info",
+        "socket-help",
+    ] {
         assert!(
             !actions.contains(&hidden),
             "on-ramp schema should not expose {hidden}"
