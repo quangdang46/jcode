@@ -1,5 +1,4 @@
 use super::*;
-use crate::tui::compat::line_from_spans;
 use crate::tui::ui::{self, WrappedLineMap};
 
 /// Auxiliary render data for an assistant message that is otherwise recomputed
@@ -211,7 +210,8 @@ fn is_error_copy_content(content: &str) -> bool {
 /// when a message has many placeholders each followed by long blank runs.
 fn compute_image_regions(wrapped_lines: &[ratatui::text::Line<'static>]) -> Vec<ImageRegion> {
     fn is_blank_line(line: &ratatui::text::Line<'static>) -> bool {
-        line.spans.is_empty() || (line.spans.len() == 1 && line.spans[0].content.is_empty())
+        line.spans.is_empty()
+            || (line.spans.len() == 1 && line.spans[0].content.is_empty())
     }
 
     let len = wrapped_lines.len();
@@ -833,7 +833,7 @@ pub(super) fn prepare_body_incremental(
                     displayed_prompt_num.to_string().as_str(),
                 ) + unicode_width::UnicodeWidthStr::width("› ");
                 new_lines.push(
-                    line_from_spans(vec![
+                    Line::from(vec![
                         Span::styled(
                             format!("{}", displayed_prompt_num),
                             Style::default().fg(num_color),
@@ -878,7 +878,7 @@ pub(super) fn prepare_body_incremental(
                     unicode_width::UnicodeWidthStr::width("  ")
                 };
                 new_lines.push(
-                    line_from_spans(vec![
+                    Line::from(vec![
                         Span::raw(if centered { "" } else { "  " }),
                         Span::styled(msg.content.clone(), Style::default().fg(dim_color())),
                     ])
@@ -1084,7 +1084,7 @@ pub(super) fn prepare_body_incremental(
                 let prefix_width =
                     unicode_width::UnicodeWidthStr::width(if centered { "✗ " } else { "  ✗ " });
                 new_lines.push(
-                    line_from_spans(vec![
+                    Line::from(vec![
                         Span::styled(
                             if centered { "✗ " } else { "  ✗ " },
                             Style::default().fg(Color::Red),
@@ -1358,7 +1358,7 @@ pub(super) fn prepare_body(
                     unicode_width::UnicodeWidthStr::width("  ")
                 };
                 lines.push(
-                    line_from_spans(vec![
+                    Line::from(vec![
                         Span::raw(if centered { "" } else { "  " }),
                         Span::styled(msg.content.clone(), Style::default().fg(dim_color())),
                     ])
@@ -1568,7 +1568,7 @@ pub(super) fn prepare_body(
                 let prefix_width =
                     unicode_width::UnicodeWidthStr::width(if centered { "✗ " } else { "  ✗ " });
                 lines.push(
-                    line_from_spans(vec![
+                    Line::from(vec![
                         Span::styled(
                             if centered { "✗ " } else { "  ✗ " },
                             Style::default().fg(Color::Red),

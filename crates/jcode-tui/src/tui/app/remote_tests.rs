@@ -40,7 +40,7 @@ impl Provider for MockProvider {
 fn create_test_app() -> crate::tui::app::App {
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let registry = rt.block_on(crate::tool::Registry::new(provider.clone(), None));
+    let registry = rt.block_on(crate::tool::Registry::new(provider.clone()));
     let mut app = crate::tui::app::App::new_for_test_harness(provider, registry);
     app.queue_mode = false;
     app.diff_mode = crate::config::DiffDisplayMode::Inline;
@@ -670,7 +670,8 @@ fn remote_history_watchdog_rerequests_history_when_stuck() {
         assert_eq!(app.remote_history_recovery_attempts, 0);
 
         // Simulate the connection having been stuck past the recovery delay.
-        app.remote_history_wait_started = Instant::now().checked_sub(Duration::from_secs(60));
+        app.remote_history_wait_started =
+            Instant::now().checked_sub(Duration::from_secs(60));
 
         let redraw = super::recover_stuck_remote_history(&mut app, &mut remote).await;
         reader
@@ -681,10 +682,7 @@ fn remote_history_watchdog_rerequests_history_when_stuck() {
     });
 
     assert!(redraw, "re-requesting history should trigger a redraw");
-    assert_eq!(
-        attempts, 1,
-        "watchdog should have re-requested history once"
-    );
+    assert_eq!(attempts, 1, "watchdog should have re-requested history once");
     assert!(matches!(
         serde_json::from_str::<crate::protocol::Request>(&line)
             .expect("history re-request should deserialize"),

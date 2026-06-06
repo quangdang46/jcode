@@ -1,11 +1,6 @@
 use super::*;
 use std::path::Path;
 
-/// Minimum byte-size a transcript must exceed to exercise the tail-only read
-/// path.  Matches the production constant but is kept local to tests so the
-/// symbol resolves even when the production constant is removed or renamed.
-const EXTERNAL_PREVIEW_TAIL_BYTES: u64 = 2 * 1024 * 1024; // 2 MiB
-
 struct EnvVarGuard {
     key: &'static str,
     prev: Option<std::ffi::OsString>,
@@ -359,28 +354,14 @@ fn load_codex_preview_reads_only_tail_of_large_transcript() {
 
     let preview = load_codex_preview_from_path(&transcript_path).expect("preview");
     // Preview is capped at 20 messages.
-    assert!(
-        preview.len() <= 20,
-        "preview should be capped, got {}",
-        preview.len()
-    );
+    assert!(preview.len() <= 20, "preview should be capped, got {}", preview.len());
     // The most-recent markers must be present.
     let last_two = &preview[preview.len().saturating_sub(2)..];
-    assert!(
-        last_two
-            .iter()
-            .any(|m| m.content.contains("RECENT_USER_MARKER"))
-    );
-    assert!(
-        last_two
-            .iter()
-            .any(|m| m.content.contains("RECENT_ASSISTANT_MARKER"))
-    );
+    assert!(last_two.iter().any(|m| m.content.contains("RECENT_USER_MARKER")));
+    assert!(last_two.iter().any(|m| m.content.contains("RECENT_ASSISTANT_MARKER")));
     // The head padding must have been skipped (not parsed from the tail slice).
     assert!(
-        !preview
-            .iter()
-            .any(|m| m.content.contains("old padding message 0 ")),
+        !preview.iter().any(|m| m.content.contains("old padding message 0 ")),
         "head messages should not appear when only the tail is read"
     );
 }
@@ -409,26 +390,12 @@ fn load_claude_code_preview_reads_only_tail_of_large_transcript() {
     std::fs::write(&transcript_path, &contents).expect("write big transcript");
 
     let preview = load_claude_code_preview_from_path(&transcript_path).expect("preview");
-    assert!(
-        preview.len() <= 20,
-        "preview should be capped, got {}",
-        preview.len()
-    );
+    assert!(preview.len() <= 20, "preview should be capped, got {}", preview.len());
     let last_two = &preview[preview.len().saturating_sub(2)..];
+    assert!(last_two.iter().any(|m| m.content.contains("RECENT_USER_MARKER")));
+    assert!(last_two.iter().any(|m| m.content.contains("RECENT_ASSISTANT_MARKER")));
     assert!(
-        last_two
-            .iter()
-            .any(|m| m.content.contains("RECENT_USER_MARKER"))
-    );
-    assert!(
-        last_two
-            .iter()
-            .any(|m| m.content.contains("RECENT_ASSISTANT_MARKER"))
-    );
-    assert!(
-        !preview
-            .iter()
-            .any(|m| m.content.contains("old padding message 0 ")),
+        !preview.iter().any(|m| m.content.contains("old padding message 0 ")),
         "head messages should not appear when only the tail is read"
     );
 }
@@ -736,9 +703,20 @@ fn benchmark_real_resume_loading_phases() {
     let jcode_summary_elapsed = phase_start.elapsed();
 
     let phase_start = std::time::Instant::now();
-    let external = load_external_casr_sessions(scan_limit);
-    let external_elapsed = phase_start.elapsed();
-    let external_count = external.len();
+    let claude = load_external_claude_code_sessions(scan_limit);
+    let claude_elapsed = phase_start.elapsed();
+
+    let phase_start = std::time::Instant::now();
+    let codex = load_external_codex_sessions(scan_limit);
+    let codex_elapsed = phase_start.elapsed();
+
+    let phase_start = std::time::Instant::now();
+    let pi = load_external_pi_sessions(scan_limit);
+    let pi_elapsed = phase_start.elapsed();
+
+    let phase_start = std::time::Instant::now();
+    let opencode = load_external_opencode_sessions(scan_limit);
+    let opencode_elapsed = phase_start.elapsed();
 
     let phase_start = std::time::Instant::now();
     let all_sessions = load_sessions().expect("load sessions");
@@ -767,7 +745,7 @@ fn benchmark_real_resume_loading_phases() {
             "real resume phases: scan_limit={} candidate_limit={} snapshot_count={} ",
             "candidate_count={} collect_candidates={}ms ",
             "jcode_summary={}ms jcode_loaded={} skipped_empty={} skipped_imported={} summary_errors={} ",
-            "external_casr={}ms/{} ",
+            "external_claude={}ms/{} external_codex={}ms/{} external_pi={}ms/{} external_opencode={}ms/{} ",
             "load_sessions={}ms/{} load_sessions_grouped={}ms groups={} orphans={}"
         ),
         scan_limit,
@@ -780,8 +758,14 @@ fn benchmark_real_resume_loading_phases() {
         skipped_empty,
         skipped_imported,
         summary_errors,
-        external_elapsed.as_millis(),
-        external_count,
+        claude_elapsed.as_millis(),
+        claude.len(),
+        codex_elapsed.as_millis(),
+        codex.len(),
+        pi_elapsed.as_millis(),
+        pi.len(),
+        opencode_elapsed.as_millis(),
+        opencode.len(),
         load_sessions_elapsed.as_millis(),
         all_sessions.len(),
         grouped_elapsed.as_millis(),

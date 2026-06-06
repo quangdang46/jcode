@@ -529,7 +529,9 @@ impl SessionPicker {
     /// session. Used by onboarding tests to assert the combined external-CLI
     /// picker surfaces both Codex and Claude Code transcripts.
     #[cfg(test)]
-    pub(crate) fn visible_session_iter_for_test(&self) -> impl Iterator<Item = &SessionInfo> + '_ {
+    pub(crate) fn visible_session_iter_for_test(
+        &self,
+    ) -> impl Iterator<Item = &SessionInfo> + '_ {
         self.visible_session_iter()
     }
 
@@ -560,7 +562,6 @@ impl SessionPicker {
             ResumeTarget::OpenCodeSession { .. } => external_path.as_deref().and_then(|path| {
                 loading::load_opencode_preview_from_path(std::path::Path::new(path))
             }),
-            ResumeTarget::ForeignSession { .. } => None,
         }
     }
 

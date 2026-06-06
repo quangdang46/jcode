@@ -22,13 +22,18 @@
 pub mod markdown;
 pub mod model;
 pub mod preprocess;
+pub mod reasoning;
 pub mod wrap;
 
 pub use markdown::parse_markdown;
+pub use preprocess::escape_currency_dollars;
+pub use reasoning::{
+    REASONING_SENTINEL, reasoning_line_markup, reasoning_partial_markup,
+    reasoning_summary_line_markup,
+};
 pub use model::{
     Alignment, Block, BlockKind, Document, FillRole, StyleRole, StyledLine, StyledSpan, TextAttrs,
 };
-pub use preprocess::escape_currency_dollars;
 pub use wrap::{ColumnWidth, WidthMeasure, wrap_line, wrap_lines};
 
 #[cfg(test)]

@@ -1664,7 +1664,6 @@ pub(crate) fn copy_pane_vertical_edge_point(
 /// This mirrors that: dragging below the last visible line snaps to the end of
 /// that line, and dragging above the first visible line snaps to its start, so
 /// the boundary line is fully covered even when there is nothing more to scroll.
-#[allow(dead_code)]
 pub(crate) fn copy_pane_drag_point(
     pane: crate::tui::CopySelectionPane,
     column: u16,
@@ -1707,23 +1706,22 @@ pub(crate) fn copy_pane_drag_point(
         return Some(crate::tui::CopySelectionPoint {
             pane,
             abs_line: first_visible_line,
-            column: snapshot
-                .wrapped_copy_offset(first_visible_line)
-                .unwrap_or(0),
+            column: snapshot.wrapped_copy_offset(first_visible_line).unwrap_or(0),
         });
     }
 
     // Interior row that maps to no line (e.g. a blank gap row between/after
     // content within the visible band): fall back to the boundary-clamped point.
-    copy_point_from_snapshot(&snapshot, clamped_col, row.clamp(area.y, last_row)).or(Some(
-        crate::tui::CopySelectionPoint {
-            pane,
-            abs_line: last_visible_line,
-            column: line_display_width(
-                snapshot.wrapped_plain_line(last_visible_line).unwrap_or(""),
-            ),
-        },
-    ))
+    copy_point_from_snapshot(
+        &snapshot,
+        clamped_col,
+        row.clamp(area.y, last_row),
+    )
+    .or(Some(crate::tui::CopySelectionPoint {
+        pane,
+        abs_line: last_visible_line,
+        column: line_display_width(snapshot.wrapped_plain_line(last_visible_line).unwrap_or("")),
+    }))
 }
 
 /// Edge point for tick-driven continuous auto-scroll, where there is no live
@@ -1859,15 +1857,15 @@ pub(crate) fn copy_selection_text(range: crate::tui::CopySelectionRange) -> Opti
                 continue;
             }
         }
-        let line_width = line_display_width(text);
+        let line_width = line_display_width(&text);
         let copy_start = snapshot.wrapped_copy_offset(abs_line).unwrap_or(0);
         let start_col = if abs_line == start.abs_line {
-            clamp_display_col(text, start.column).max(copy_start)
+            clamp_display_col(&text, start.column).max(copy_start)
         } else {
             copy_start
         };
         let end_col = if abs_line == end.abs_line {
-            clamp_display_col(text, end.column).max(copy_start)
+            clamp_display_col(&text, end.column).max(copy_start)
         } else {
             line_width
         };
@@ -1876,11 +1874,11 @@ pub(crate) fn copy_selection_text(range: crate::tui::CopySelectionRange) -> Opti
             continue;
         }
 
-        let slice = display_col_slice(text, start_col, end_col);
+        let slice = display_col_slice(&text, start_col, end_col);
         if abs_line == start.abs_line {
             out.reserve(slice.len().saturating_mul(selected_lines.min(8)));
         }
-        out.push_str(slice);
+        out.push_str(&slice);
     }
 
     Some(out)
@@ -1931,22 +1929,22 @@ pub(crate) fn copy_selection_metrics(
                 continue;
             }
         }
-        let line_width = line_display_width(text);
+        let line_width = line_display_width(&text);
         let copy_start = snapshot.wrapped_copy_offset(abs_line).unwrap_or(0);
         let start_col = if abs_line == start.abs_line {
-            clamp_display_col(text, start.column).max(copy_start)
+            clamp_display_col(&text, start.column).max(copy_start)
         } else {
             copy_start
         };
         let end_col = if abs_line == end.abs_line {
-            clamp_display_col(text, end.column).max(copy_start)
+            clamp_display_col(&text, end.column).max(copy_start)
         } else {
             line_width
         };
         if end_col < start_col {
             continue;
         }
-        chars += display_col_slice(text, start_col, end_col).chars().count();
+        chars += display_col_slice(&text, start_col, end_col).chars().count();
     }
 
     Some((chars, lines.max(1)))
@@ -2052,18 +2050,6 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     if let Some(picker_cell) = app.account_picker_overlay() {
         let mut picker = picker_cell.borrow_mut();
         picker.render(frame);
-        finalize_frame_metrics(
-            app,
-            total_start,
-            Duration::ZERO,
-            total_start.elapsed(),
-            None,
-        );
-        return;
-    }
-
-    if app.experiment_popup().is_some() {
-        overlays::draw_experiment_popup(frame, area, app);
         finalize_frame_metrics(
             app,
             total_start,
@@ -2714,29 +2700,6 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         capture.markdown = crate::tui::markdown::debug_stats_json();
         capture.theme = overlays::debug_palette_json();
         visual_debug::record_frame(capture.build());
-    }
-
-    // Render TUI plugin slot content (status bar, sidebar).
-    if let Some(bridge) = app.plugin_bridge() {
-        // Status bar: render plugin content in the notification area if there
-        // is room, or overlay it at the bottom of the status bar area.
-        let status_area = chunks[2];
-        super::plugin_integration::draw_status_bar_slots(frame, bridge, status_area);
-
-        // Sidebar: render plugin content as a small panel on the right side
-        // of the messages area when plugins have filled the Sidebar slot.
-        if bridge.has_slot_content(jcode_plugin_runtime::tui_api::SlotType::Sidebar) {
-            let sidebar_width = 30u16.min(messages_area.width / 3);
-            if sidebar_width >= 10 {
-                let sidebar_area = Rect {
-                    x: messages_area.x + messages_area.width.saturating_sub(sidebar_width),
-                    y: messages_area.y,
-                    width: sidebar_width,
-                    height: messages_area.height,
-                };
-                super::plugin_integration::draw_sidebar_slots(frame, bridge, sidebar_area);
-            }
-        }
     }
 
     finalize_frame_metrics(

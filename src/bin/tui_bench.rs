@@ -402,9 +402,7 @@ impl BenchState {
                         "old_string": format!("target line {}", idx),
                         "new_string": format!("target line {} updated", idx),
                     }),
-                    intent: None,
-                    thought_signature: None,
-                };
+                    intent: None, thought_signature: None, };
                 let tool_output = format!(
                     "{line}- target line {idx}\n{line}+ target line {idx} updated",
                     line = idx + 1,
@@ -620,9 +618,7 @@ fn stored_message_visible_text(message: &jcode::session::StoredMessage) -> Strin
     let mut parts = Vec::new();
     for block in &message.content {
         match block {
-            ContentBlock::Text { text, .. }
-            | ContentBlock::Reasoning { text }
-            | ContentBlock::ReasoningTrace { text } => {
+            ContentBlock::Text { text, .. } | ContentBlock::Reasoning { text } => {
                 if !text.trim().is_empty() {
                     parts.push(text.trim().to_string());
                 }
@@ -1068,10 +1064,6 @@ impl TuiState for BenchState {
 
     fn diagram_pane_ratio(&self) -> u8 {
         40
-    }
-
-    fn diagram_pane_ratio_user_adjusted(&self) -> bool {
-        false
     }
 
     fn diagram_pane_animating(&self) -> bool {

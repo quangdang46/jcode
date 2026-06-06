@@ -158,7 +158,7 @@ impl App {
 
         if let Some(summary_chars) = event.summary_chars.filter(|chars| *chars > 0) {
             details.push(format!(
-                "artifact {} chars",
+                "summary {} chars",
                 Self::format_compaction_number(summary_chars as u64)
             ));
         }
@@ -821,9 +821,7 @@ mod tests {
             id: "tc".to_string(),
             name: "swarm".to_string(),
             input: serde_json::json!({"action": "spawn", "prompt": "try it"}),
-            intent: None,
-            thought_signature: None,
-        };
+            intent: None, thought_signature: None, };
 
         assert_eq!(
             App::experimental_feature_key_for_tool(&tool),
@@ -837,9 +835,7 @@ mod tests {
             id: "tc".to_string(),
             name: "swarm".to_string(),
             input: serde_json::json!({"action": "assign_task", "spawn_if_needed": true}),
-            intent: None,
-            thought_signature: None,
-        };
+            intent: None, thought_signature: None, };
 
         assert_eq!(
             App::experimental_feature_key_for_tool(&tool),
@@ -853,9 +849,7 @@ mod tests {
             id: "tc".to_string(),
             name: "swarm".to_string(),
             input: serde_json::json!({"action": "status"}),
-            intent: None,
-            thought_signature: None,
-        };
+            intent: None, thought_signature: None, };
 
         assert_eq!(App::experimental_feature_key_for_tool(&tool), None);
     }
