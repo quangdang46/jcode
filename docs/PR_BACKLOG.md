@@ -57,7 +57,7 @@
 | B5 | Plugin hot-reload via SHA-256 fingerprint | opencode | 🔜 Pending | P2 | S | docs/pr-plans/B5-plugin-hot-reload.md | feat/B5-plugin-hot-reload |
 | B6 | Per-extension kill switch (JCODE_PLUGIN_KILL_<NAME>) | pi-agent-rust | 🔜 Pending | P2 | S | docs/pr-plans/B6-plugin-kill-switch.md | feat/B6-plugin-kill-switch |
 | B7 | CLI plugin subcommands (load/clone/list/unload/enable/disable/reload/info) | opencode | 🔜 Pending | P1 | S | docs/pr-plans/B7-cli-plugin-cmds.md | feat/B7-cli-plugin-cmds |
-| B8 | Plugin author guide (docs/plugins.md) | oh-my-pi | 🔜 Pending | P1 | S | docs/pr-plans/B8-plugin-author-guide.md | feat/B8-plugin-author-guide |
+| B8 | Plugin author guide (docs/plugins.md) | oh-my-pi | ✅ Done (PR #471) | P1 | S | docs/pr-plans/B8-plugin-author-guide.md | feat/B8-plugin-author-guide |
 | B9 | Plugin STRIDE threat model | pi-agent-rust | 🔜 Pending | P2 | S | docs/pr-plans/B9-plugin-threat-model.md | feat/B9-plugin-threat-model |
 
 ## Section C — Tools (from oh-my-pi, CCB, codebuff, codex, crush)
@@ -66,7 +66,7 @@
 |---|---------|--------|--------|-----|--------|-----------|--------|
 | C1 | DAP (Debug Adapter Protocol, 27 ops) | oh-my-pi | ❌ Missing | P1 | XL | docs/pr-plans/C1-dap-debugger.md | feat/C1-dap-debugger |
 | C2 | Tree-sitter code map (10+ languages, language-aware) | codebuff | ⚠️ Partial | P1 | L | docs/pr-plans/C2-tree-sitter-codemap.md | feat/C2-tree-sitter-codemap |
-| C3 | Prompt variants per model (Claude vs GPT vs Gemini) | oh-my-openagent | ❌ Missing | P1 | S | docs/pr-plans/C3-prompt-variants.md | feat/C3-prompt-variants |
+| C3 | Prompt variants per model (Claude vs GPT vs Gemini) | oh-my-openagent | ✅ Done (PR #470) | P1 | S | docs/pr-plans/C3-prompt-variants.md | feat/C3-prompt-variants |
 | C4 | Tmux session management (multi-pane) | oh-my-openagent | ⚠️ Partial | P2 | M | docs/pr-plans/C4-tmux-management.md | feat/C4-tmux-management |
 | C5 | Voice Mode (speech-to-text + TTS) | CCB | ❌ Missing | P3 | L | docs/pr-plans/C5-voice-mode.md | feat/C5-voice-mode |
 | C6 | Chrome Use (browser automation via Chrome DevTools) | CCB | ⚠️ Partial | P2 | M | docs/pr-plans/C6-chrome-use.md | feat/C6-chrome-use |

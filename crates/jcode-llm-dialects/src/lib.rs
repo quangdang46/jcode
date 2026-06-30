@@ -4,10 +4,13 @@
 //! providers. Each dialect provides a state-machine scanner that parses
 //! streaming text and emits structured [`InbandScanEvent`]s.
 
+pub mod anthropic;
+pub mod deepseek;
+pub mod gemini;
 pub mod hermes;
 pub mod kimi;
-pub mod gemini;
 pub mod types;
+pub mod xml;
 
 use types::*;
 
@@ -21,11 +24,10 @@ pub fn create_inband_scanner(dialect: Dialect, options: &InbandScannerOptions) -
         Dialect::Hermes | Dialect::Jcode => Box::new(hermes::HermesInbandScanner::new(options)),
         Dialect::Kimi => Box::new(kimi::KimiInbandScanner::new(options)),
         Dialect::Gemini | Dialect::Gemma => Box::new(gemini::GeminiInbandScanner::new(options)),
-        Dialect::Anthropic | Dialect::Xml => {
-            // Fallback for now — will use Anthropic XML scanner in Phase 2
-            Box::new(hermes::HermesInbandScanner::new(options))
-        }
-        Dialect::DeepSeek | Dialect::Glm | Dialect::Harmony | Dialect::MiniMax | Dialect::Qwen3 => {
+        Dialect::Anthropic => Box::new(anthropic::AnthropicInbandScanner::new(options)),
+        Dialect::DeepSeek => Box::new(deepseek::DeepSeekInbandScanner::new(options)),
+        Dialect::Xml => Box::new(xml::XmlInbandScanner::new(options)),
+        Dialect::Glm | Dialect::Harmony | Dialect::MiniMax | Dialect::Qwen3 => {
             // Placeholder — actual implementations in Phase 2
             Box::new(hermes::HermesInbandScanner::new(options))
         }

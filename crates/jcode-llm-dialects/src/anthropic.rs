@@ -83,7 +83,7 @@ fn parse_tag(raw: &str) -> Option<ParsedTag> {
     if !raw.starts_with('<') || !raw.ends_with('>') {
         return None;
     }
-    let inner = &raw[1..raw.len() - 1].trim();
+    let inner = raw[1..raw.len() - 1].trim();
     if inner.is_empty() {
         return None;
     }
@@ -700,17 +700,18 @@ impl AnthropicInbandScanner {
                     self.buffer.clear();
                     return false;
                 }
-                self.append_parameter_value(&self.buffer);
-                self.raw_block.push_str(&self.buffer);
+                let buf = self.buffer.clone();
+                self.append_parameter_value(&buf);
+                self.raw_block.push_str(&buf);
                 self.buffer.clear();
                 return false;
             }
         };
 
         if tag_start > 0 {
-            let consumed = &self.buffer[..tag_start];
-            self.append_parameter_value(consumed);
-            self.raw_block.push_str(consumed);
+            let consumed = self.buffer[..tag_start].to_string();
+            self.append_parameter_value(&consumed);
+            self.raw_block.push_str(&consumed);
             self.buffer = self.buffer[tag_start..].to_string();
             return true;
         }
@@ -729,9 +730,9 @@ impl AnthropicInbandScanner {
                     self.buffer.clear();
                     return false;
                 }
-                let consumed = &self.buffer[..1];
-                self.append_parameter_value(consumed);
-                self.raw_block.push_str(consumed);
+                let consumed = self.buffer[..1].to_string();
+                self.append_parameter_value(&consumed);
+                self.raw_block.push_str(&consumed);
                 self.buffer = self.buffer[1..].to_string();
                 return true;
             }
@@ -747,9 +748,9 @@ impl AnthropicInbandScanner {
                     self.buffer.clear();
                     return false;
                 }
-                let consumed = &self.buffer[..1];
-                self.append_parameter_value(consumed);
-                self.raw_block.push_str(consumed);
+                let consumed = self.buffer[..1].to_string();
+                self.append_parameter_value(&consumed);
+                self.raw_block.push_str(&consumed);
                 self.buffer = self.buffer[1..].to_string();
                 return true;
             }
@@ -762,19 +763,22 @@ impl AnthropicInbandScanner {
             Some(p) => p,
             None => {
                 if final_ {
-                    self.append_thinking(&self.buffer, events);
+                    let buf = self.buffer.clone();
+                    self.append_thinking(&buf, events);
                     self.buffer.clear();
                     self.finish_thinking(events);
                     return false;
                 }
-                self.append_thinking(&self.buffer, events);
+                let buf = self.buffer.clone();
+                self.append_thinking(&buf, events);
                 self.buffer.clear();
                 return false;
             }
         };
 
         if tag_start > 0 {
-            self.append_thinking(&self.buffer[..tag_start], events);
+            let buf = self.buffer[..tag_start].to_string();
+            self.append_thinking(&buf, events);
             self.buffer = self.buffer[tag_start..].to_string();
             return true;
         }
@@ -789,12 +793,14 @@ impl AnthropicInbandScanner {
                     return false;
                 }
                 if final_ {
-                    self.append_thinking(&self.buffer, events);
+                    let buf = self.buffer.clone();
+                    self.append_thinking(&buf, events);
                     self.buffer.clear();
                     self.finish_thinking(events);
                     return false;
                 }
-                self.append_thinking(&self.buffer[..1], events);
+                let buf = self.buffer[..1].to_string();
+                self.append_thinking(&buf, events);
                 self.buffer = self.buffer[1..].to_string();
                 return true;
             }
@@ -805,12 +811,14 @@ impl AnthropicInbandScanner {
                     return true;
                 }
                 if final_ {
-                    self.append_thinking(&self.buffer, events);
+                    let buf = self.buffer.clone();
+                    self.append_thinking(&buf, events);
                     self.buffer.clear();
                     self.finish_thinking(events);
                     return false;
                 }
-                self.append_thinking(&self.buffer[..1], events);
+                let buf = self.buffer[..1].to_string();
+                self.append_thinking(&buf, events);
                 self.buffer = self.buffer[1..].to_string();
                 return true;
             }

@@ -3,12 +3,12 @@
 //! Three formats are parsed:
 //!
 //! 1. **Fullwidth token format** (legacy):
-//!    `<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>name<｜tool▁sep｜>JSON<｜tool▁call▁end｜><｜tool▁calls▁end｜>`
+//!    `<\u{ff5c}tool\u{2581}calls\u{2581}begin\u{ff5c}><\u{ff5c}tool\u{2581}call\u{2581}begin\u{ff5c}>name<\u{ff5c}tool\u{2581}sep\u{ff5c}>JSON<\u{ff5c}tool\u{2581}call\u{2581}end\u{ff5c}><\u{ff5c}tool\u{2581}calls\u{2581}end\u{ff5c}>`
 //! 2. **DSML format** (fullwidth or ASCII):
-//!    `<｜DSML｜tool_calls><｜DSML｜invoke name="x"><｜DSML｜parameter name="k">v</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>`
+//!    `<\u{ff5c}DSML\u{ff5c}tool_calls><\u{ff5c}DSML\u{ff5c}invoke name="x"><\u{ff5c}DSML\u{ff5c}parameter name="k">v</\u{ff5c}DSML\u{ff5c}parameter></\u{ff5c}DSML\u{ff5c}invoke></\u{ff5c}DSML\u{ff5c}tool_calls>`
 //!    (or ASCII `<|DSML|tool_calls>` etc.)
 //! 3. **Legacy JSON format**:
-//!    `<｜tool▁call▁begin｜>function<｜tool▁sep｜>name\n```json\nJSON\n```<｜tool▁call▁end｜>`
+//!    `<\u{ff5c}tool\u{2581}call\u{2581}begin\u{ff5c}>function<\u{ff5c}tool\u{2581}sep\u{ff5c}>name\n```json\nJSON\n```<\u{ff5c}tool\u{2581}call\u{2581}end\u{ff5c}>`
 //!
 //! Control tokens (BOS, EOS, User, Assistant) are stripped.
 
@@ -20,16 +20,16 @@ use crate::types::{InbandScanEvent, InbandScanner, InbandScannerOptions};
 // Tokens — fullwidth (3-byte Unicode) and ASCII
 // ---------------------------------------------------------------------------
 
-const TOOL_CALLS_BEGIN: &str = "<｜tool▁calls▁begin｜>";
-const TOOL_CALLS_END: &str = "<｜tool▁calls▁end｜>";
-const TOOL_CALL_BEGIN: &str = "<｜tool▁call▁begin｜>";
-const TOOL_CALL_END: &str = "<｜tool▁call▁end｜>";
-const TOOL_SEPARATOR: &str = "<｜tool▁sep｜>";
+const TOOL_CALLS_BEGIN: &str = "<\u{ff5c}tool\u{2581}calls\u{2581}begin\u{ff5c}>";
+const TOOL_CALLS_END: &str = "<\u{ff5c}tool\u{2581}calls\u{2581}end\u{ff5c}>";
+const TOOL_CALL_BEGIN: &str = "<\u{ff5c}tool\u{2581}call\u{2581}begin\u{ff5c}>";
+const TOOL_CALL_END: &str = "<\u{ff5c}tool\u{2581}call\u{2581}end\u{ff5c}>";
+const TOOL_SEPARATOR: &str = "<\u{ff5c}tool\u{2581}sep\u{ff5c}>";
 
-const BOS: &str = "<｜begin▁of▁sentence｜>";
-const USER: &str = "<｜User｜>";
-const ASSISTANT: &str = "<｜Assistant｜>";
-const EOS: &str = "<｜end▁of▁sentence｜>";
+const BOS: &str = "<\u{ff5c}begin\u{2581}of\u{2581}sentence\u{ff5c}>";
+const USER: &str = "<\u{ff5c}User\u{ff5c}>";
+const ASSISTANT: &str = "<\u{ff5c}Assistant\u{ff5c}>";
+const EOS: &str = "<\u{ff5c}end\u{2581}of\u{2581}sentence\u{ff5c}>";
 
 const THINK_OPEN: &str = "<think>";
 const THINK_CLOSE: &str = "</think>";
@@ -38,19 +38,75 @@ const LEGACY_TOOL_TYPE: &str = "function";
 const LEGACY_JSON_FENCE: &str = "```json";
 const CODE_FENCE: &str = "```";
 
-const DSML_TOOL_CALLS_OPEN_FULLWIDTH: &str = "<｜DSML｜tool_calls>";
-const DSML_TOOL_CALLS_CLOSE_FULLWIDTH: &str = "</｜DSML｜tool_calls>";
+const DSML_TOOL_CALLS_OPEN_FULLWIDTH: &str = "<\u{ff5c}DSML\u{ff5c}tool_calls>";
+const DSML_TOOL_CALLS_CLOSE_FULLWIDTH: &str = "</\u{ff5c}DSML\u{ff5c}tool_calls>";
 const DSML_TOOL_CALLS_OPEN_ASCII: &str = "<|DSML|tool_calls>";
 const DSML_TOOL_CALLS_CLOSE_ASCII: &str = "</|DSML|tool_calls>";
 
 /// Control tokens that get stripped entirely.
 const CONTROL_TOKENS: &[&str] = &[
     BOS, EOS, USER, ASSISTANT,
-    "<｜▁pad▁｜>",
+    "<\u{ff5c}\u{2581}pad\u{2581}\u{ff5c}>",
     "<|EOT|>",
-    "<｜search▁begin｜>",
-    "<｜search▁end｜>",
-    "<｜fim▁hole｜>Tok,
+    "<\u{ff5c}search\u{2581}begin\u{ff5c}>",
+    "<\u{ff5c}search\u{2581}end\u{ff5c}>",
+    "<\u{ff5c}fim\u{2581}hole\u{ff5c}>Tok",
+];
+
+/// Tokens scanned for in the `Outside` state.
+const OUTSIDE_TOKENS: &[&str] = &[
+    TOOL_CALLS_BEGIN,
+    TOOL_CALL_BEGIN,
+    THINK_OPEN,
+    DSML_TOOL_CALLS_OPEN_FULLWIDTH,
+    DSML_TOOL_CALLS_OPEN_ASCII,
+    BOS, EOS, USER, ASSISTANT,
+    "<\u{ff5c}\u{2581}pad\u{2581}\u{ff5c}>",
+    "<|EOT|>",
+    "<\u{ff5c}search\u{2581}begin\u{ff5c}>",
+    "<\u{ff5c}search\u{2581}end\u{ff5c}>",
+    "<\u{ff5c}fim\u{2581}hole\u{ff5c}>Tok",
+];
+
+/// Tokens scanned for in the legacy `Section` state.
+const SECTION_TOKENS: &[&str] = &[TOOL_CALLS_END, TOOL_CALL_BEGIN];
+
+/// Tokens scanned for in the DSML section state.
+const DSML_SECTION_TOKENS: &[&str] = &[
+    DSML_TOOL_CALLS_CLOSE_FULLWIDTH,
+    DSML_TOOL_CALLS_CLOSE_ASCII,
+    "<\u{ff5c}DSML\u{ff5c}invoke",
+    "<|DSML|invoke",
+    "<\u{ff5c}DSML\u{ff5c}parameter",
+    "<|DSML|parameter",
+];
+
+/// Tokens scanned for in DSML invoke state (close + parameter open).
+const DSML_INVOKE_TOKENS: &[&str] = &[
+    "</\u{ff5c}DSML\u{ff5c}invoke>",
+    "</|DSML|invoke>",
+    "<\u{ff5c}DSML\u{ff5c}parameter",
+    "<|DSML|parameter",
+];
+
+/// Tokens that close a DSML parameter value (parameter close tags).
+const DSML_PARAMETER_CLOSE_TOKENS: &[&str] = &[
+    "</\u{ff5c}DSML\u{ff5c}parameter>",
+    "</|DSML|parameter>",
+];
+
+/// A parsed DSML open tag (invoke or parameter).
+#[derive(Debug, Clone)]
+struct DsmlOpenTag {
+    name: String,
+    string_attr: Option<String>,
+    raw: String,
+    tag_len: usize,
+}
+
+#[derive(Debug, Clone)]
+enum TokInfo {
+    None,
     SelfClosing,
     /// Consumed an opening tag like `<｜DSML｜invoke name="x">`.
     Opening(String, /* raw tag */ String),
@@ -149,12 +205,12 @@ impl DeepSeekInbandScanner {
     }
 
     fn drop_one_linebreak(&mut self) -> String {
-        if self.buffer.starts_with("\r\n") {
-            let s = "\r\n".to_string();
+        if self.buffer.starts_with("\u{d}\u{a}") {
+            let s = "\u{d}\u{a}".to_string();
             self.buffer = self.buffer[2..].to_string();
             s
-        } else if self.buffer.starts_with('\n') {
-            let s = "\n".to_string();
+        } else if self.buffer.starts_with('\u{a}') {
+            let s = "\u{a}".to_string();
             self.buffer = self.buffer[1..].to_string();
             s
         } else {
@@ -191,9 +247,9 @@ impl DeepSeekInbandScanner {
     }
 
     /// Find the earliest matching token in buffer and return position + token.
-    fn find_earliest(&self, tokens: &[&str]) -> Option<(usize, &'static str)> {
+    fn find_earliest<'a>(&self, tokens: &'a [&str]) -> Option<(usize, &'a str)> {
         let mut best_pos = None;
-        let mut best_tok = None;
+        let mut best_tok: Option<&'a str> = None;
         for tok in tokens {
             if let Some(pos) = self.buffer.find(tok) {
                 match best_pos {
@@ -212,9 +268,9 @@ impl DeepSeekInbandScanner {
         best_pos.zip(best_tok)
     }
 
-    /// Match a DSML open tag (`<｜DSML｜invoke` or `<｜DSML｜parameter`) with name attribute.
+    /// Match a DSML open tag (`<\u{ff5c}DSML\u{ff5c}invoke` or `<\u{ff5c}DSML\u{ff5c}parameter`) with name attribute.
     fn match_dsml_open(&self, kind: &str) -> Option<DsmlOpenTag> {
-        let fullwidth_tag = format!("<｜DSML｜{}", kind);
+        let fullwidth_tag = format!("<\u{ff5c}DSML\u{ff5c}{}", kind);
         let ascii_tag = format!("<|DSML|{}", kind);
         if !self.buffer.starts_with(&fullwidth_tag) && !self.buffer.starts_with(&ascii_tag) {
             return None;
@@ -233,7 +289,7 @@ impl DeepSeekInbandScanner {
     }
 
     /// Check for DSML closing tag (fullwidth or ASCII variant).
-    fn matching_dsml_close(&self, full: &str, ascii: &str) -> Option<&'static str> {
+    fn matching_dsml_close(&self, full: &'static str, ascii: &'static str) -> Option<&'static str> {
         if self.buffer.starts_with(full) {
             Some(full)
         } else if self.buffer.starts_with(ascii) {
@@ -245,9 +301,9 @@ impl DeepSeekInbandScanner {
 
     /// Check if buffer starts with a known DSML invoke/parameter open tag.
     fn is_dsml_open(&self) -> bool {
-        self.buffer.starts_with("<｜DSML｜invoke")
+        self.buffer.starts_with("<\u{ff5c}DSML\u{ff5c}invoke")
             || self.buffer.starts_with("<|DSML|invoke")
-            || self.buffer.starts_with("<｜DSML｜parameter")
+            || self.buffer.starts_with("<\u{ff5c}DSML\u{ff5c}parameter")
             || self.buffer.starts_with("<|DSML|parameter")
     }
 }
@@ -435,8 +491,8 @@ impl DeepSeekInbandScanner {
 
     fn consume_thinking(&mut self, final_: bool, events: &mut Vec<InbandScanEvent>) {
         if let Some(pos) = self.buffer.find(THINK_CLOSE) {
-            let delta = &self.buffer[..pos];
-            self.emit_thinking(delta, events);
+            let delta = self.buffer[..pos].to_string();
+            self.emit_thinking(&delta, events);
             self.buffer = self.buffer[(pos + THINK_CLOSE.len())..].to_string();
             self.end_thinking(events);
             return;
@@ -449,7 +505,8 @@ impl DeepSeekInbandScanner {
         };
         let emit_end = self.buffer.len().saturating_sub(hold);
         if emit_end > 0 {
-            self.emit_thinking(&self.buffer[..emit_end], events);
+            let delta = self.buffer[..emit_end].to_string();
+            self.emit_thinking(&delta, events);
         }
         self.buffer = self.buffer[emit_end..].to_string();
         if final_ {
@@ -533,7 +590,8 @@ impl DeepSeekInbandScanner {
         let name = self.buffer[..fence].trim().to_string();
         self.raw_block.push_str(raw_name);
         self.buffer = self.buffer[raw_name.len()..].to_string();
-        self.raw_block.push_str(&self.drop_one_linebreak());
+        let lb = self.drop_one_linebreak();
+        self.raw_block.push_str(&lb);
 
         self.name = name;
         self.id = Self::gen_id();
@@ -646,7 +704,7 @@ impl DeepSeekInbandScanner {
 
             // Check for invoke close
             if let Some(close) =
-                self.matching_dsml_close("</｜DSML｜invoke>", "</|DSML|invoke>")
+                self.matching_dsml_close("</\u{ff5c}DSML\u{ff5c}invoke>", "</|DSML|invoke>")
             {
                 self.raw_block.push_str(close);
                 self.buffer = self.buffer[close.len()..].to_string();
@@ -688,7 +746,8 @@ impl DeepSeekInbandScanner {
                 return false;
             }
             let ch = self.buffer.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-            self.raw_block.push_str(&self.buffer[..ch]);
+            let raw_chunk = self.buffer[..ch].to_string();
+            self.raw_block.push_str(&raw_chunk);
             self.buffer = self.buffer[ch..].to_string();
         }
     }
@@ -746,7 +805,7 @@ impl DeepSeekInbandScanner {
 // ---------------------------------------------------------------------------
 
 fn extract_attr(tag: &str, attr: &str) -> Option<String> {
-    let pattern = format!("{}=\"", attr);
+    let pattern = format!("{}=\x22", attr);
     let start = tag.find(&pattern)?;
     let val_start = start + pattern.len();
     let val_end = tag[val_start..].find('"')?;
@@ -932,7 +991,7 @@ mod tests {
     fn test_dsml_fullwidth_format() {
         let mut scanner = DeepSeekInbandScanner::new(&InbandScannerOptions::default());
         let input = format!(
-            "{}<｜DSML｜invoke name=\"get_weather\"><｜DSML｜parameter name=\"city\">NYC</｜DSML｜parameter></｜DSML｜invoke>{}",
+            "{}<\u{ff5c}DSML\u{ff5c}invoke name=\"get_weather\"><\u{ff5c}DSML\u{ff5c}parameter name=\"city\">NYC</\u{ff5c}DSML\u{ff5c}parameter></\u{ff5c}DSML\u{ff5c}invoke>{}",
             DSML_TOOL_CALLS_OPEN_FULLWIDTH, DSML_TOOL_CALLS_CLOSE_FULLWIDTH
         );
         let events = scanner.feed(&input);
