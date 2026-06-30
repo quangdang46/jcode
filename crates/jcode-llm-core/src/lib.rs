@@ -5,6 +5,7 @@ pub mod model_ref;
 pub mod protocol;
 pub mod route;
 pub mod schema;
+pub mod sse;
 pub mod transport;
 
 pub fn version() -> &'static str {
