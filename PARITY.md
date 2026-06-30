@@ -652,7 +652,7 @@
 | Feature | Source Repo | jcode Status | Notes |
 |---------|-------------|-------------|-------|
 | **WASM extension security** | pi-agent-rust | ❌ Not implemented | pi-agent-rust has WASM-based extension sandboxing. jcode has native plugin system but no WASM sandbox. |
-| **SSE streaming** | pi-agent-rust | ❌ Not found | Server-Sent Events for real-time streaming. May exist in protocol layer. |
+| **SSE streaming** | pi-agent-rust | ✅ Done (jcode-llm-core::sse, 15 tests) | Server-Sent Events for real-time streaming. Centralized parser with UTF-8 tail handling and SseStream wrapper. |
 | **ACP / Remote control** | claude-code (CCB) | ⚠️ Partial | jcode has remote protocol but ACP-style remote agent control not verified. |
 | **Sandbox execution** | codex | ❌ Skipped | Container/firewall-based sandbox. Marked as skipped by design decision. |
 | **40+ providers** | oh-my-pi | ⚠️ Partial | jcode has 10 provider crates. oh-my-pi claims 40+. |
@@ -686,7 +686,7 @@
 | Feature | Source Repo | jcode Status | Notes |
 |---------|-------------|-------------|-------|
 | **WASM extension security** | pi-agent-rust | ❌ Not implemented | pi-agent-rust has WASM-based extension sandboxing. jcode has plugin system but no WASM sandbox. |
-| **SSE streaming** | pi-agent-rust | ❌ Not found | Server-Sent Events for real-time streaming. May exist in jcode protocol layer. |
+| **SSE streaming** | pi-agent-rust | ✅ Done (jcode-llm-core::sse, 15 tests) | Server-Sent Events for real-time streaming. Centralized parser with UTF-8 tail handling and SseStream wrapper. |
 | **ACP / Remote control** | claude-code (CCB) | ⚠️ Partial | jcode has remote protocol (`jcode-protocol`) but ACP-style remote agent control not verified. |
 | **Sandbox execution** | codex | ❌ Skipped | Marked as skipped in PARITY.md. Requires container infrastructure. |
 | **40+ providers** | oh-my-pi | ⚠️ Partial | jcode has 10 provider crates + core abstraction. oh-my-pi claims 40+. |

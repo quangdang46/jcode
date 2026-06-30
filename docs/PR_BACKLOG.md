@@ -101,7 +101,7 @@
 | # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
 |---|---------|--------|--------|-----|--------|-----------|--------|
 | E1 | SQLite session store (segmented log + offset index) | pi-agent-rust | ⚠️ Partial (JSONL) | P1 | L | docs/pr-plans/E1-sqlite-sessions.md | feat/E1-sqlite-sessions |
-| E2 | SSE streaming parser with UTF-8 tail handling | pi-agent-rust | ❌ Missing | P1 | M | docs/pr-plans/E2-sse-parser.md | feat/E2-sse-parser |
+| E2 | SSE streaming parser with UTF-8 tail handling | pi-agent-rust | ✅ Done (jcode-llm-core::sse, 15 tests) | P1 | M | docs/pr-plans/E2-sse-parser.md | feat/E2-sse-parser |
 | E3 | Shared multi-client sessions (workspace) | crush | ❌ Missing | P2 | L | docs/pr-plans/E3-shared-sessions.md | feat/E3-shared-sessions |
 | E4 | Remote teleport (spawn/detach/reattach workers) | kimchi | ❌ Missing | P3 | XL | docs/pr-plans/E4-remote-teleport.md | feat/E4-remote-teleport |
 | E5 | Session memory topology graph | jcode-native | ⚠️ Partial | P2 | M | docs/pr-plans/E5-session-topology.md | feat/E5-session-topology |
