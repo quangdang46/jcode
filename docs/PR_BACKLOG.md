@@ -31,7 +31,7 @@
 | A3 | Canonical LlmRequest/LlmEvent/LlmError schema | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A3-canonical-schema.md | feat/A3-canonical-schema |
 | A4 | OpenAI Responses protocol | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A4-openai-responses.md | feat/A4-openai-responses |
 | A5 | Anthropic Messages protocol | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A5-anthropic-messages.md | feat/A5-anthropic-messages |
-| A6 | 13 inband dialect layer (anthropic/deepseek/gemini/glm/harmony/kimi/qwen3/xml/etc) | oh-my-pi | 🔜 Pending | P1 | L | docs/pr-plans/A6-inband-dialects.md | feat/A6-inband-dialects |
+| A6 | 13 inband dialect layer (anthropic/deepseek/gemini/glm/harmony/kimi/qwen3/xml/etc) | oh-my-pi | 🟡 In Progress (3/12) | P1 | L | docs/pr-plans/A6-inband-dialects.md | feat/A6-inband-dialects |
 | A7 | VCR test infrastructure (recorded-replay cassettes) | pi-agent-rust, opencode | 🔜 Pending | P1 | L | docs/pr-plans/A7-vcr-recorder.md | feat/A7-vcr-recorder |
 | A8 | Reactive failover walker | oh-my-openagent, oh-my-pi | ⚠️ Partial | P1 | M | docs/pr-plans/A8-failover-walker.md | feat/A8-failover-walker |
 | A9 | Catalog service (in-memory Map<ProviderId, ProviderEntry>) | opencode | 🔜 Pending | P1 | M | docs/pr-plans/A9-catalog-service.md | feat/A9-catalog-service |
