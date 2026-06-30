@@ -327,7 +327,10 @@ fn atomic_write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> std::io::
     }
 
     let pid = std::process::id();
-    let nonce: u64 = rand::random();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     let tmp_path = path.with_extension(format!("tmp.{pid}.{nonce}"));
 
     let file = std::fs::File::create(&tmp_path)?;
