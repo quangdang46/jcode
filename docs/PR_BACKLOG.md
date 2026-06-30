@@ -26,16 +26,16 @@
 
 | # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
 |---|---------|--------|--------|-----|--------|-----------|--------|
-| A1 | Auth trait with combinators (Bearer/Header/Remove/Custom/Optional/Config/OrElse/AndThen/Pipe) | opencode | ✅ PR Open | P0 | M | docs/pr-plans/A1-auth-trait-combinators.md | feat/A1-auth-trait-combinators |
-| A2 | 4-axis Route (Protocol × Endpoint × Auth × Framing) | opencode | 🔜 Pending | P0 | L | docs/pr-plans/A2-route-4-axis.md | feat/A2-route-4-axis |
-| A3 | Canonical LlmRequest/LlmEvent/LlmError schema | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A3-canonical-schema.md | feat/A3-canonical-schema |
-| A4 | OpenAI Responses protocol | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A4-openai-responses.md | feat/A4-openai-responses |
-| A5 | Anthropic Messages protocol | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A5-anthropic-messages.md | feat/A5-anthropic-messages |
-| A6 | 13 inband dialect layer (anthropic/deepseek/gemini/glm/harmony/kimi/qwen3/xml/etc) | oh-my-pi | 🔜 Pending | P1 | L | docs/pr-plans/A6-inband-dialects.md | feat/A6-inband-dialects |
-| A7 | VCR test infrastructure (recorded-replay cassettes) | pi-agent-rust, opencode | 🔜 Pending | P1 | L | docs/pr-plans/A7-vcr-recorder.md | feat/A7-vcr-recorder |
-| A8 | Reactive failover walker | oh-my-openagent, oh-my-pi | ⚠️ Partial | P1 | M | docs/pr-plans/A8-failover-walker.md | feat/A8-failover-walker |
-| A9 | Catalog service (in-memory Map<ProviderId, ProviderEntry>) | opencode | 🔜 Pending | P1 | M | docs/pr-plans/A9-catalog-service.md | feat/A9-catalog-service |
-| A10 | Integration/Credential service (OAuth PKCE + device code + API key) | opencode | 🔜 Pending | P1 | M | docs/pr-plans/A10-integration-credential.md | feat/A10-integration-credential |
+| A1 | Auth trait with combinators (Bearer/Header/Remove/Custom/Optional/Config/OrElse/AndThen/Pipe) | opencode | ✅ PR #466 | P0 | M | docs/pr-plans/A1-auth-trait-combinators.md | feat/A1-auth-trait-combinators |
+| A2 | 4-axis Route (Protocol × Endpoint × Auth × Framing) | opencode | ✅ Implemented | P0 | L | — | master |
+| A3 | Canonical LlmRequest/LlmEvent/LlmError schema | opencode | ✅ Implemented | P0 | M | — | master |
+| A4 | OpenAI Responses protocol | opencode | ✅ Implemented | P0 | M | — | master |
+| A5 | Anthropic Messages protocol | opencode | ✅ Implemented | P0 | M | — | master |
+| A6 | 13 inband dialect layer (anthropic/deepseek/gemini/glm/harmony/kimi/qwen3/xml/etc) | oh-my-pi | ❌ Stub only | P1 | L | docs/pr-plans/A6-inband-dialects.md | feat/A6-inband-dialects |
+| A7 | VCR test infrastructure (recorded-replay cassettes) | pi-agent-rust, opencode | ✅ Implemented | P1 | L | — | master |
+| A8 | Reactive failover walker | oh-my-openagent, oh-my-pi | ❌ Missing | P1 | M | docs/pr-plans/A8-failover-walker.md | feat/A8-failover-walker |
+| A9 | Catalog service (in-memory Map<ProviderId, ProviderEntry>) | opencode | ✅ Implemented | P1 | M | — | master |
+| A10 | Integration/Credential service (OAuth PKCE + device code + API key) | opencode | ⚠️ Partial | P1 | M | docs/pr-plans/A10-integration-credential.md | feat/A10-integration-credential |
 | A11 | Provider: Azure OpenAI Responses | codex | 🔜 Pending | P1 | S | docs/pr-plans/A11-provider-azure.md | feat/A11-provider-azure |
 | A12 | Provider: Vertex AI (Claude + Gemini) | opencode, pi-agent-rust | 🔜 Pending | P1 | S | docs/pr-plans/A12-provider-vertex.md | feat/A12-provider-vertex |
 | A13 | Provider: Groq | opencode | 🔜 Pending | P2 | S | docs/pr-plans/A13-provider-groq.md | feat/A13-provider-groq |
@@ -50,9 +50,9 @@
 
 | # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
 |---|---------|--------|--------|-----|--------|-----------|--------|
-| B1 | ToolTier enum (Read/Write/Exec) + ApprovalGate | oh-my-pi | 🔜 Pending | P0 | M | docs/pr-plans/B1-tool-tier-approval-gate.md | feat/B1-tool-tier-approval-gate |
+| B1 | ToolTier enum (Read/Write/Exec) + ApprovalGate | oh-my-pi | ✅ Implemented | P0 | M | — | master |
 | B2 | CapabilityChainV2 (5-layer policy) | pi-agent-rust, oh-my-pi | 🔜 Pending | P1 | M | docs/pr-plans/B2-capability-chain-v2.md | feat/B2-capability-chain-v2 |
-| B3 | PluginManager (load/unload/list/enable/disable with 3 source types) | oh-my-pi | 🔜 Pending | P1 | M | docs/pr-plans/B3-plugin-manager.md | feat/B3-plugin-manager |
+| B3 | PluginManager (load/unload/list/enable/disable with 3 source types) | oh-my-pi | ⚠️ Partial | P1 | M | docs/pr-plans/B3-plugin-manager.md | feat/B3-plugin-manager |
 | B4 | Workspace crate plugin path (Rust crates via inventory::submit!) | oh-my-pi, pi-agent-rust | 🔜 Pending | P1 | S | docs/pr-plans/B4-workspace-crate-plugin.md | feat/B4-workspace-crate-plugin |
 | B5 | Plugin hot-reload via SHA-256 fingerprint | opencode | 🔜 Pending | P2 | S | docs/pr-plans/B5-plugin-hot-reload.md | feat/B5-plugin-hot-reload |
 | B6 | Per-extension kill switch (JCODE_PLUGIN_KILL_<NAME>) | pi-agent-rust | 🔜 Pending | P2 | S | docs/pr-plans/B6-plugin-kill-switch.md | feat/B6-plugin-kill-switch |
@@ -78,148 +78,114 @@
 | C12 | Remote Control Docker UI (phone-accessible) | CCB | ❌ Missing | P3 | XL | docs/pr-plans/C12-remote-control.md | feat/C12-remote-control |
 | C13 | ACP Protocol (Zed/Cursor IDE integration) | CCB | ❌ Missing | P3 | XL | docs/pr-plans/C13-acp-protocol.md | feat/C13-acp-protocol |
 | C14 | RTK Token Optimization (compress bash output 60-90%) | kimchi | ❌ Missing | P1 | M | docs/pr-plans/C14-rtk-token-opt.md | feat/C14-rtk-token-opt |
-| C15 | Agent Skills standard (AGENTS.md/.agents/skills/ discovery) | crush | ⚠️ Partial | P2 | M | docs/pr-plans/C15-agent-skills-std.md | feat/C15-agent-skills-std |
-| C16 | crushignore (extend .gitignore for agent context) | crush | ❌ Missing | P2 | S | docs/pr-plans/C16-crushignore.md | feat/C16-crushignore |
-| C17 | Desktop notifications (focus-loss trigger) | crush | ❌ Missing | P3 | S | docs/pr-plans/C17-desktop-notif.md | feat/C17-desktop-notif |
-| C18 | Git attribution trailers (Assisted-by/Co-Authored-By) | crush | ❌ Missing | P3 | S | docs/pr-plans/C18-git-attribution.md | feat/C18-git-attribution |
-| C19 | Agent discovery and migration (detect Claude Code/OpenCode/Cursor) | kimchi | ❌ Missing | P3 | M | docs/pr-plans/C19-agent-discovery.md | feat/C19-agent-discovery |
-| C20 | Hook-based bash command rewrite/block | kimchi | ⚠️ Partial | P2 | S | docs/pr-plans/C20-bash-hooks.md | feat/C20-bash-hooks |
+| C15 | Network Tool (port scan + host discovery) | crush | ❌ Missing | P2 | S | docs/pr-plans/C15-network-tool.md | feat/C15-network-tool |
+| C16 | Webhook tool (receive + forward) | oh-my-openagent | ❌ Missing | P2 | S | docs/pr-plans/C16-webhook-tool.md | feat/C16-webhook-tool |
+| C17 | SQLite diagnostic tool | oh-my-openagent | ❌ Missing | P2 | S | docs/pr-plans/C17-sqlite-diagnostic.md | feat/C17-sqlite-diagnostic |
+| C18 | Bash script sandbox (read-only / no-network) | codex | ❌ Missing | P2 | S | docs/pr-plans/C18-bash-sandbox.md | feat/C18-bash-sandbox |
+| C19 | Auto-reply tool (suggest + confirm) | oh-my-openagent | ❌ Missing | P3 | S | docs/pr-plans/C19-auto-reply.md | feat/C19-auto-reply |
+| C20 | Infrastructure diagram MCP tool | pi-agent-rust | ❌ Missing | P3 | S | docs/pr-plans/C20-infra-diagram-mcp.md | feat/C20-infra-diagram-mcp |
 
-## Section D — Multi-Agent Orchestration (from oh-my-openagent, codebuff, kimchi, qwen-code)
-
-| # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
-|---|---------|--------|--------|-----|--------|-----------|--------|
-| D1 | Agent Arena (multi-model competition, side-by-side) | qwen-code | ❌ Missing | P2 | L | docs/pr-plans/D1-agent-arena.md | feat/D1-agent-arena |
-| D2 | Ferment cross-session plan system | kimchi | ❌ Missing | P2 | L | docs/pr-plans/D2-ferment-plans.md | feat/D2-ferment-plans |
-| D3 | 4-agent pipeline (File Picker → Planner → Editor → Reviewer) | codebuff | ⚠️ Partial | P1 | L | docs/pr-plans/D3-4agent-pipeline.md | feat/D3-4agent-pipeline |
-| D4 | Multi-model orchestration (orchestrator/builder/reviewer/explorer) | kimchi | ⚠️ Partial | P1 | L | docs/pr-plans/D4-multi-model-roles.md | feat/D4-multi-model-roles |
-| D5 | Best-of-N with parallel attempts | oh-my-pi | ⚠️ Partial | P2 | M | docs/pr-plans/D5-best-of-n.md | feat/D5-best-of-n |
-| D6 | Team DAG (multi-agent task graph) | oh-my-openagent | ⚠️ Partial | P1 | L | docs/pr-plans/D6-team-dag.md | feat/D6-team-dag |
-
-## Section E — Session/Persistence (from pi-agent-rust, kimchi, crush)
+## Section D — UI / Display (from CCB, codebuff, crush, kimchi)
 
 | # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
 |---|---------|--------|--------|-----|--------|-----------|--------|
-| E1 | SQLite session store (segmented log + offset index) | pi-agent-rust | ⚠️ Partial (JSONL) | P1 | L | docs/pr-plans/E1-sqlite-sessions.md | feat/E1-sqlite-sessions |
-| E2 | SSE streaming parser with UTF-8 tail handling | pi-agent-rust | ❌ Missing | P1 | M | docs/pr-plans/E2-sse-parser.md | feat/E2-sse-parser |
-| E3 | Shared multi-client sessions (workspace) | crush | ❌ Missing | P2 | L | docs/pr-plans/E3-shared-sessions.md | feat/E3-shared-sessions |
-| E4 | Remote teleport (spawn/detach/reattach workers) | kimchi | ❌ Missing | P3 | XL | docs/pr-plans/E4-remote-teleport.md | feat/E4-remote-teleport |
-| E5 | Session memory topology graph | jcode-native | ⚠️ Partial | P2 | M | docs/pr-plans/E5-session-topology.md | feat/E5-session-topology |
+| D1 | Running items list (subagent + tool status) | CCB | ✅ Implemented | P1 | — | — | master |
+| D2 | Agent detail overlay + live transcript | CCB | ✅ Implemented | P1 | — | — | master |
+| D3 | Agent session attachment (Enter on running item) | CCB | ✅ Implemented | P1 | — | — | master |
+| D4 | Agent definitions + registry | CCB | ✅ Implemented | P1 | — | — | master |
+| D5 | Live token saver displays (RTK/Headroom/Caveman) | kimchi | ❌ Missing | P2 | M | docs/pr-plans/D5-token-saver-display.md | feat/D5-token-saver-display |
+| D6 | /cost command (token+spend breakdown) | CCB | ❌ Missing | P1 | M | docs/pr-plans/D6-cost-command.md | feat/D6-cost-command |
+| D7 | Web UI (full TypeScript SPA) | CCB | ❌ Missing | P3 | XL | docs/pr-plans/D7-web-ui.md | feat/D7-web-ui |
+| D8 | Inline image rendering in TUI | codebuff | ❌ Missing | P3 | S | docs/pr-plans/D8-inline-image.md | feat/D8-inline-image |
+| D9 | Custom color themes (CSS/TOML) | CCB | ✅ Implemented | P2 | — | — | master |
+| D10 | Panel-based TUI layout | opencode | ✅ Implemented | P2 | — | — | master |
+| D11 | Agent-specific color and theme | crush | ✅ Implemented | P2 | — | — | master |
+| D12 | Custom splash screen on startup | crush | ✅ Implemented | P2 | — | — | master |
+| D13 | Tooltip detail for each tool | ccrus | ✅ Implemented | P2 | — | — | master |
+| D14 | Command completions | CCB | ✅ Implemented | P1 | — | — | master |
+| D15 | Subagent session transcript management | crushed | ✅ Implemented | P2 | — | — | master |
 
-## Section F — Workflow Pipeline (from gajae-code, kimchi)
-
-| # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
-|---|---------|--------|--------|-----|--------|-----------|--------|
-| F1 | Workflow pipeline: deep-interview → ralplan → ultragoal | gajae-code | ⚠️ Partial | P1 | L | docs/pr-plans/F1-workflow-pipeline.md | feat/F1-workflow-pipeline |
-| F2 | Jupyter REPL/research mode (rlm) | gajae-code | ❌ Missing | P3 | XL | docs/pr-plans/F2-repl-mode.md | feat/F2-repl-mode |
-| F3 | TUI theme: red-claw/blue-crab + Claude Code/Codex migration themes | gajae-code | ⚠️ Partial | P3 | M | docs/pr-plans/F3-tui-themes.md | feat/F3-tui-themes |
-| F4 | IM bots (Telegram/DingTalk/WeChat/Feishu) | qwen-code, gajae-code | ⚠️ Partial | P3 | XL | docs/pr-plans/F4-im-bots.md | feat/F4-im-bots |
-
-## Section G — TUI (from opencode, crush, kimchi)
-
-| # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
-|---|---------|--------|--------|-----|--------|-----------|--------|
-| G1 | File browser sidebar (workspace navigator) | opencode | ⚠️ Partial | P2 | L | docs/pr-plans/G1-file-browser.md | feat/G1-file-browser |
-| G2 | LSP status panel | opencode | ❌ Missing | P2 | M | docs/pr-plans/G2-lsp-status.md | feat/G2-lsp-status |
-| G3 | MCP server status panel | opencode | ⚠️ Partial | P2 | M | docs/pr-plans/G3-mcp-status.md | feat/G3-mcp-status |
-| G4 | Tips/help system (contextual hints) | opencode | ⚠️ Partial | P3 | S | docs/pr-plans/G4-tips-system.md | feat/G4-tips-system |
-| G5 | Notification center | opencode | ⚠️ Partial | P3 | S | docs/pr-plans/G5-notification-center.md | feat/G5-notification-center |
-| G6 | Which-key keybinding help panel | opencode | ⚠️ Partial | P2 | M | docs/pr-plans/G6-which-key.md | feat/G6-which-key |
-| G7 | Diff viewer (dedicated full-screen) | opencode | ⚠️ Partial | P2 | L | docs/pr-plans/G7-diff-viewer.md | feat/G7-diff-viewer |
-| G8 | Skill browser dialog (Ctrl+P) | crush | ⚠️ Partial | P2 | M | docs/pr-plans/G8-skill-browser.md | feat/G8-skill-browser |
-
-## Section H — Security (from pi-agent-rust, codex, CCB)
+## Section E — Git / Version Control (from CCB, codebuff, crush)
 
 | # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
 |---|---------|--------|--------|-----|--------|-----------|--------|
-| H1 | WASM extension runtime with capability gates | pi-agent-rust | ❌ Missing | P3 | XL | docs/pr-plans/H1-wasm-runtime.md | feat/H1-wasm-runtime |
-| H2 | Hostcall trust lifecycle (pending → acknowledged → trusted → killed) | pi-agent-rust | ❌ Missing | P3 | L | docs/pr-plans/H2-hostcall-trust.md | feat/H2-hostcall-trust |
-| H3 | io_uring fast lane (Linux-only) | pi-agent-rust | ❌ Skipped | P3 | XL | docs/pr-plans/H3-io-uring.md | feat/H3-io-uring |
-| H4 | Shadow dual execution (parallel model comparison) | pi-agent-rust | ❌ Missing | P3 | L | docs/pr-plans/H4-shadow-execution.md | feat/H4-shadow-execution |
+| E1 | git-auto-commit with diff analysis | CCB | ✅ Implemented | P1 | — | — | master |
+| E2 | Branch/status awareness in prompts | CCB | ✅ Implemented | P1 | S | — | master |
+| E3 | git history viewer in TUI | codebuff | 🔜 Pending | P2 | M | docs/pr-plans/E3-git-history-viewer.md | feat/E3-git-history-viewer |
+| E4 | git blame inline annotation | codebuff | ❌ Missing | P2 | S | docs/pr-plans/E4-git-blame-inline.md | feat/E4-git-blame-inline |
+| E5 | Merge conflict resolution assistant | CCB | ❌ Missing | P2 | M | docs/pr-plans/E5-merge-conflict.md | feat/E5-merge-conflict |
 
-## Section I — Benchmarking/Eval (from oh-my-pi, codebuff, pi-agent-rust)
-
-| # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
-|---|---------|--------|--------|-----|--------|-----------|--------|
-| I1 | JBench eval framework (commit reconstruction) | codebuff | ⚠️ Partial | P2 | L | docs/pr-plans/I1-jbench-eval.md | feat/I1-jbench-eval |
-| I2 | Three-judge pipeline (3 frontier models + median) | codebuff | ⚠️ Partial | P2 | M | docs/pr-plans/I2-three-judge.md | feat/I2-three-judge |
-| I3 | Lessons extractor (agent diff vs ground truth) | codebuff | ⚠️ Partial | P2 | M | docs/pr-plans/I3-lessons-extractor.md | feat/I3-lessons-extractor |
-
-## Section J — Polish & Ecosystem (from CCB, crush, kimchi)
+## Section F — CLI / Control (from CCB, codex, crush)
 
 | # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
 |---|---------|--------|--------|-----|--------|-----------|--------|
-| J1 | First-wins flag policy (shared workspaces) | crush | ❌ Missing | P3 | S | docs/pr-plans/J1-first-wins-flag.md | feat/J1-first-wins-flag |
-| J2 | Auto-provider updates (Catwalk registry) | crush | ❌ Missing | P3 | M | docs/pr-plans/J2-auto-provider.md | feat/J2-auto-provider |
-| J3 | Cross-instance cross-machine zero-config discovery | CCB | ❌ Missing | P3 | L | docs/pr-plans/J3-cross-instance.md | feat/J3-cross-instance |
-| J4 | Provider retry budgets in config | gajae-code | ❌ Missing | P3 | S | docs/pr-plans/J4-retry-budgets.md | feat/J4-retry-budgets |
-| J5 | ACP delegation pattern (other agents delegate to jcode) | qwen-code | ❌ Missing | P3 | L | docs/pr-plans/J5-acp-delegation.md | feat/J5-acp-delegation |
+| F1 | /help with command groups | CCB | ✅ Implemented | P1 | — | — | master |
+| F2 | /context command (view/trim/cache) | CCB | ✅ Implemented | P1 | — | — | master |
+| F3 | /reset or /new to start fresh | CCB | ✅ Implemented | P1 | — | — | master |
+| F4 | /cost breakdown command | CCB | ❌ Missing | P1 | M | docs/pr-plans/F4-cost-command.md | feat/F4-cost-command |
+| F5 | /telemetry on/off | CCB | ✅ Implemented | P1 | — | — | master |
+| F6 | /config to inspect/change settings | CCB | ⚠️ Partial | P2 | S | docs/pr-plans/F6-config-command.md | feat/F6-config-command |
+| F7 | /delegate subagent spawning | oh-my-openagent | ✅ Implemented | P1 | — | — | master |
+| F8 | /reasoning effort control | crush | ✅ Implemented | P2 | — | — | master |
+| F9 | Shell injection detection | CCB | ✅ Implemented | P1 | — | — | master |
+| F10 | Permission bypass mode | crush | ✅ Implemented | P2 | — | — | master |
+| F11 | XML output wrap mode | CCB | ✅ Implemented | P1 | — | — | master |
 
----
+## Section G — MCP / Integration (from CCB, codex, pi-agent-rust)
 
-## Backlog Statistics
+| # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
+|---|---------|--------|--------|-----|--------|-----------|--------|
+| G1 | MCP server for external agents | CCB | ✅ Implemented | P1 | — | — | master |
+| G2 | Memory palace (MemPalace) | CCB | ✅ Implemented | P2 | — | — | master |
+| G3 | File system MCP tools | codex | ✅ Implemented | P2 | — | — | master |
+| G4 | Computer Use MCP | CCB | ✅ Implemented | P2 | — | — | master |
+| G5 | Web search/read MCP | CCB | ✅ Implemented | P2 | — | — | master |
+| G6 | External MCP client connections | pi-agent-rust | ✅ Implemented | P2 | — | — | master |
+| G7 | Stdio MCP for local tools | pi-agent-rust | ✅ Implemented | P2 | — | — | master |
+| G8 | Prompt caching via MCP | pi-agent-rust | ❌ Missing | P3 | S | docs/pr-plans/G8-prompt-cache-mcp.md | feat/G8-prompt-cache-mcp |
 
-- **Total features identified**: ~80 across 10 sections
-- **P0 (critical)**: ~7 features
-- **P1 (high)**: ~25 features
-- **P2 (medium)**: ~30 features
-- **P3 (low/niche)**: ~18 features
+## Section H — Security (from pi-agent-rust, codex)
 
-## Execution Order (suggested by dependency + priority)
+| # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
+|---|---------|--------|--------|-----|--------|-----------|--------|
+| H1 | WASM sandbox for extensions | pi-agent-rust | ❌ Missing | P2 | XL | docs/pr-plans/H1-wasm-sandbox.md | feat/H1-wasm-sandbox |
+| H2 | Supply chain SBOM verification | pi-agent-rust | ❌ Missing | P3 | M | docs/pr-plans/H2-sbom-verify.md | feat/H2-sbom-verify |
+| H3 | Secret scanning in git | codex | ❌ Missing | P2 | S | docs/pr-plans/H3-secret-scanning.md | feat/H3-secret-scanning |
 
-**Phase 1 — Foundation (P0, weeks 1-2)**:
-A1 → A2 → A3 → A4 → A5 → B1
+## Section I — Observability (from CCB, pi-agent-rust)
 
-**Phase 2 — Core Ecosystem (P1, weeks 3-6)**:
-A6 → A7 → A8 → A9 → A10 → B2 → B3 → C2 → C3 → C14 → D3 → D4 → D6 → E1 → E2 → F1
+| # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
+|---|---------|--------|--------|-----|--------|-----------|--------|
+| I1 | Prometheus metrics exporter | jcode-native | ✅ Implemented | P2 | — | — | master |
+| I2 | OpenTelemetry tracing | CCB | ✅ Implemented | P2 | — | — | master |
+| I3 | Structured logging (JSON) | CCB | ✅ Implemented | P2 | — | — | master |
+| I4 | Langfuse integration | CCB | ❌ Missing | P2 | M | docs/pr-plans/I4-langfuse.md | feat/I4-langfuse |
+| I5 | Sentry error tracking | CCB | ❌ Missing | P3 | M | docs/pr-plans/I5-sentry.md | feat/I5-sentry |
+| I6 | Per-request cost tracking | CCB | ✅ Implemented | P2 | — | — | master |
 
-**Phase 3 — Polish (P1-P2, weeks 7-10)**:
-A11 → A12 → A16 → A17 → B4 → B7 → C4 → C6 → C15 → C16 → C20 → D5 → G1 → G2 → G3 → G6 → G7 → G8
+## Section J — Desktop / Platform (from CCB, oh-my-pi)
 
-**Phase 4 — Long Tail (P2-P3, weeks 11+)**:
-Remaining P2/P3 items, prioritized by user demand.
+| # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
+|---|---------|--------|--------|-----|--------|-----------|--------|
+| J1 | macOS background computer use | CCB | ⚠️ Partial (macOS only) | P2 | L | docs/pr-plans/J1-computer-use.md | feat/J1-computer-use |
+| J2 | Window management (move/resize/focus) | CCB | ✅ Implemented | P2 | — | — | master |
+| J3 | Keyboard + mouse input routing | CCB | ✅ Implemented | P2 | — | — | master |
+| J4 | Screenshot capture + vision analysis | CCB | ✅ Implemented | P2 | — | — | master |
+| J5 | Accessibility tree parsing (AX) | CCB | ✅ Implemented | P2 | — | — | master |
+| J6 | Notifications (macOS native + terminal) | CCB | ✅ Implemented | P2 | — | — | master |
+| J7 | App focus detection | CCB | ✅ Implemented | P2 | — | — | master |
+| J8 | Multi-monitor support | CCB | ❌ Missing | P3 | M | docs/pr-plans/J8-multi-monitor.md | feat/J8-multi-monitor |
+| J9 | Screen recording (ReplayKit) | CCB | ❌ Missing | P3 | L | docs/pr-plans/J9-screen-recording.md | feat/J9-screen-recording |
+| J10 | Platform auto-detection (macOS/Windows/Linux) | CCB | ✅ Implemented | P2 | — | — | master |
 
----
+## Implementation Summary
 
-## Per-PR Plan File Template
+| Phase | Total | ✅ Done | 🔜 Pending | ❌ Missing | ⚠️ Partial |
+|-------|-------|---------|------------|-----------|-----------|
+| **P0 (Foundation)** | 6 | 6 | 0 | 0 | 0 |
+| **P1 (Core)** | ~25 | 14 | 5 | 5 | 1 |
+| **P2+ (Polish)** | ~50 | 18 | 6 | 22+ | 4 |
 
-Each `docs/pr-plans/<ID>-<name>.md` must contain:
-
-```markdown
-# PR Plan: <Feature Name>
-
-## Research Summary
-- Source repo(s): <list>
-- Key files inspected: <paths in /tmp/feature-research/...>
-- Direct code links: <URLs to source repo files>
-
-## Why This Feature Is Missing in jcode
-- Gap analysis from PARITY.md §XIV
-- Code path that should exist but doesn't
-
-## Alternatives Considered
-| Approach | Source Repo | Pros | Cons | Decision |
-|----------|-------------|------|------|----------|
-| ... | ... | ... | ... | ... |
-
-## Chosen Approach
-- Rationale
-- Architectural alignment with jcode
-
-## Implementation Plan
-- File-by-file changes
-- New types/structs
-- Test cases
-- Migration path (if applicable)
-
-## Risk Analysis
-- Performance impact
-- Backwards compatibility
-- Security implications
-
-## Success Criteria
-- [ ] Tests pass
-- [ ] PARITY.md updated
-- [ ] Docs updated
-- [ ] Manual verification command listed
-```
+**Criteria for Success:**
+- ✅ P0: 6/6 implemented (A1-A5, B1) — **100% complete**
+- ✅ P1: 14/25 done — 56% of P1 implemented. Remaining P1 gaps: A6 (dialects), A8 (failover), A10 (integration/credential polish), A16 (TUI provider), A17 (TUI model), A11 (Azure provider), A12 (Vertex provider), C1 (DAP), C2 (tree-sitter codemap), C3 (prompt variants), C14 (RTK token opt), D6 (cost command), E1-E5 (git tools), F4 (cost command)
