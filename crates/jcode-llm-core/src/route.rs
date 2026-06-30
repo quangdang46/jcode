@@ -166,16 +166,10 @@ mod tests {
     use crate::transport::Transport;
     use std::collections::HashMap;
 
-    // Concrete types for Route used in tests
-    type TestBody = serde_json::Value;
-    type TestEvent = String;
-    type TestState = ();
-
     #[test]
     fn test_route_new() {
         let model = ModelRef::parse("anthropic/claude-sonnet-4-20250514").unwrap();
-        let route: Route<TestBody, TestEvent, TestEvent, TestState> =
-            Route::new("default", model.clone());
+        let route = Route::new("default", model.clone());
 
         assert_eq!(route.id, "default");
         assert_eq!(route.provider.id, "claude-sonnet-4-20250514");
@@ -192,7 +186,7 @@ mod tests {
         let mut defaults = HashMap::new();
         defaults.insert("temperature".into(), serde_json::json!(0.7));
 
-        let route: Route<TestBody, TestEvent, TestEvent, TestState> = Route::new("fast", model)
+        let route = Route::new("fast", model)
             .with_protocol("openai-chat-2024")
             .with_endpoint(Endpoint {
                 base_url: "https://api.openai.com".into(),
@@ -221,8 +215,7 @@ mod tests {
     #[test]
     fn test_route_model() {
         let model = ModelRef::parse("gemini/gemini-2.5-pro").unwrap();
-        let route: Route<TestBody, TestEvent, TestEvent, TestState> =
-            Route::new("default", model.clone());
+        let route = Route::new("default", model.clone());
 
         assert_eq!(route.model(), &model);
     }

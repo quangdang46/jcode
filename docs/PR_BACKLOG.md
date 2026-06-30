@@ -26,7 +26,7 @@
 
 | # | Feature | Source | Status | Pri | Effort | Plan File | Branch |
 |---|---------|--------|--------|-----|--------|-----------|--------|
-| A1 | Auth trait with combinators (Bearer/Header/Remove/Custom/Optional/Config/OrElse) | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A1-auth-trait-combinators.md | feat/A1-auth-trait-combinators |
+| A1 | Auth trait with combinators (Bearer/Header/Remove/Custom/Optional/Config/OrElse/AndThen/Pipe) | opencode | ✅ PR Open | P0 | M | docs/pr-plans/A1-auth-trait-combinators.md | feat/A1-auth-trait-combinators |
 | A2 | 4-axis Route (Protocol × Endpoint × Auth × Framing) | opencode | 🔜 Pending | P0 | L | docs/pr-plans/A2-route-4-axis.md | feat/A2-route-4-axis |
 | A3 | Canonical LlmRequest/LlmEvent/LlmError schema | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A3-canonical-schema.md | feat/A3-canonical-schema |
 | A4 | OpenAI Responses protocol | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A4-openai-responses.md | feat/A4-openai-responses |

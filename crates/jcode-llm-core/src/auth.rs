@@ -53,6 +53,33 @@ impl Auth for Box<dyn Auth> {
     }
 }
 
+/// Chains two auth strategies sequentially — runs `self` first, then `other`.
+/// Both must succeed for the combined auth to succeed.
+///
+/// Analogous to `andThen` in opencode's auth.ts combinator.
+pub struct AndThenAuth {
+    first: Box<dyn Auth>,
+    second: Box<dyn Auth>,
+}
+
+impl AndThenAuth {
+    pub fn new(first: Box<dyn Auth>, second: Box<dyn Auth>) -> Self {
+        Self { first, second }
+    }
+}
+
+#[async_trait]
+impl Auth for AndThenAuth {
+    async fn apply(&self, req: &mut Request) -> Result<(), AuthError> {
+        self.first.apply(req).await?;
+        self.second.apply(req).await
+    }
+
+    fn describe(&self) -> &str {
+        "and_then auth combinator"
+    }
+}
+
 impl dyn Auth {
     /// Combine this auth with another fallback auth.
     ///
@@ -63,6 +90,26 @@ impl dyn Auth {
             primary: self,
             fallback: other,
         }
+    }
+
+    /// Chain this auth with another that runs after it.
+    ///
+    /// The returned `AndThenAuth` runs `self`, and if it succeeds, runs `other`.
+    /// Useful for composing header injection + removal + custom logic.
+    pub fn and_then(self: Box<Self>, other: Box<dyn Auth>) -> AndThenAuth {
+        AndThenAuth::new(self, other)
+    }
+
+    /// Apply a function to this auth and return its result.
+    ///
+    /// Enables fluent chaining via the builder pattern:
+    /// ```ignore
+    /// use jcode_llm_core::auth::{bearer, Auth};
+    /// let auth: Box<dyn Auth> = Box::new(bearer("key".into()));
+    /// let auth = auth.pipe(|a| Box::new(a.and_then(Box::new(bearer("extra".into())))));
+    /// ```
+    pub fn pipe<A>(self: Box<Self>, f: impl FnOnce(Box<dyn Auth>) -> A) -> A {
+        f(self)
     }
 }
 
@@ -619,5 +666,94 @@ mod tests {
         assert_eq!(req.url, "https://example.com");
         assert!(req.headers.is_empty());
         assert!(req.body.is_none());
+    }
+
+    // -- AndThenAuth ---------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_and_then_both_succeed() {
+        let first = bearer("first-key".into());
+        let second = header("X-Custom".into(), "custom-val".into());
+        let combined = Box::new(first) as Box<dyn Auth>;
+        let combined = combined.and_then(Box::new(second));
+
+        let mut req = Request {
+            method: "GET".into(),
+            url: "https://api.example.com".into(),
+            headers: HashMap::new(),
+            body: None,
+        };
+        combined.apply(&mut req).await.unwrap();
+        assert_eq!(
+            req.headers.get("Authorization"),
+            Some(&"Bearer first-key".to_string())
+        );
+        assert_eq!(
+            req.headers.get("X-Custom"),
+            Some(&"custom-val".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_and_then_first_fails() {
+        let first = custom(|_: &mut Request| Err(AuthError::Missing));
+        let second = bearer("never-reached".into());
+        let combined = Box::new(first) as Box<dyn Auth>;
+        let combined = combined.and_then(Box::new(second));
+
+        let mut req = Request {
+            method: "GET".into(),
+            url: "https://api.example.com".into(),
+            headers: HashMap::new(),
+            body: None,
+        };
+        let err = combined.apply(&mut req).await.unwrap_err();
+        assert!(matches!(err, AuthError::Missing));
+    }
+
+    #[tokio::test]
+    async fn test_and_then_second_fails() {
+        let first = bearer("key".into());
+        let second = custom(|_: &mut Request| Err(AuthError::Invalid));
+        let combined = Box::new(first) as Box<dyn Auth>;
+        let combined = combined.and_then(Box::new(second));
+
+        let mut req = Request {
+            method: "GET".into(),
+            url: "https://api.example.com".into(),
+            headers: HashMap::new(),
+            body: None,
+        };
+        let err = combined.apply(&mut req).await.unwrap_err();
+        assert!(matches!(err, AuthError::Invalid));
+    }
+
+    #[tokio::test]
+    async fn test_and_then_describe() {
+        let first = bearer("k".into());
+        let second = bearer("k2".into());
+        let combined = Box::new(first) as Box<dyn Auth>;
+        let combined = combined.and_then(Box::new(second));
+        assert_eq!(combined.describe(), "and_then auth combinator");
+    }
+
+    // -- pipe combinator -----------------------------------------------------
+
+    #[tokio::test]
+    async fn test_pipe_transforms_auth_type() {
+        let auth: Box<dyn Auth> = Box::new(bearer("key".into()));
+        let auth = auth.pipe(|a| Box::new(a.and_then(Box::new(header("X-Extra".into(), "val".into())))));
+        let mut req = Request {
+            method: "GET".into(),
+            url: "https://api.example.com".into(),
+            headers: HashMap::new(),
+            body: None,
+        };
+        auth.apply(&mut req).await.unwrap();
+        assert_eq!(
+            req.headers.get("Authorization"),
+            Some(&"Bearer key".to_string())
+        );
+        assert_eq!(req.headers.get("X-Extra"), Some(&"val".to_string()));
     }
 }

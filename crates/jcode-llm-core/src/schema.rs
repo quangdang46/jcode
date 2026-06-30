@@ -61,7 +61,7 @@ impl std::ops::Deref for RouteId {
 }
 
 /// Reference to a specific model on a provider.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModelRef {
     pub provider_id: ProviderId,
     pub id: String,
