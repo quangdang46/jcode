@@ -33,7 +33,7 @@
 | A5 | Anthropic Messages protocol | opencode | 🔜 Pending | P0 | M | docs/pr-plans/A5-anthropic-messages.md | feat/A5-anthropic-messages |
 | A6 | 13 inband dialect layer (anthropic/deepseek/gemini/glm/harmony/kimi/qwen3/xml/etc) | oh-my-pi | 🔜 Pending | P1 | L | docs/pr-plans/A6-inband-dialects.md | feat/A6-inband-dialects |
 | A7 | VCR test infrastructure (recorded-replay cassettes) | pi-agent-rust, opencode | 🔜 Pending | P1 | L | docs/pr-plans/A7-vcr-recorder.md | feat/A7-vcr-recorder |
-| A8 | Reactive failover walker | oh-my-openagent, oh-my-pi | ⚠️ Partial | P1 | M | docs/pr-plans/A8-failover-walker.md | feat/A8-failover-walker |
+| A8 | Reactive failover walker | oh-my-openagent, oh-my-pi | ✅ Done (failover_walker.rs, 11 tests) | P1 | M | docs/pr-plans/A8-failover-walker.md | feat/A8-failover-walker |
 | A9 | Catalog service (in-memory Map<ProviderId, ProviderEntry>) | opencode | 🔜 Pending | P1 | M | docs/pr-plans/A9-catalog-service.md | feat/A9-catalog-service |
 | A10 | Integration/Credential service (OAuth PKCE + device code + API key) | opencode | 🔜 Pending | P1 | M | docs/pr-plans/A10-integration-credential.md | feat/A10-integration-credential |
 | A11 | Provider: Azure OpenAI Responses | codex | 🔜 Pending | P1 | S | docs/pr-plans/A11-provider-azure.md | feat/A11-provider-azure |
