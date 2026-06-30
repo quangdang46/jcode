@@ -2,6 +2,7 @@ pub mod anthropic;
 pub mod auth_mode;
 pub mod catalog_refresh;
 pub mod failover;
+pub mod failover_walker;
 pub mod fallback_pick;
 pub mod fingerprint;
 pub mod model_id;
