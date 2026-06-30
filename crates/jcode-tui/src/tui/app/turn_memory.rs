@@ -121,6 +121,7 @@ impl App {
             working_dir,
             keyword_prompt,
             notepad_prompt.as_deref(),
+            Some(&self.provider.model()),
         );
         self.append_current_turn_system_reminder(&mut split);
         crate::prompt::append_swarm_effort_directive(

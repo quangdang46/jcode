@@ -6,6 +6,18 @@ use std::process::Command;
 /// Default system prompt for jcode (embedded at compile time)
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("prompt/system_prompt.md");
 
+/// Model-specific system prompt variants for different LLM families.
+pub mod variant_resolver;
+
+/// Claude-optimized system prompt (includes Claude-specific guidance).
+pub const SYSTEM_PROMPT_CLAUDE: &str = include_str!("prompt/system_prompt_claude.md");
+/// GPT-optimized system prompt (includes GPT-specific guidance).
+pub const SYSTEM_PROMPT_GPT: &str = include_str!("prompt/system_prompt_gpt.md");
+/// Gemini-optimized system prompt (includes Gemini-specific guidance).
+pub const SYSTEM_PROMPT_GEMINI: &str = include_str!("prompt/system_prompt_gemini.md");
+
+pub use variant_resolver::{PromptVariant, resolve_prompt_variant, system_prompt_for_variant, system_prompt_for_model};
+
 /// Reasoning-effort sentinel that means "use the strongest reasoning the model
 /// supports, AND actively orchestrate the work with the swarm tool". Providers
 /// translate this to their strongest real effort when building API requests,
@@ -311,10 +323,14 @@ pub fn build_system_prompt_with_context_and_memory(
         None,
         None,
         None,
+        None,
     )
 }
 
 /// Build the full system prompt with working directory support for loading context files
+///
+/// `model_id` optionally specifies the active model (e.g. `"claude-opus-4-6"`) to
+/// select a model-specific prompt variant. Pass `None` to use the default prompt.
 pub fn build_system_prompt_full(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
@@ -323,10 +339,14 @@ pub fn build_system_prompt_full(
     working_dir: Option<&Path>,
     keyword_prompt: Option<String>,
     notepad_prompt: Option<&str>,
+    model_id: Option<&str>,
 ) -> (String, ContextInfo) {
-    let mut parts = vec![DEFAULT_SYSTEM_PROMPT.to_string()];
+    let system_prompt = model_id
+        .map(system_prompt_for_model)
+        .unwrap_or(DEFAULT_SYSTEM_PROMPT);
+    let mut parts = vec![system_prompt.to_string()];
     let mut info = ContextInfo {
-        system_prompt_chars: DEFAULT_SYSTEM_PROMPT.len(),
+        system_prompt_chars: system_prompt.len(),
         ..Default::default()
     };
 
@@ -412,6 +432,9 @@ pub fn build_system_prompt_full(
 
 /// Build system prompt split into static (cacheable) and dynamic parts
 /// This improves cache hit rate by keeping frequently-changing content separate
+///
+/// `model_id` optionally specifies the active model (e.g. `"claude-opus-4-6"`) to
+/// select a model-specific prompt variant. Pass `None` to use the default prompt.
 pub fn build_system_prompt_split(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
@@ -420,11 +443,15 @@ pub fn build_system_prompt_split(
     working_dir: Option<&Path>,
     keyword_prompt: Option<String>,
     notepad_prompt: Option<&str>,
+    model_id: Option<&str>,
 ) -> (SplitSystemPrompt, ContextInfo) {
-    let mut static_parts = vec![DEFAULT_SYSTEM_PROMPT.to_string()];
+    let system_prompt = model_id
+        .map(system_prompt_for_model)
+        .unwrap_or(DEFAULT_SYSTEM_PROMPT);
+    let mut static_parts = vec![system_prompt.to_string()];
     let mut dynamic_parts = Vec::new();
     let mut info = ContextInfo {
-        system_prompt_chars: DEFAULT_SYSTEM_PROMPT.len(),
+        system_prompt_chars: system_prompt.len(),
         ..Default::default()
     };
 

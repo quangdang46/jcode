@@ -159,6 +159,7 @@ impl Agent {
             working_dir.as_deref(),
             keyword_prompt,
             notepad_prompt.as_deref(),
+            Some(&self.provider.model()),
         );
 
         self.append_current_turn_system_reminder(&mut split);

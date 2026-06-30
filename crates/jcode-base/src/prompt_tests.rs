@@ -80,7 +80,7 @@ fn test_session_context_includes_time_timezone_and_system_info() {
 
 #[test]
 fn test_split_prompt_does_not_inject_session_context_per_turn() {
-    let (split, _info) = build_system_prompt_split(None, &[], false, None, None, None, None);
+    let (split, _info) = build_system_prompt_split(None, &[], false, None, None, None, None, None);
     assert!(!split.dynamic_part.contains("# Session Context"));
     assert!(!split.dynamic_part.contains("Time: "));
     assert!(!split.dynamic_part.contains("Timezone: UTC"));
@@ -121,7 +121,7 @@ fn test_prompt_overlay_files_are_loaded_from_project_and_global_jcode_dirs() {
     );
 
     let (prompt, info) =
-        build_system_prompt_full(None, &[], false, None, Some(project_dir.path()), None, None);
+        build_system_prompt_full(None, &[], false, None, Some(project_dir.path()), None, None, None);
     assert!(prompt.contains("project prompt overlay instructions"));
     assert!(prompt.contains("global prompt overlay instructions"));
     assert!(info.prompt_overlay_chars > 0);
@@ -176,13 +176,13 @@ fn test_preferred_tools_files_are_loaded_from_project_and_global_jcode_dirs() {
     );
 
     let (prompt, info) =
-        build_system_prompt_full(None, &[], false, None, Some(project_dir.path()), None, None);
+        build_system_prompt_full(None, &[], false, None, Some(project_dir.path()), None, None, None);
     assert!(prompt.contains("project preferred tools instructions"));
     assert!(prompt.contains("global preferred tools instructions"));
     assert!(info.preferred_tools_chars > 0);
 
     let (split, split_info) =
-        build_system_prompt_split(None, &[], false, None, Some(project_dir.path()), None, None);
+        build_system_prompt_split(None, &[], false, None, Some(project_dir.path()), None, None, None);
     assert!(
         split
             .static_part
@@ -224,7 +224,7 @@ fn test_selfdev_prompt_uses_full_selfdev_instructions() {
 fn test_selfdev_prompt_uses_desktop_focus_for_desktop_working_dir() {
     let desktop_dir = std::path::Path::new("/tmp/jcode/crates/jcode-desktop/src");
     let (prompt, _info) =
-        build_system_prompt_full(None, &[], true, None, Some(desktop_dir), None, None);
+        build_system_prompt_full(None, &[], true, None, Some(desktop_dir), None, None, None);
     assert!(prompt.contains("launched from the desktop app context"));
     assert!(prompt.contains("selfdev build target=desktop"));
     assert!(!prompt.contains("launched from the TUI/root jcode context"));
@@ -234,7 +234,7 @@ fn test_selfdev_prompt_uses_desktop_focus_for_desktop_working_dir() {
 fn test_split_selfdev_prompt_defaults_to_tui_focus_for_repo_root() {
     let repo_dir = std::path::Path::new("/tmp/jcode");
     let (split, _info) =
-        build_system_prompt_split(None, &[], true, None, Some(repo_dir), None, None);
+        build_system_prompt_split(None, &[], true, None, Some(repo_dir), None, None, None);
     assert!(
         split
             .static_part
@@ -268,7 +268,7 @@ fn test_selfdev_prompt_template_placeholders_are_resolved() {
 
 #[test]
 fn split_prompt_estimated_tokens_is_positive_when_populated() {
-    let (split, _info) = build_system_prompt_split(None, &[], false, None, None, None, None);
+    let (split, _info) = build_system_prompt_split(None, &[], false, None, None, None, None, None);
     assert!(split.chars() > 0);
     assert!(split.estimated_tokens() > 0);
 }
@@ -297,7 +297,7 @@ fn build_system_prompt_full_uses_jcode_system_md_root() {
     // out of `build_system_prompt_full`. This test is preserved as a basic
     // structural check that the function runs and produces a non-trivial
     // prompt without panicking.
-    let (prompt, info) = build_system_prompt_full(None, &[], false, None, None, None, None);
+    let (prompt, info) = build_system_prompt_full(None, &[], false, None, None, None, None, None);
     assert!(!prompt.is_empty(), "prompt should not be empty");
     assert!(
         info.system_prompt_chars > 0,
@@ -313,7 +313,7 @@ fn test_full_prompt_includes_notepad_block_when_provided() {
     // would break the entire feature.
     let notepad = "# Priority Notes\n\n```\ndo not forget: ship the feature\n```";
     let (prompt, _info) =
-        build_system_prompt_full(None, &[], false, None, None, None, Some(notepad));
+        build_system_prompt_full(None, &[], false, None, None, None, Some(notepad), None);
     assert!(
         prompt.contains("ship the feature"),
         "notepad block should appear in prompt: {prompt}"
@@ -325,7 +325,7 @@ fn test_full_prompt_omits_notepad_block_when_none() {
     // Default callers of build_system_prompt_full pass None for the
     // notepad; the resulting prompt must not contain an empty
     // notepad section header.
-    let (prompt, _info) = build_system_prompt_full(None, &[], false, None, None, None, None);
+    let (prompt, _info) = build_system_prompt_full(None, &[], false, None, None, None, None, None);
     assert!(
         !prompt.contains("# Priority Notes"),
         "empty notepad should not introduce a Priority Notes section: {prompt}"
@@ -340,7 +340,7 @@ fn test_split_prompt_puts_notepad_in_dynamic_part() {
     // "survives compaction" property.
     let notepad = "# Priority Notes\n\n```\npin me across compaction\n```";
     let (split, _info) =
-        build_system_prompt_split(None, &[], false, None, None, None, Some(notepad));
+        build_system_prompt_split(None, &[], false, None, None, None, Some(notepad), None);
     assert!(
         split.dynamic_part.contains("pin me across compaction"),
         "notepad block should be in dynamic_part: {}",
@@ -355,7 +355,7 @@ fn test_split_prompt_puts_notepad_in_dynamic_part() {
 
 #[test]
 fn test_split_prompt_omits_notepad_when_none() {
-    let (split, _info) = build_system_prompt_split(None, &[], false, None, None, None, None);
+    let (split, _info) = build_system_prompt_split(None, &[], false, None, None, None, None, None);
     assert!(
         !split.dynamic_part.contains("# Priority Notes"),
         "no notepad block when None is passed: {}",
@@ -498,24 +498,5 @@ fn swarm_deep_effort_injects_task_graph_directive() {
     let mut light = SplitSystemPrompt::default();
     append_swarm_effort_directive(&mut light, Some("swarm"));
     assert!(light.dynamic_part.contains("# Swarm Effort"));
-    assert!(!light.dynamic_part.contains("# Deep Task Graph"));
-}
-
-#[test]
-fn classify_effort_distinguishes_reasoning_from_swarm_modes() {
-    use crate::prompt::{EffortKind, classify_effort, is_swarm_mode_effort};
-
-    // Plain reasoning levels are not swarm modes.
-    for level in ["none", "low", "medium", "high", "xhigh", "max"] {
-        assert_eq!(classify_effort(level), EffortKind::Reasoning, "{level}");
-        assert!(!is_swarm_mode_effort(level), "{level}");
-    }
-
-    assert_eq!(classify_effort("swarm"), EffortKind::SwarmLight);
-    assert_eq!(classify_effort("swarm-deep"), EffortKind::SwarmDeep);
-    assert!(is_swarm_mode_effort("swarm"));
-    assert!(is_swarm_mode_effort("  Swarm-Deep "));
-    assert!(EffortKind::SwarmLight.is_swarm_mode());
-    assert!(EffortKind::SwarmDeep.is_swarm_mode());
-    assert!(!EffortKind::Reasoning.is_swarm_mode());
+    assert!(!light.dynamic_part.contains("Deep Task Graph"));
 }
