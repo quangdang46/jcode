@@ -826,20 +826,31 @@ fn coerce_dsml_value(raw: &str, is_string: bool) -> serde_json::Value {
 }
 
 fn partial_suffix_overlap_any(buf: &str, tags: &[&str]) -> usize {
-    let buf_lower = buf.to_lowercase();
+    let buf_chars: Vec<char> = buf.to_lowercase().chars().collect();
+    let buf_char_len = buf_chars.len();
     let mut max_hold = 0usize;
     for tag in tags {
-        let tag_lower = tag.to_lowercase();
-        let min_len = buf_lower.len().min(tag_lower.len());
-        if buf_lower.len() < tag_lower.len() && tag_lower.starts_with(&buf_lower) {
+        let tag_chars: Vec<char> = tag.to_lowercase().chars().collect();
+        let tag_char_len = tag_chars.len();
+        if buf_char_len < tag_char_len && tag_chars[..buf_char_len].iter().eq(buf_chars.iter()) {
+            // Buffer is a prefix of the tag — keep entire buffer
             max_hold = max_hold.max(buf.len());
-        } else if min_len > 0
-            && tag_lower[..min_len] == buf_lower[buf_lower.len() - min_len..]
-        {
-            max_hold = max_hold.max(min_len);
+        } else if buf_char_len > 0 {
+            // Check if suffix of buffer matches prefix of tag
+            let min_chars = buf_char_len.min(tag_char_len);
+            let buf_suffix = &buf_chars[buf_char_len - min_chars..];
+            let tag_prefix = &tag_chars[..min_chars];
+            if tag_prefix.iter().eq(buf_suffix.iter()) {
+                max_hold = max_hold.max(byte_len_of_chars(min_chars, buf));
+            }
         }
     }
     max_hold
+}
+
+/// Compute byte length of the first `n` chars of `s`.
+fn byte_len_of_chars(n: usize, s: &str) -> usize {
+    s.chars().take(n).map(|c| c.len_utf8()).sum()
 }
 
 // ---------------------------------------------------------------------------
@@ -949,13 +960,15 @@ mod tests {
     #[test]
     fn test_legacy_json_tool_call() {
         let mut scanner = DeepSeekInbandScanner::new(&InbandScannerOptions::default());
+        let json_payload = r#"{"city":"NYC"}"#;
         let input = format!(
-            "{}{}{}{}get_weather\n{} {{\"city\":\"NYC\"}}\n{}{}",
+            "{}{}{}{}get_weather\n{} {}\n{}{}{}",
             TOOL_CALLS_BEGIN,
             TOOL_CALL_BEGIN,
             LEGACY_TOOL_TYPE,
             TOOL_SEPARATOR,
             LEGACY_JSON_FENCE,
+            json_payload,
             CODE_FENCE,
             TOOL_CALL_END,
             TOOL_CALLS_END

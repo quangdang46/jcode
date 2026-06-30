@@ -380,8 +380,22 @@ impl AnthropicInbandScanner {
         self.args = HashMap::new();
         self.raw_block = tag.raw.clone();
         self.started = !self.name.is_empty();
+        if tag.self_closing {
+            if self.started {
+                let args_val = serde_json::Value::Object(
+                    std::mem::take(&mut self.args).into_iter().collect(),
+                );
+                events.push(InbandScanEvent::ToolEnd {
+                    id: self.id.clone(),
+                    name: self.name.clone(),
+                    arguments: args_val,
+                    raw_block: Some(self.raw_block.clone()),
+                });
+            }
+            self.reset_call(return_state);
+            return;
+        }
         self.state = ScannerState::Invoke;
-        // NOTE: Do NOT emit ToolStart per spec
     }
 
     fn start_parameter(&mut self, tag: &ParsedTag) {
