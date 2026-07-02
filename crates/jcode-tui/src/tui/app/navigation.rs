@@ -1463,6 +1463,22 @@ impl App {
             finish_mouse_event!(false, "open_link");
         }
 
+        // Click on the "N new message(s)" / "Jump to bottom" pill: follow chat bottom.
+        if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
+            && self.auto_scroll_paused
+            && super::super::ui::last_new_messages_pill_area()
+                .is_some_and(|area| {
+                    super::super::layout_utils::point_in_rect(
+                        mouse.column,
+                        mouse.row,
+                        area,
+                    )
+                })
+        {
+            self.follow_chat_bottom();
+            finish_mouse_event!(false, "new_messages_pill_click");
+        }
+
         match mouse.kind {
             MouseEventKind::ScrollUp => {
                 self.enqueue_mouse_scroll(MouseScrollTarget::Chat, -1);
@@ -1608,6 +1624,7 @@ impl App {
         self.pending_history_anchor = None;
         self.scroll_offset = 0;
         self.auto_scroll_paused = false;
+        self.new_messages_count = 0;
     }
 
     /// Record an overscroll tick (downward scroll while already pinned to the

@@ -9,6 +9,35 @@ pub(crate) use jcode_tui_tool_display::{
     canonical_tool_name, is_edit_tool_name, resolve_display_tool_name, tool_output_looks_failed,
 };
 
+/// Tool loader dot replicating the CC ToolUseLoader component.
+///
+/// Returns a `(&'static str, Color)` pair suitable for passing to
+/// `render_batch_subcall_line` or for inline rendering:
+/// - Running (`is_running=true`): blinking grey dot (600ms blink cycle).
+///   Pass `frame_visible` computed from animation elapsed time.
+/// - Error (`is_error=true`): red dot "●"
+/// - Success: green checkmark "✓"
+pub(super) fn tool_loader_dot(is_running: bool, is_error: bool, frame_visible: bool) -> (&'static str, Color) {
+    if is_running {
+        if frame_visible {
+            ("●", rgb(160, 160, 160))
+        } else {
+            // Blink off: render a space so the line layout stays stable.
+            (" ", rgb(160, 160, 160))
+        }
+    } else if is_error {
+        ("●", rgb(220, 100, 100))
+    } else {
+        ("✓", rgb(100, 180, 100))
+    }
+}
+
+/// Returns whether the loader dot blink phase should show the dot at a given
+/// animation elapsed time. Uses 600ms full cycle (300ms on, 300ms off).
+pub(super) fn tool_loader_blink_visible(elapsed: f32) -> bool {
+    ((elapsed * 1000.0) as u64 / 300) % 2 == 0
+}
+
 fn infer_bg_action_from_intent_for_display(intent: Option<&str>) -> Option<&'static str> {
     let intent = intent?.trim().to_ascii_lowercase();
     if intent.is_empty() {

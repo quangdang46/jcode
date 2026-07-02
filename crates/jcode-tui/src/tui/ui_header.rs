@@ -824,60 +824,6 @@ pub(crate) fn build_header_lines(app: &dyn TuiState, width: u16) -> Vec<Line<'st
         lines.push(auth_line.alignment(align));
     }
 
-    if let Some(goal_badge) = crate::goal::header_badge(
-        app.working_dir().as_deref().map(std::path::Path::new),
-        app.side_panel(),
-    ) {
-        lines.push(
-            Line::from(Span::styled(
-                goal_badge,
-                Style::default().fg(rgb(170, 200, 120)),
-            ))
-            .alignment(align),
-        );
-    }
-
-    let new_entries = unseen_changelog_entries();
-    if !new_entries.is_empty() && w > 20 {
-        const MAX_LINES: usize = 8;
-        let available_width = w.saturating_sub(2);
-        let display_count = new_entries.len().min(MAX_LINES);
-        let has_more = new_entries.len() > MAX_LINES;
-
-        let mut content: Vec<Line> = Vec::new();
-        for entry in new_entries.iter().take(display_count) {
-            content.push(
-                Line::from(Span::styled(
-                    format!("• {}", entry),
-                    Style::default().fg(dim_color()),
-                ))
-                .alignment(align),
-            );
-        }
-        if has_more {
-            content.push(
-                Line::from(Span::styled(
-                    format!(
-                        "  …{} more · /changelog to see all",
-                        new_entries.len() - MAX_LINES
-                    ),
-                    Style::default().fg(dim_color()),
-                ))
-                .alignment(align),
-            );
-        }
-
-        let boxed = render_rounded_box(
-            "Updates",
-            content,
-            available_width,
-            Style::default().fg(dim_color()),
-        );
-        for line in boxed {
-            lines.push(line.alignment(align));
-        }
-    }
-
     let mcps = app.mcp_servers();
     let mcp_text = if mcps.is_empty() {
         "mcp: (none)".to_string()

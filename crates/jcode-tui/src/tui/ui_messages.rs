@@ -72,9 +72,7 @@ pub(crate) fn render_assistant_message(
     lines
 }
 
-/// Render a collapsed/collapsing reasoning trace ("current" mode). The content is
-/// sentinel-wrapped dim+italic markup (reasoning lines and/or a `▸ thought for Xs`
-/// summary), so it reuses the standard markdown path that styles those runs dim.
+/// Render the full expanded reasoning content (dim+italic markdown).
 pub(crate) fn render_reasoning_message(
     msg: &DisplayMessage,
     width: u16,
@@ -86,7 +84,25 @@ pub(crate) fn render_reasoning_message(
     if centered {
         left_pad_lines_for_centered_mode(&mut lines, width);
     }
+    // Indent every line by 2 spaces for the expanded view
+    for line in &mut lines {
+        line.spans.insert(0, Span::raw("  "));
+    }
     lines
+}
+
+/// Render a collapsed reasoning block: a single dim "Thinking" line with
+/// an expand hint. Use when the user has not explicitly toggled the block.
+pub(crate) fn render_collapsed_reasoning_block(width: u16) -> Vec<Line<'static>> {
+    let centered = markdown::center_code_blocks();
+    let text = "  ∴ Thinking  · Ctrl+E to expand";
+    let mut line = Line::from(Span::styled(text.to_string(), Style::default().dim().italic()));
+    if centered {
+        let pad = (width as usize).saturating_sub(text.len()) / 2;
+        line.spans.insert(0, Span::raw(" ".repeat(pad)));
+        line.alignment = Some(ratatui::layout::Alignment::Left);
+    }
+    vec![line]
 }
 
 fn render_assistant_tool_call_lines(
@@ -1735,7 +1751,7 @@ pub(crate) fn render_tool_message(
     let (icon, icon_color) = if is_partial_batch {
         ("⚠", rgb(214, 184, 92))
     } else if is_error {
-        ("✗", rgb(220, 100, 100))
+        ("●", rgb(220, 100, 100))
     } else {
         ("✓", rgb(100, 180, 100))
     };
@@ -1932,7 +1948,7 @@ pub(crate) fn render_tool_message(
                 })
             });
             let (sub_icon, sub_icon_color) = if sub_errored {
-                ("✗", rgb(220, 100, 100))
+                ("●", rgb(220, 100, 100))
             } else {
                 ("✓", rgb(100, 180, 100))
             };

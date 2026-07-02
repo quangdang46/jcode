@@ -717,6 +717,9 @@ pub struct App {
     scroll_offset: usize,
     /// Pauses auto-scroll when user scrolls up during streaming
     auto_scroll_paused: bool,
+    /// Count of new display messages added while auto-scroll was paused.
+    /// Reset to 0 when the user scrolls back to bottom.
+    new_messages_count: usize,
     active_skill: Option<String>,
     is_processing: bool,
     // Live streaming/turn progress (text, per-turn tokens, TPS tracking).
@@ -1149,6 +1152,10 @@ pub struct App {
     // `inline_images_visible` toggle does.
     expanded_images: std::collections::HashMap<u64, super::ui::inline_image_ui::ImageExpandLevel>,
     expanded_images_version: u64,
+    /// Per-message thinking-block toggle state, keyed by
+    /// `DisplayMessage::stable_cache_hash()`. Absent entries default to
+    /// `ThinkingBlockState::Collapsed`.
+    thinking_block_states: std::collections::HashMap<crate::tui::ThinkingBlockId, crate::tui::ThinkingBlockState>,
     // Auto-hide deadline for the pinned image side pane only.
     pinned_images_auto_hide_deadline: Option<Instant>,
     pinned_images_seen_count: usize,

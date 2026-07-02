@@ -60,7 +60,7 @@ fn normalize_repaint_sensitive_notice_text(text: &str) -> String {
     text.replace("⚠️", "⚠")
 }
 
-fn command_suggestion_hint_line_count(suggestions: &[(String, &'static str)]) -> u16 {
+pub(super) fn command_suggestion_overlay_height(suggestions: &[(String, &'static str)]) -> u16 {
     if suggestions.is_empty() {
         return 0;
     }
@@ -81,21 +81,6 @@ fn command_suggestion_window_start(selected: usize, suggestion_count: usize) -> 
             .saturating_sub(app::COMMAND_SUGGESTION_VISIBLE_LIMIT)
             .min(suggestion_count.saturating_sub(app::COMMAND_SUGGESTION_VISIBLE_LIMIT))
     }
-}
-
-fn should_render_suggestions_below_input(
-    input_area: Rect,
-    input_line_count: usize,
-    suggestion_line_count: usize,
-    terminal_height: u16,
-) -> bool {
-    suggestion_line_count > 0
-        && input_area.y.saturating_add(input_area.height) < terminal_height
-        && input_area
-            .y
-            .saturating_add(input_line_count as u16)
-            .saturating_add(suggestion_line_count as u16)
-            <= terminal_height
 }
 
 fn command_suggestion_lines(
@@ -237,21 +222,52 @@ fn dim_command_color(color: Option<Color>) -> Color {
 }
 
 pub(super) fn input_hint_line_height(app: &dyn TuiState) -> u16 {
-    let suggestions = app.command_suggestions();
-    let mode = composer_mode(app.input(), app.is_remote_mode());
-    let has_suggestions = !suggestions.is_empty()
-        && matches!(mode, ComposerMode::SlashCommand | ComposerMode::Chat)
-        && (matches!(mode, ComposerMode::SlashCommand) || !app.is_processing());
-
-    if has_suggestions {
-        return command_suggestion_hint_line_count(&suggestions);
-    }
-
+    // Suggestions are rendered as an absolute floating overlay above the input,
+    // so they do not consume vertical space inside the input area.
     u16::from(
-        shell_mode_hint(mode).is_some()
+        shell_mode_hint(composer_mode(app.input(), app.is_remote_mode())).is_some()
             || app.next_prompt_new_session_armed()
             || (app.is_processing() && !app.input().is_empty()),
     )
+}
+
+pub(super) fn has_active_suggestions(app: &dyn TuiState) -> bool {
+    let suggestions = app.command_suggestions();
+    let mode = composer_mode(app.input(), app.is_remote_mode());
+    !suggestions.is_empty()
+        && matches!(mode, ComposerMode::SlashCommand | ComposerMode::Chat)
+        && (matches!(mode, ComposerMode::SlashCommand) || !app.is_processing())
+}
+
+/// Draw the command suggestion list as an absolute floating overlay above the
+/// input area. The overlay extends upward from the top of the input, so it is
+/// the caller's responsibility to compute the correct `area` (positioned above
+/// the input line).
+pub(super) fn draw_suggestion_overlay(frame: &mut Frame, app: &dyn TuiState, area: Rect) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let suggestions = app.command_suggestions();
+    if suggestions.is_empty() {
+        return;
+    }
+
+    let lines = command_suggestion_lines(app, &suggestions);
+    if lines.is_empty() {
+        return;
+    }
+
+    let paragraph = if app.centered_mode() {
+        Paragraph::new(
+            lines
+                .into_iter()
+                .map(|l| l.alignment(Alignment::Center))
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        Paragraph::new(lines)
+    };
+    frame.render_widget(paragraph, area);
 }
 
 pub(super) fn send_mode_reserved_width(app: &dyn TuiState) -> usize {
@@ -1053,7 +1069,7 @@ mod tests {
     }
 
     #[test]
-    fn command_suggestion_hint_line_count_reserves_vertical_rows() {
+    fn command_suggestion_overlay_height_reserves_vertical_rows() {
         let suggestions = vec![
             ("/help".to_string(), "Show help"),
             ("/history".to_string(), "Show history"),
@@ -1067,14 +1083,14 @@ mod tests {
         ];
 
         assert_eq!(
-            command_suggestion_hint_line_count(&suggestions),
+            command_suggestion_overlay_height(&suggestions),
             app::COMMAND_SUGGESTION_VISIBLE_LIMIT as u16
         );
         assert_eq!(
-            command_suggestion_hint_line_count(&suggestions),
+            command_suggestion_overlay_height(&suggestions),
             app::COMMAND_SUGGESTION_VISIBLE_LIMIT as u16
         );
-        assert_eq!(command_suggestion_hint_line_count(&suggestions[..1]), 1);
+        assert_eq!(command_suggestion_overlay_height(&suggestions[..1]), 1);
     }
 
     #[test]
@@ -1084,20 +1100,6 @@ mod tests {
         assert_eq!(command_suggestion_window_start(limit - 1, limit + 3), 0);
         assert_eq!(command_suggestion_window_start(limit, limit + 3), 1);
         assert_eq!(command_suggestion_window_start(limit + 2, limit + 3), 3);
-    }
-
-    #[test]
-    fn command_suggestions_render_below_when_terminal_space_remains() {
-        let input_area = Rect::new(0, 10, 80, 4);
-
-        assert!(should_render_suggestions_below_input(input_area, 1, 3, 20));
-    }
-
-    #[test]
-    fn command_suggestions_render_above_at_terminal_bottom() {
-        let input_area = Rect::new(0, 16, 80, 4);
-
-        assert!(!should_render_suggestions_below_input(input_area, 1, 3, 20));
     }
 
     #[test]
@@ -1937,10 +1939,6 @@ pub(super) fn draw_input(
     let cursor_pos = app.cursor_pos();
 
     let mode = composer_mode(input_text, app.is_remote_mode());
-    let suggestions = app.command_suggestions();
-    let has_suggestions = !suggestions.is_empty()
-        && matches!(mode, ComposerMode::SlashCommand | ComposerMode::Chat)
-        && (matches!(mode, ComposerMode::SlashCommand) || !app.is_processing());
 
     let (prompt_char, caret_color) = input_prompt(app);
     let num_str = format!("{}", next_prompt);
@@ -1965,10 +1963,9 @@ pub(super) fn draw_input(
     let mut lines: Vec<Line> = Vec::new();
     let mut hint_shown = false;
     let mut hint_line: Option<String> = None;
-    let mut suggestion_lines: Vec<Line> = Vec::new();
-    if has_suggestions {
-        suggestion_lines = command_suggestion_lines(app, &suggestions);
-    } else if let Some(shell_hint) = shell_mode_hint(mode) {
+    // Suggestions are no longer rendered inline inside the input area;
+    // they are drawn as an absolute floating overlay by draw_suggestion_overlay.
+    if let Some(shell_hint) = shell_mode_hint(mode) {
         hint_shown = true;
         hint_line = Some(shell_hint.trim().to_string());
         lines.push(Line::from(Span::styled(
@@ -2010,17 +2007,6 @@ pub(super) fn draw_input(
         );
     }
 
-    let render_suggestions_below = should_render_suggestions_below_input(
-        area,
-        all_lines.len().min(10),
-        suggestion_lines.len(),
-        frame.area().height,
-    );
-
-    if has_suggestions && !render_suggestions_below {
-        lines.extend(suggestion_lines.iter().cloned());
-    }
-
     let suggestions_offset = lines.len();
     let total_input_lines = all_lines.len();
     let visible_height = area.height as usize;
@@ -2040,15 +2026,6 @@ pub(super) fn draw_input(
         lines.push(line);
         if lines.len() >= visible_height {
             break;
-        }
-    }
-
-    if has_suggestions && render_suggestions_below {
-        for line in suggestion_lines {
-            if lines.len() >= visible_height {
-                break;
-            }
-            lines.push(line);
         }
     }
 

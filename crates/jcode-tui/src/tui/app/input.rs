@@ -2081,6 +2081,68 @@ pub(super) fn handle_global_control_shortcuts(
             });
             true
         }
+        KeyCode::Char('e') if app.input.is_empty() => {
+            let reasoning_indices: Vec<usize> = app
+                .display_messages
+                .iter()
+                .enumerate()
+                .filter(|(_, msg)| msg.role == "reasoning")
+                .map(|(i, _)| i)
+                .collect();
+            if reasoning_indices.len() == 1 {
+                let idx = reasoning_indices[0];
+                let msg = &app.display_messages[idx];
+                let h = msg.stable_cache_hash();
+                let current = app
+                    .thinking_block_states
+                    .get(&h)
+                    .copied()
+                    .unwrap_or_default();
+                let next = match current {
+                    crate::tui::ThinkingBlockState::Collapsed => {
+                        crate::tui::ThinkingBlockState::Expanded
+                    }
+                    crate::tui::ThinkingBlockState::Expanded => {
+                        crate::tui::ThinkingBlockState::Hidden
+                    }
+                    crate::tui::ThinkingBlockState::Hidden => {
+                        crate::tui::ThinkingBlockState::Collapsed
+                    }
+                };
+                app.thinking_block_states.insert(h, next);
+                app.bump_display_messages_version();
+                app.set_status_notice(match next {
+                    crate::tui::ThinkingBlockState::Collapsed => "Thinking: collapsed",
+                    crate::tui::ThinkingBlockState::Expanded => "Thinking: expanded",
+                    crate::tui::ThinkingBlockState::Hidden => "Thinking: hidden",
+                });
+            } else if reasoning_indices.is_empty() {
+                app.set_status_notice("No thinking block to toggle");
+            } else {
+                app.set_status_notice("Toggle last thinking block");
+                let msg = &app.display_messages[*reasoning_indices.last().unwrap()];
+                let h = msg.stable_cache_hash();
+                let current = app
+                    .thinking_block_states
+                    .get(&h)
+                    .copied()
+                    .unwrap_or_default();
+                let next = match current {
+                    crate::tui::ThinkingBlockState::Collapsed => {
+                        crate::tui::ThinkingBlockState::Expanded
+                    }
+                    crate::tui::ThinkingBlockState::Expanded => {
+                        crate::tui::ThinkingBlockState::Hidden
+                    }
+                    crate::tui::ThinkingBlockState::Hidden => {
+                        crate::tui::ThinkingBlockState::Collapsed
+                    }
+                };
+                app.thinking_block_states.insert(h, next);
+                app.bump_display_messages_version();
+            }
+            true
+        }
         _ => handle_control_key(app, code),
     }
 }

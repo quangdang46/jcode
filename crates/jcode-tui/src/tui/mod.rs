@@ -30,9 +30,7 @@ pub mod mermaid;
 pub(crate) mod session_facts;
 pub(crate) mod todo_panel;
 pub(crate) mod todo_reminder;
-pub mod permissions {
-    pub use jcode_tui_permissions::*;
-}
+pub mod permissions;
 mod remote_diff;
 pub mod screenshot;
 pub mod session_picker;
@@ -140,6 +138,23 @@ pub(crate) fn hash_rendered_image_anchor(
     }
 }
 
+/// Per-message state for a "Thinking" reasoning block in the transcript.
+/// Each reasoning message can be toggled independently among three states.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ThinkingBlockState {
+    /// Default: show a 1-line dim hint (the "Thinking" line with expand hint)
+    #[default]
+    Collapsed,
+    /// Show the full reasoning content indented
+    Expanded,
+    /// Render nothing for this message
+    Hidden,
+}
+
+/// Key type for the per-message thinking-block toggle map.
+/// Uses stable_cache_hash to avoid cloning the DisplayMessage when toggling.
+pub type ThinkingBlockId = u64;
+
 /// Trait for TUI state consumed by the shared renderer.
 ///
 /// This is a wide (114-method) presentation interface: the read-only surface the
@@ -188,6 +203,14 @@ pub trait TuiState {
     fn display_messages_version(&self) -> u64;
     fn streaming_text(&self) -> &str;
 
+    /// Look up the per-message thinking-block toggle state for the given
+    /// message (identified by its stable cache hash). The default returns
+    /// `Collapsed` for any unknown hash so the feature works without every
+    /// TuiState impl needing to add the field.
+    fn thinking_block_state(&self, _msg_hash: u64) -> ThinkingBlockState {
+        ThinkingBlockState::Collapsed
+    }
+
     // ---- Input ----
     fn input(&self) -> &str;
     fn cursor_pos(&self) -> usize;
@@ -220,6 +243,12 @@ pub trait TuiState {
     /// is held still.
     fn copy_selection_edge_autoscroll_active(&self) -> bool {
         false
+    }
+
+    /// Number of new display messages added while auto-scroll was paused.
+    /// Used to render the "N new message(s)" pill when scrolled up.
+    fn new_messages_count(&self) -> usize {
+        0
     }
 
     // ---- Provider ----

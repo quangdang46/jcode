@@ -533,6 +533,10 @@ impl crate::tui::TuiState for App {
         self.copy_selection_edge_autoscroll.is_some() && self.copy_selection_dragging
     }
 
+    fn new_messages_count(&self) -> usize {
+        self.new_messages_count
+    }
+
     fn provider_name(&self) -> String {
         if self.is_remote {
             self.remote_header_provider_name().unwrap_or_default()
@@ -809,6 +813,13 @@ impl crate::tui::TuiState for App {
 
     fn diff_mode(&self) -> crate::config::DiffDisplayMode {
         self.diff_mode
+    }
+
+    fn thinking_block_state(&self, msg_hash: u64) -> crate::tui::ThinkingBlockState {
+        self.thinking_block_states
+            .get(&msg_hash)
+            .copied()
+            .unwrap_or_default()
     }
 
     fn current_session_id(&self) -> Option<String> {

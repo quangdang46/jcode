@@ -131,7 +131,8 @@ use messages::get_cached_message_lines;
 #[cfg_attr(test, allow(unused_imports))]
 pub(crate) use messages::{
     render_assistant_message, render_background_task_message, render_reasoning_message,
-    render_swarm_message, render_system_message, render_tool_message, render_usage_message,
+    render_collapsed_reasoning_block, render_swarm_message, render_system_message,
+    render_tool_message, render_usage_message,
 };
 pub use pinned_ui::{
     SidePanelDebugStats, SidePanelMermaidProbe, SidePanelMermaidProbeRect,
@@ -217,6 +218,7 @@ thread_local! {
     static TEST_VISIBLE_EXPAND_EDIT_BADGE_LINE: Cell<Option<usize>> = const { Cell::new(None) };
     static TEST_PROMPT_VIEWPORT_STATE: RefCell<PromptViewportState> = RefCell::new(PromptViewportState::default());
     static TEST_COPY_VIEWPORT: RefCell<CopyViewportSnapshots> = RefCell::new(CopyViewportSnapshots::default());
+    static TEST_NEW_MESSAGES_PILL_AREA: RefCell<Option<Rect>> = const { RefCell::new(None) };
 }
 
 /// Get the last known max scroll value (from the most recent render frame).
@@ -1203,6 +1205,116 @@ pub(crate) fn last_status_area() -> Option<Rect> {
             .and_then(|snapshot| *snapshot)
     }
 }
+
+#[cfg(not(test))]
+static NEW_MESSAGES_PILL_AREA: OnceLock<Mutex<Option<Rect>>> = OnceLock::new();
+
+#[cfg(not(test))]
+fn pill_area_state() -> &'static Mutex<Option<Rect>> {
+    NEW_MESSAGES_PILL_AREA.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) fn record_new_messages_pill_area(area: Rect) {
+    #[cfg(test)]
+    {
+        TEST_NEW_MESSAGES_PILL_AREA.with(|snapshot| {
+            *snapshot.borrow_mut() = Some(area);
+        });
+        return;
+    }
+    #[cfg(not(test))]
+    {
+        if let Ok(mut snapshot) = pill_area_state().lock() {
+            *snapshot = Some(area);
+        }
+    }
+}
+
+/// Rectangle of the "N new message(s)" pill on the most recent render frame.
+/// Returns `None` if no pill was rendered.
+pub(crate) fn last_new_messages_pill_area() -> Option<Rect> {
+    #[cfg(test)]
+    {
+        return TEST_NEW_MESSAGES_PILL_AREA.with(|snapshot| *snapshot.borrow());
+    }
+    #[cfg(not(test))]
+    {
+        pill_area_state()
+            .lock()
+            .ok()
+            .and_then(|snapshot| *snapshot)
+    }
+}
+/// Render a pill reading "Jump to bottom (ctrl+End) ↓" at the bottom-center of
+/// the messages area when the user has scrolled up. Returns the pill rectangle
+/// so the click handler can hit-test it.
+fn render_jump_to_bottom_pill(
+    frame: &mut Frame,
+    messages_area: Rect,
+    total_lines: usize,
+    app: &dyn TuiState,
+) -> Option<Rect> {
+    render_new_messages_pill_impl(frame, messages_area, total_lines, app, false)
+}
+
+/// Render a pill reading "N new message(s) (ctrl+End) ↓" at the bottom-center
+/// of the messages area when new messages arrived while the user was scrolled up.
+/// Returns the pill rectangle for hit-testing.
+fn render_new_messages_pill(
+    frame: &mut Frame,
+    messages_area: Rect,
+    total_lines: usize,
+    app: &dyn TuiState,
+) -> Option<Rect> {
+    render_new_messages_pill_impl(frame, messages_area, total_lines, app, true)
+}
+
+/// Shared implementation for both pill variants.
+fn render_new_messages_pill_impl(
+    frame: &mut Frame,
+    messages_area: Rect,
+    _total_lines: usize,
+    app: &dyn TuiState,
+    has_new: bool,
+) -> Option<Rect> {
+    if messages_area.height < 3 {
+        return None;
+    }
+    let label = if has_new {
+        let count = app.new_messages_count();
+        if count == 1 {
+            "1 new message (ctrl+End) ↓".to_string()
+        } else {
+            format!("{count} new messages (ctrl+End) ↓")
+        }
+    } else {
+        "Jump to bottom (ctrl+End) ↓".to_string()
+    };
+    let label_width = label.chars().count() as u16;
+    let pill_width = label_width.saturating_add(4).min(messages_area.width);
+    let pill_x = messages_area.x + (messages_area.width.saturating_sub(pill_width)) / 2;
+    let pill_y = messages_area.y.saturating_add(messages_area.height).saturating_sub(2);
+    let pill_area = Rect {
+        x: pill_x,
+        y: pill_y,
+        width: pill_width,
+        height: 1,
+    };
+    if pill_area.width < label_width.saturating_add(2) {
+        return None;
+    }
+    // Pill background color
+    let bg = rgb(60, 70, 90);
+    let fg = rgb(200, 210, 230);
+    let style = Style::default().bg(bg).fg(fg);
+    // Render the pill text centered in the pill area.
+    let pill_text = format!(" {} ", label);
+    let paragraph = Paragraph::new(Line::from(Span::styled(pill_text, style)))
+        .style(style);
+    frame.render_widget(paragraph, pill_area);
+    Some(pill_area)
+}
+
 
 use frame_metrics::{
     ChatLayoutMetrics, FLICKER_NOTICE_COPY_KEY, FullPrepPhaseMetrics, ViewportMetrics,
@@ -2704,57 +2816,61 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     // Use packed layout when content fits, scrolling layout otherwise
     let use_packed = content_height + fixed_height <= available_height;
 
-    // Layout: messages, queued, notification, inline UI, gap, input, SEPARATOR, STATUS, RUNNING, donut.
-    // Running items list between status bar and donut (Claude Code style).
-    let status_height: u16 = 1;
-    let chunks = Layout::default()
+    // Two-level layout: top (messages + queued + swarm) grows to fill,
+    // bottom (status + input + dialogs) capped at 50% of chat area height (CC pattern).
+    let top_bottom = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(vec![
+            Constraint::Min(1),
+            Constraint::Max(chat_area.height / 2),
+        ])
+        .split(chat_area);
+    let top_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(if use_packed {
             vec![
                 Constraint::Length(content_height.max(1)), // 0 Messages (exact height)
-                Constraint::Length(queued_height),         // 1 Queued messages (above status)
-                Constraint::Length(swarm_strip_height),    // 2 Swarm strip (above status)
-                Constraint::Length(1),                     // 3 Status line
-                Constraint::Length(notification_height),   // 4 Notification line
-                Constraint::Length(inline_block_height),   // 5 Inline UI
-                Constraint::Length(inline_ui_gap_height),  // 6 Inline UI/input spacing
-                Constraint::Length(input_height),          // 7 Input
-                Constraint::Length(overscroll_height),     // 8 Overscroll status line
-                Constraint::Length(donut_height),          // 9 Donut animation
+                Constraint::Length(queued_height),         // 1 Queued messages
+                Constraint::Length(swarm_strip_height),    // 2 Swarm strip
             ]
         } else {
             vec![
                 Constraint::Min(3),                       // 0 Messages (scrollable)
-                Constraint::Length(queued_height),        // 1 Queued messages (above status)
-                Constraint::Length(swarm_strip_height),   // 2 Swarm strip (above status)
-                Constraint::Length(1),                    // 3 Status line
-                Constraint::Length(notification_height),  // 4 Notification line
-                Constraint::Length(inline_block_height),  // 5 Inline UI
-                Constraint::Length(inline_ui_gap_height), // 6 Inline UI/input spacing
-                Constraint::Length(input_height),         // 7 Input
-                Constraint::Length(overscroll_height),    // 8 Overscroll status line
-                Constraint::Length(donut_height),         // 9 Donut animation
+                Constraint::Length(queued_height),        // 1 Queued messages
+                Constraint::Length(swarm_strip_height),   // 2 Swarm strip
             ]
         })
-        .split(chat_area);
-    record_status_area(chunks[3]);
+        .split(top_bottom[0]);
+    let bottom_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(vec![
+            Constraint::Length(1),                    // 0 Status line
+            Constraint::Length(notification_height),  // 1 Notification line
+            Constraint::Length(inline_block_height),  // 2 Inline UI
+            Constraint::Length(inline_ui_gap_height), // 3 Inline UI/input spacing
+            Constraint::Length(input_height),         // 4 Input
+            Constraint::Length(overscroll_height),    // 5 Overscroll status line
+            Constraint::Length(donut_height),         // 6 Donut animation
+        ])
+        .split(top_bottom[1]);
+    record_status_area(bottom_chunks[0]);
 
     // Draw the inline swarm strip directly above the status line if present.
     if swarm_strip_height > 0 {
-        clear_area(frame, chunks[2]);
-        frame.render_widget(Paragraph::new(swarm_strip_lines.clone()), chunks[2]);
+        clear_area(frame, top_chunks[2]);
+        frame.render_widget(Paragraph::new(swarm_strip_lines.clone()), top_chunks[2]);
     }
 
     // Capture layout info for visual debug
     if let Some(ref mut capture) = debug_capture {
         capture.layout.use_packed = use_packed;
         capture.layout.estimated_content_height = content_height as usize;
-        capture.layout.messages_area = Some(chunks[0].into());
+        capture.layout.messages_area = Some(top_chunks[0].into());
         if queued_height > 0 {
-            capture.layout.queued_area = Some(chunks[1].into());
+            capture.layout.queued_area = Some(top_chunks[1].into());
         }
-        capture.layout.status_area = Some(chunks[3].into());
-        capture.layout.input_area = Some(chunks[7].into());
+        capture.layout.status_area = Some(bottom_chunks[0].into());
+        capture.layout.input_area = Some(bottom_chunks[4].into());
         capture.layout.input_lines_raw = app.input().lines().count().max(1);
         capture.layout.input_lines_wrapped = base_input_height as usize;
 
@@ -2812,8 +2928,8 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     }
     let draw_start = Instant::now();
 
-    // Messages area is chunks[0] within the chat column (already excludes diagram).
-    let messages_area = chunks[0];
+    // Messages area is top_chunks[0] within the chat column (already excludes diagram).
+    let messages_area = top_chunks[0];
     let _ = swarm_strip_height;
     note_chat_layout(ChatLayoutMetrics {
         chat_area,
@@ -2831,7 +2947,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         capture.layout.messages_area = Some(messages_area.into());
         capture.layout.diagram_area = diagram_area.map(|r| r.into());
     }
-    record_layout_snapshot(messages_area, diagram_area, diff_pane_area, Some(chunks[7]));
+    record_layout_snapshot(messages_area, diagram_area, diff_pane_area, Some(bottom_chunks[4]));
 
     let margins = if onboarding_welcome {
         onboarding::draw_onboarding_welcome(frame, app, messages_area);
@@ -2850,6 +2966,16 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
             chat_scrollbar_visible,
         )
     };
+
+    // "N new message(s)" / "Jump to bottom" pill overlay
+    let pill_area = if app.auto_scroll_paused() && app.new_messages_count() > 0 {
+        render_new_messages_pill(frame, messages_area, prepared.total_wrapped_lines(), app)
+    } else if app.auto_scroll_paused() {
+        render_jump_to_bottom_pill(frame, messages_area, prepared.total_wrapped_lines(), app)
+    } else {
+        None
+    };
+    record_new_messages_pill_area(pill_area.unwrap_or(Rect::default()));
 
     crate::tui::reset_pinned_diagram_debug_snapshot();
     // Render pinned diagram if we have one
@@ -2929,21 +3055,25 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         if let Some(ref mut capture) = debug_capture {
             capture.render_order.push("draw_queued".to_string());
         }
-        input_ui::draw_queued(frame, app, chunks[1], user_count + 1);
+        input_ui::draw_queued(frame, app, top_chunks[1], user_count + 1);
     }
-    if let Some(ref mut capture) = debug_capture {
-        capture.render_order.push("draw_status".to_string());
+    let status_bar_visible = frame.area().height >= 24
+        && app.prompt_history_info().is_none();
+    if status_bar_visible {
+        if let Some(ref mut capture) = debug_capture {
+            capture.render_order.push("draw_status".to_string());
+        }
+        input_ui::draw_status(frame, app, bottom_chunks[0], pending_count);
     }
-    input_ui::draw_status(frame, app, chunks[3], pending_count);
     if notification_height > 0 {
-        input_ui::draw_notification(frame, app, chunks[4]);
+        input_ui::draw_notification(frame, app, bottom_chunks[1]);
     }
     if inline_block_height > 0 {
-        draw_inline_ui(frame, app, chunks[5]);
+        draw_inline_ui(frame, app, bottom_chunks[2]);
     }
     // Top separator line above input (with history counter, like Claude Code)
-    if chunks[4].height > 0 {
-        let sep_w = chunks[4].width as usize;
+    if bottom_chunks[1].height > 0 {
+        let sep_w = bottom_chunks[1].width as usize;
         if sep_w > 12 {
             let (nav_pos, nav_total) = app.prompt_history_info().unwrap_or((0, 0));
             let _next_prompt = user_count + pending_count + 1;
@@ -2958,23 +3088,40 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
             let right = sep_w - label_w - left;
             let sep_str = format!("{}{}{}", "─".repeat(left), label, "─".repeat(right),);
             let sep_line = Line::from(Span::styled(sep_str, Style::default().fg(rgb(50, 55, 65))));
-            frame.render_widget(Paragraph::new(sep_line), chunks[4]);
+            frame.render_widget(Paragraph::new(sep_line), bottom_chunks[1]);
         }
     }
     // Input
     input_ui::draw_input(
         frame,
         app,
-        chunks[7],
+        bottom_chunks[4],
         user_count + pending_count + 1,
         &mut debug_capture,
     );
 
+    // Command suggestion overlay drawn as an absolute floating rect above the
+    // input area, matching the Claude Code SuggestionsOverlay pattern.
+    if input_ui::has_active_suggestions(app) {
+        let input_area = bottom_chunks[4];
+        let suggestions = app.command_suggestions();
+        let overlay_height = input_ui::command_suggestion_overlay_height(&suggestions);
+        if overlay_height > 0 && input_area.y > overlay_height {
+            let overlay_area = Rect {
+                x: input_area.x,
+                y: input_area.y.saturating_sub(overlay_height),
+                width: input_area.width,
+                height: overlay_height,
+            };
+            input_ui::draw_suggestion_overlay(frame, app, overlay_area);
+        }
+    }
+
     if overscroll_height > 0 {
-        input_ui::draw_overscroll_status(frame, app, chunks[8]);
+        input_ui::draw_overscroll_status(frame, app, bottom_chunks[5]);
     }
     if donut_height > 0 {
-        animations::draw_idle_animation(frame, app, chunks[9]);
+        animations::draw_idle_animation(frame, app, bottom_chunks[6]);
     }
 
     // Draw info widget overlays (skip during idle animation - they look out of place)
@@ -3047,7 +3194,9 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     }
 
     if visual_debug::overlay_enabled() {
-        overlays::draw_debug_overlay(frame, &placements, &chunks);
+        let mut all_chunks = top_chunks.to_vec();
+        all_chunks.extend_from_slice(&bottom_chunks);
+        overlays::draw_debug_overlay(frame, &placements, &all_chunks);
     }
 
     // Observe the rendered messages area for the anchor-stability (smoothness)

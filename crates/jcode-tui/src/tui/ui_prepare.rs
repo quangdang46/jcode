@@ -1,5 +1,6 @@
 use super::*;
 use crate::tui::ui::{self, WrappedLineMap};
+use crate::tui::ThinkingBlockState;
 
 /// Auxiliary render data for an assistant message that is otherwise recomputed
 /// by re-parsing markdown on every body rebuild. Building the body misses its
@@ -445,8 +446,8 @@ fn prepare_active_batch_progress(
     };
 
     let centered = app.centered_mode();
-    let accent = rgb(255, 193, 94);
-    let spinner = super::activity_indicator(app.animation_elapsed(), 12.5);
+    let frame_visible = tools_ui::tool_loader_blink_visible(app.animation_elapsed());
+    let (dot_icon, dot_color) = tools_ui::tool_loader_dot(true, false, frame_visible);
     let block_width = if centered {
         super::centered_content_block_width(width, 96)
     } else {
@@ -460,7 +461,7 @@ fn prepare_active_batch_progress(
     }
 
     let mut header = vec![
-        Span::styled(format!("  {} ", spinner), Style::default().fg(accent)),
+        Span::styled(format!("  {} ", dot_icon), Style::default().fg(dot_color)),
         Span::styled("batch", Style::default().fg(tool_color())),
         Span::styled(
             format!(" · {}/{} done", progress.completed, progress.total),
@@ -485,12 +486,12 @@ fn prepare_active_batch_progress(
     let mut hidden_completed = 0usize;
     for subcall in &progress.subcalls {
         let (icon, icon_color) = match subcall.state {
-            crate::bus::BatchSubcallState::Running => (spinner, accent),
+            crate::bus::BatchSubcallState::Running => tools_ui::tool_loader_dot(true, false, frame_visible),
             crate::bus::BatchSubcallState::Succeeded => {
                 hidden_completed += 1;
                 continue;
             }
-            crate::bus::BatchSubcallState::Failed => ("✗", rgb(220, 100, 100)),
+            crate::bus::BatchSubcallState::Failed => ("●", rgb(220, 100, 100)),
         };
 
         lines.push(tools_ui::render_batch_subcall_line(
@@ -1136,17 +1137,30 @@ fn render_message_into(
             }
         }
         "reasoning" => {
-            let content_width = width.saturating_sub(4);
-            let cached = get_cached_message_lines(
-                msg,
-                content_width,
-                app.diff_mode(),
-                render_reasoning_message,
-            );
-            for line in cached {
-                acc.push_auto(align_if_unset(line, align));
+                let content_width = width.saturating_sub(4);
+                let block_state = app.thinking_block_state(msg.stable_cache_hash());
+                match block_state {
+                    ThinkingBlockState::Hidden => {
+                        // Render nothing.
+                    }
+                    ThinkingBlockState::Collapsed => {
+                        for line in render_collapsed_reasoning_block(content_width) {
+                            acc.push_auto(align_if_unset(line, align));
+                        }
+                    }
+                    ThinkingBlockState::Expanded => {
+                        let cached = get_cached_message_lines(
+                            msg,
+                            content_width,
+                            app.diff_mode(),
+                            render_reasoning_message,
+                        );
+                        for line in cached {
+                            acc.push_auto(align_if_unset(line, align));
+                        }
+                    }
+                }
             }
-        }
         "background_task" => {
             let content_width = width.saturating_sub(4);
             let cached = get_cached_message_lines(
@@ -1505,16 +1519,29 @@ pub(super) fn prepare_body_incremental(
             }
             "reasoning" => {
                 let content_width = width.saturating_sub(4);
-                let cached = get_cached_message_lines(
-                    msg,
-                    content_width,
-                    app.diff_mode(),
-                    render_reasoning_message,
-                );
-                for line in cached {
-                    new_lines.push(align_if_unset(line, align));
-                    new_line_raw_overrides.push(None);
-                    new_line_copy_offsets.push(0);
+                let block_state = app.thinking_block_state(msg.stable_cache_hash());
+                match block_state {
+                    ThinkingBlockState::Hidden => {}
+                    ThinkingBlockState::Collapsed => {
+                        for line in render_collapsed_reasoning_block(content_width) {
+                            new_lines.push(align_if_unset(line, align));
+                            new_line_raw_overrides.push(None);
+                            new_line_copy_offsets.push(0);
+                        }
+                    }
+                    ThinkingBlockState::Expanded => {
+                        let cached = get_cached_message_lines(
+                            msg,
+                            content_width,
+                            app.diff_mode(),
+                            render_reasoning_message,
+                        );
+                        for line in cached {
+                            new_lines.push(align_if_unset(line, align));
+                            new_line_raw_overrides.push(None);
+                            new_line_copy_offsets.push(0);
+                        }
+                    }
                 }
             }
             "background_task" => {
@@ -2024,16 +2051,29 @@ pub(super) fn prepare_body(
             }
             "reasoning" => {
                 let content_width = width.saturating_sub(4);
-                let cached = get_cached_message_lines(
-                    msg,
-                    content_width,
-                    app.diff_mode(),
-                    render_reasoning_message,
-                );
-                for line in cached {
-                    lines.push(align_if_unset(line, align));
-                    line_raw_overrides.push(None);
-                    line_copy_offsets.push(0);
+                let block_state = app.thinking_block_state(msg.stable_cache_hash());
+                match block_state {
+                    ThinkingBlockState::Hidden => {}
+                    ThinkingBlockState::Collapsed => {
+                        for line in render_collapsed_reasoning_block(content_width) {
+                            lines.push(align_if_unset(line, align));
+                            line_raw_overrides.push(None);
+                            line_copy_offsets.push(0);
+                        }
+                    }
+                    ThinkingBlockState::Expanded => {
+                        let cached = get_cached_message_lines(
+                            msg,
+                            content_width,
+                            app.diff_mode(),
+                            render_reasoning_message,
+                        );
+                        for line in cached {
+                            lines.push(align_if_unset(line, align));
+                            line_raw_overrides.push(None);
+                            line_copy_offsets.push(0);
+                        }
+                    }
                 }
             }
             "background_task" => {

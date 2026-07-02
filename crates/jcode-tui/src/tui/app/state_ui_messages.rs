@@ -83,6 +83,11 @@ impl App {
         // Appending is the hot path; rescanning every append was O(M^2) over a
         // long session.
         self.adjust_display_message_stats(&message, true);
+        // Track new messages added while the user is scrolled up so the
+        // "N new message(s)" pill can show a count.
+        if self.auto_scroll_paused {
+            self.new_messages_count = self.new_messages_count.saturating_add(1);
+        }
         self.display_messages.push(message);
         self.bump_display_messages_version_no_stats();
         if is_tool && self.diff_mode.has_side_pane() && self.diff_pane_auto_scroll {
