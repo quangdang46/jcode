@@ -1165,6 +1165,13 @@ pub struct App {
     /// Included in the body cache key so the transcript rebuilds with the
     /// correct rendering after a toggle.
     expanded_messages_version: u64,
+    /// Indices of turns (by display_messages turn-rollup position) that are
+    /// currently collapsed into a one-line summary.
+    collapsed_turns: std::collections::HashSet<usize>,
+    /// Per-turn summaries for completed assistant turns, indexed by their
+    /// display_messages position. A `None` entry means no summary exists yet
+    /// for that turn.
+    turn_summaries: Vec<Option<crate::tui::TurnSummary>>,
     // Auto-hide deadline for the pinned image side pane only.
     pinned_images_auto_hide_deadline: Option<Instant>,
     pinned_images_seen_count: usize,

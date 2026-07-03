@@ -54,6 +54,7 @@ pub use app::{App, CopyBadgeUiState, ProcessingStatus, RunResult};
 use crate::message::ToolCall;
 use ratatui::prelude::Frame;
 use ratatui::text::Line;
+use std::collections::HashSet;
 use std::time::Duration;
 
 pub(crate) fn scheduled_notification_text(
@@ -154,6 +155,15 @@ pub enum ThinkingBlockState {
 /// Key type for the per-message thinking-block toggle map.
 /// Uses stable_cache_hash to avoid cloning the DisplayMessage when toggling.
 pub type ThinkingBlockId = u64;
+
+/// Summary of a completed assistant turn, shown as a one-line collapsed entry.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TurnSummary {
+    /// Total thinking/streaming time in seconds.
+    pub thinking_secs: u64,
+    /// Tool-type -> count map (e.g. "bash" → 3, "edit" → 1).
+    pub tool_counts: std::collections::HashMap<String, u32>,
+}
 
 /// Trait for TUI state consumed by the shared renderer.
 ///
@@ -652,6 +662,22 @@ pub trait TuiState {
     /// Used by the body cache key to bust the cache when toggle state changes.
     fn expanded_messages_version(&self) -> u64 {
         0
+    }
+
+    /// Indices of turns (by display_messages turn-rollup position) that are
+    /// currently collapsed. The default returns an empty set so the feature
+    /// works without every TuiState impl needing to add the field.
+    fn collapsed_turns(&self) -> &HashSet<usize> {
+        static EMPTY: std::sync::OnceLock<HashSet<usize>> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(HashSet::new)
+    }
+
+    /// Per-turn summaries, one `Some(TurnSummary)` per completed assistant turn.
+    /// Indexed by display_messages turn position. The default returns an empty
+    /// Vec so the feature works without every TuiState impl needing the field.
+    fn turn_summaries(&self) -> &Vec<Option<TurnSummary>> {
+        static EMPTY: std::sync::OnceLock<Vec<Option<TurnSummary>>> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(Vec::new)
     }
 }
 

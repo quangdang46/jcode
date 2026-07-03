@@ -830,6 +830,14 @@ impl crate::tui::TuiState for App {
         self.expanded_messages_version
     }
 
+    fn collapsed_turns(&self) -> &std::collections::HashSet<usize> {
+        &self.collapsed_turns
+    }
+
+    fn turn_summaries(&self) -> &Vec<Option<crate::tui::TurnSummary>> {
+        &self.turn_summaries
+    }
+
     fn current_session_id(&self) -> Option<String> {
         if self.is_remote {
             self.remote_session_id.clone()

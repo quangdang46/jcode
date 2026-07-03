@@ -822,6 +822,7 @@ pub(in crate::tui::app) fn handle_server_event(
                         app.maybe_notify_turn_complete(turn_duration_secs);
                     }
                 }
+                app.compute_turn_summaries_and_collapse();
             } else if app.is_processing {
                 let is_stale = app.current_message_id.is_some_and(|mid| id < mid);
                 if is_stale {

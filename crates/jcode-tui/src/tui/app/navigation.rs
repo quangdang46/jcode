@@ -213,6 +213,21 @@ impl App {
         })
     }
 
+    /// If a left-click landed on a collapsed-turn summary line, toggle its
+    /// collapsed state and return `true`. Returns `false` when no collapsed
+    /// summary was hit (the click should fall through to other handlers).
+    pub(super) fn try_toggle_collapsed_turn_at(&mut self, column: u16, row: u16) -> bool {
+        let Some(turn_idx) = super::super::ui::collapsed_summary_turn_for_line_from_screen(column, row)
+        else {
+            return false;
+        };
+        if !self.collapsed_turns.remove(&turn_idx) {
+            self.collapsed_turns.insert(turn_idx);
+        }
+        self.display_messages_version = self.display_messages_version.wrapping_add(1);
+        true
+    }
+
     pub(super) fn try_open_link_at_with<F, E>(
         &mut self,
         column: u16,
@@ -1485,6 +1500,13 @@ impl App {
             && self.try_toggle_message_expand_at(mouse.column, mouse.row)
         {
             finish_mouse_event!(false, "toggle_message_expand");
+        }
+
+        // Click on a collapsed-turn summary line to expand that turn.
+        if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
+            && self.try_toggle_collapsed_turn_at(mouse.column, mouse.row)
+        {
+            finish_mouse_event!(false, "toggle_collapsed_turn");
         }
 
         // Click on the "N new message(s)" / "Jump to bottom" pill: follow chat bottom.

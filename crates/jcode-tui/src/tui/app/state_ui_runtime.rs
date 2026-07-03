@@ -1,5 +1,6 @@
 use super::*;
-use crate::tui::{TuiState, detect_kv_cache_problem, ui};
+use crate::tui::{TurnSummary, TuiState, detect_kv_cache_problem, ui};
+use std::collections::{HashMap, HashSet};
 
 impl App {
     pub(super) fn current_skills_snapshot(&self) -> std::sync::Arc<crate::skill::SkillRegistry> {
@@ -392,6 +393,155 @@ impl App {
         ));
         self.scroll_offset = target_line;
         self.auto_scroll_paused = true;
+    }
+
+    /// Scan `display_messages` and build per-turn summaries.
+    /// For each assistant message with `duration_secs > 0`, count the tool types
+    /// in the following tool messages that belong to that turn.
+    /// After building summaries, collapse all completed turns except the newest
+    /// one (the latest completed turn stays expanded). Bumps
+    /// `display_messages_version` so the body cache rebuilds.
+    pub(super) fn compute_turn_summaries_and_collapse(&mut self) {
+        let messages = self.display_messages.as_slice();
+        let mut summaries: Vec<Option<TurnSummary>> = Vec::new();
+        let mut collapsed: HashSet<usize> = HashSet::new();
+
+        // Track which tool messages belong to which turn.
+        // We walk in display order:
+        //   "user"     → starts a new turn
+        //   "meta"     → turn footer with duration (marks turn end)
+        //   "assistant"→ part of the current turn
+        //   "tool"     → tool result, part of the current turn
+        let mut turn_start: Option<usize> = None;       // msg index where current turn began
+        let mut thinking_secs: u64 = 0;
+        let mut tool_counts: HashMap<String, u32> = HashMap::new();
+        let mut turn_label_line: Option<usize> = None;   // msg index of the meta/footer line
+        let mut has_assistant: bool = false;
+
+        // Helper: finalize the current turn into the summaries vec.
+        // `end_pos` is the message position following the footer (past the turn).
+        let finalize_turn = |summaries: &mut Vec<Option<TurnSummary>>,
+                             collapsed: &mut HashSet<usize>,
+                             turn_start: Option<usize>,
+                             turn_label_line: &mut Option<usize>,
+                             thinking_secs: &mut u64,
+                             tool_counts: &mut HashMap<String, u32>,
+                             has_assistant: &mut bool| {
+            let Some(turn_line) = turn_label_line.take() else {
+                return;
+            };
+            // Only create summaries for turns that had assistant output.
+            if *has_assistant || !tool_counts.is_empty() {
+                let summary = TurnSummary {
+                    thinking_secs: *thinking_secs,
+                    tool_counts: std::mem::take(tool_counts),
+                };
+                // Pad summaries vec to cover the footer line's position.
+                while summaries.len() <= turn_line {
+                    summaries.push(None);
+                }
+                summaries[turn_line] = Some(summary);
+            }
+            *thinking_secs = 0;
+            *has_assistant = false;
+            let _ = turn_start; // keep
+        };
+
+        for (msg_idx, msg) in messages.iter().enumerate() {
+            match msg.effective_role() {
+                "user" => {
+                    // A new user turn starts. Finalize any prior in-progress turn
+                    // that lacked a meta footer (should not normally happen, but
+                    // defensively close it).
+                    if turn_label_line.is_some() {
+                        finalize_turn(
+                            &mut summaries,
+                            &mut collapsed,
+                            turn_start,
+                            &mut turn_label_line,
+                            &mut thinking_secs,
+                            &mut tool_counts,
+                            &mut has_assistant,
+                        );
+                    }
+                    turn_start = Some(msg_idx);
+                }
+                "assistant" => {
+                    has_assistant = true;
+                    if let Some(secs) = msg.duration_secs
+                        && secs > 0.0
+                    {
+                        thinking_secs = secs as u64;
+                    } else {
+                        // Count elapsed from the active turn start if no
+                        // explicit duration was recorded on this assistant
+                        // message but we have the turn timer.
+                    }
+                }
+                "tool" => {
+                    if let Some(ref tc) = msg.tool_data {
+                        let name = tc.name.clone();
+                        *tool_counts.entry(name).or_insert(0) += 1;
+                    }
+                }
+                "meta" => {
+                    // A "meta" role marks a turn footer / summary line.
+                    // Finalize the current turn at this index.
+                    if let Some(secs) = msg.duration_secs
+                        && secs > 0.0
+                    {
+                        thinking_secs = secs as u64;
+                    }
+                    turn_label_line = Some(msg_idx);
+                    finalize_turn(
+                        &mut summaries,
+                        &mut collapsed,
+                        turn_start,
+                        &mut turn_label_line,
+                        &mut thinking_secs,
+                        &mut tool_counts,
+                        &mut has_assistant,
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        // Flush any trailing turn that ended without a meta footer.
+        if turn_label_line.is_some() {
+            finalize_turn(
+                &mut summaries,
+                &mut collapsed,
+                turn_start,
+                &mut turn_label_line,
+                &mut thinking_secs,
+                &mut tool_counts,
+                &mut has_assistant,
+            );
+        }
+
+        // Collapse all completed turns except the newest one.
+        // A "completed turn" is one that has a summary.
+        let completed_indices: Vec<usize> = summaries
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.is_some())
+            .map(|(i, _)| i)
+            .collect();
+
+        // Keep the newest completed turn expanded, collapse the rest.
+        if completed_indices.len() > 1 {
+            for &idx in completed_indices.iter().rev().skip(1) {
+                collapsed.insert(idx);
+            }
+        }
+
+        let changed = summaries != self.turn_summaries || collapsed != self.collapsed_turns;
+        if changed {
+            self.turn_summaries = summaries;
+            self.collapsed_turns = collapsed;
+            self.display_messages_version = self.display_messages_version.wrapping_add(1);
+        }
     }
 
     pub(super) fn toggle_input_stash(&mut self) {

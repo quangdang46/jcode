@@ -552,6 +552,7 @@ pub(super) fn finish_turn(app: &mut App) {
             }
         }
     }
+    app.compute_turn_summaries_and_collapse();
     let _ = super::commands::maybe_begin_pending_local_transfer(app);
 }
 impl App {

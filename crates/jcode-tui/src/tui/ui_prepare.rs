@@ -1,6 +1,7 @@
 use super::*;
 use crate::tui::ui::{self, WrappedLineMap};
-use crate::tui::ThinkingBlockState;
+use crate::tui::{ThinkingBlockState, TurnSummary};
+use std::collections::HashSet;
 
 // ── Grouped tool use helpers ──
 
@@ -993,6 +994,76 @@ struct BodyRenderCtx<'a> {
     messages: &'a [DisplayMessage],
 }
 
+/// Given the collapsed turns set (containing display_message indices of meta
+/// footer lines) and the full message list, precompute the ranges of indices
+/// that should be hidden and the summaries that replace their meta footers.
+/// Each returned triple is `(start, end_exclusive, summary)` where `start` is
+/// the first message index to hide and `end_exclusive` is one past the meta
+/// footer index.
+fn collapsed_ranges<'a>(
+    collapsed_turns: &HashSet<usize>,
+    turn_summaries: &'a [Option<TurnSummary>],
+    messages: &[DisplayMessage],
+) -> Vec<(usize, usize, &'a TurnSummary)> {
+    if collapsed_turns.is_empty() {
+        return Vec::new();
+    }
+    // All meta positions to delimit turn boundaries.
+    let meta_positions: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.effective_role() == "meta")
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut ranges: Vec<(usize, usize, &TurnSummary)> = Vec::new();
+    for &meta_idx in collapsed_turns {
+        let start = match meta_positions.binary_search(&meta_idx) {
+            Ok(pos) if pos > 0 => meta_positions[pos - 1] + 1,
+            _ => 0,
+        };
+        // Find the summary for this turn.
+        let Some(Some(summary)) = turn_summaries.get(meta_idx) else {
+            continue;
+        };
+        // end_exclusive is after the meta so we skip the meta too.
+        ranges.push((start, meta_idx + 1, summary));
+    }
+    ranges
+}
+
+/// Format a turn summary line from the given TurnSummary and thinking duration.
+fn format_turn_summary(
+    summary: &TurnSummary,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let mut parts: Vec<String> = Vec::new();
+
+    let secs = summary.thinking_secs;
+    parts.push(if secs < 60 {
+        format!("{}s", secs)
+    } else {
+        format!("{}m {}s", secs / 60, secs % 60)
+    });
+
+    // Count tool types, sorted by count descending.
+    let mut tool_vec: Vec<(&str, u32)> = summary
+        .tool_counts
+        .iter()
+        .map(|(k, v)| (k.as_str(), *v))
+        .collect();
+    tool_vec.sort_by(|a, b| b.1.cmp(&a.1));
+    for (name, count) in &tool_vec {
+        parts.push(format!("{} {}", count, name));
+    }
+
+    let base = format!("⏺ thought for {}", parts.join(", "));
+    let text = format!("{} (click to expand)", base);
+
+    let line = Line::from(Span::styled(text, Style::default().fg(dim_color())));
+    vec![line]
+}
+
 /// Mutable accumulator for one body build. Both `prepare_body` (full) and
 /// `prepare_body_incremental` (tail only) push into one of these via the shared
 /// `render_message_into`, guaranteeing byte-identical per-message output and
@@ -1490,13 +1561,33 @@ pub(super) fn prepare_body_incremental(
 
     let body_has_content = !prev.wrapped_lines.is_empty();
 
-    // Use a while loop so we can skip ahead for grouped tool rendering.
     let full_messages = app.display_messages();
+
+    // Precompute collapsed turn ranges so we can skip detail messages.
+    let collapsed_turns = app.collapsed_turns();
+    let turn_summaries = app.turn_summaries();
+    let collapse_ranges = if collapsed_turns.is_empty() {
+        Vec::new()
+    } else {
+        collapsed_ranges(collapsed_turns, turn_summaries, full_messages)
+    };
+
+    // Use a while loop so we can skip ahead for grouped tool rendering.
     let mut new_offset = 0;
     while new_offset < new_messages.len() {
+        let full_idx = prev_msg_count + new_offset;
+
+        // If this index falls within a collapsed turn range, skip it entirely.
+        if collapse_ranges
+            .iter()
+            .any(|(start, end, _)| *start <= full_idx && full_idx < *end)
+        {
+            new_offset += 1;
+            continue;
+        }
+
         let msg = &new_messages[new_offset];
         let role = msg.effective_role();
-        let full_idx = prev_msg_count + new_offset;
         if (body_has_content || !new_lines.is_empty()) && role != "tool" && role != "meta" {
             new_lines.push(Line::from(""));
             new_line_raw_overrides.push(None);
@@ -2130,10 +2221,61 @@ pub(super) fn prepare_body(
     let inline_images_visible = app.inline_images_visible();
     let mut anchor_prompt_ordinal = 0usize;
 
+    // Precompute collapsed turn ranges so we can skip detail messages.
+    let collapsed_turns = app.collapsed_turns();
+    let turn_summaries = app.turn_summaries();
+    let collapse_ranges = if collapsed_turns.is_empty() {
+        Vec::new()
+    } else {
+        collapsed_ranges(collapsed_turns, turn_summaries, app.display_messages())
+    };
+
     // Use a while loop so we can skip ahead for grouped tool rendering.
     let messages = app.display_messages();
     let mut msg_idx = 0;
+    // Tracks (pre-wrap line index, turn_index) for collapsed summary lines.
+    let mut collapsed_summary_tracker: Vec<(usize, usize)> = Vec::new();
     while msg_idx < messages.len() {
+        // If this index falls within a collapsed turn range, emit the summary
+        // line and skip past the meta footer.
+        if let Some(pos) = collapse_ranges
+            .iter()
+            .position(|(start, end, _)| *start <= msg_idx && msg_idx < *end)
+        {
+            let (_, end, summary) = &collapse_ranges[pos];
+            // Record the pre-wrap line index for the summary that starts at the
+            // current `lines.len()`. We subtract 1 for the blank line we just
+            // pushed; the actual summary line starts at `lines.len()`.
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+                line_raw_overrides.push(None);
+                line_copy_offsets.push(0);
+            }
+            collapsed_summary_tracker.push((lines.len(), *end));
+            let summary_lines = format_turn_summary(summary, width);
+            for sl in summary_lines {
+                let raw_line = raw_plain_lines.len();
+                raw_plain_lines.push(ui::line_plain_text(&sl));
+                let raw_width = unicode_width::UnicodeWidthStr::width(
+                    raw_plain_lines.last().map(String::as_str).unwrap_or(""),
+                );
+                let align = if centered {
+                    ratatui::layout::Alignment::Center
+                } else {
+                    ratatui::layout::Alignment::Left
+                };
+                lines.push(align_if_unset(sl, align));
+                line_raw_overrides.push(Some(WrappedLineMap {
+                    raw_line,
+                    start_col: 0,
+                    end_col: raw_width,
+                }));
+                line_copy_offsets.push(0);
+            }
+            msg_idx = *end; // skip to meta footer
+            continue;
+        }
+
         let msg = &messages[msg_idx];
         let role = msg.effective_role();
         let align = default_message_alignment(role, centered);
@@ -2576,7 +2718,7 @@ pub(super) fn prepare_body(
         }
     }
 
-    wrap_lines_with_map(
+    let prepared = wrap_lines_with_map(
         lines,
         &raw_plain_lines,
         &line_raw_overrides,
@@ -2586,7 +2728,25 @@ pub(super) fn prepare_body(
         width,
         &edit_tool_line_ranges,
         &copy_targets,
-    )
+    );
+
+    // Resolve collapsed-summary pre-wrap line indices to wrapped line indices
+    // and store in the global mapping for the click handler.
+    if !collapsed_summary_tracker.is_empty() {
+        let mut collapsed_summary_lines: Vec<(usize, usize)> = Vec::new();
+        for (prewrap_line, turn_idx) in &collapsed_summary_tracker {
+            for (wrapped_idx, map) in prepared.wrapped_line_map.iter().enumerate() {
+                if map.raw_line == *prewrap_line {
+                    collapsed_summary_lines.push((wrapped_idx, *turn_idx));
+                }
+            }
+        }
+        if !collapsed_summary_lines.is_empty() {
+            ui::set_collapsed_summary_lines(collapsed_summary_lines);
+        }
+    }
+
+    prepared
 }
 
 fn wrap_lines(

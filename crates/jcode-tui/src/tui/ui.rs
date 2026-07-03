@@ -201,6 +201,13 @@ static TAIL_CATCHUP_ACTIVE: std::sync::atomic::AtomicBool =
 #[cfg(not(test))]
 static LAST_USER_PROMPT_POSITIONS: OnceLock<Mutex<Vec<usize>>> = OnceLock::new();
 
+/// Mapping from screen-relative body lines to turn indices for collapsed-turn
+/// summary lines. Each entry pairs a body line index with the turn index (the
+/// display_message index of the meta footer for that turn). Filled by the body
+/// preparer when rendering collapsed summaries, consumed by the navigation click
+/// handler to toggle collapse/expand.
+static LAST_COLLAPSED_SUMMARY_LINES: OnceLock<Mutex<Vec<(usize, usize)>>> = OnceLock::new();
+
 #[cfg(test)]
 thread_local! {
     static TEST_LAST_MAX_SCROLL: Cell<usize> = const { Cell::new(0) };
@@ -319,6 +326,45 @@ fn update_user_prompt_positions(positions: &[usize]) {
             v.clear();
             v.extend_from_slice(positions);
         }
+    }
+}
+
+/// Record the mapping from wrapped body line index to turn index for collapsed
+/// summary lines. Used by the navigation click handler.
+pub(crate) fn set_collapsed_summary_lines(lines: Vec<(usize, usize)>) {
+    #[cfg(test)]
+    {
+        // Tests don't need this mapping for now.
+        return;
+    }
+    #[cfg(not(test))]
+    {
+        if let Ok(mut snapshot) = LAST_COLLAPSED_SUMMARY_LINES
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+        {
+            *snapshot = lines;
+        }
+    }
+}
+
+/// Return the turn index associated with a wrapped body line, if it is a
+/// collapsed summary line.
+pub(crate) fn collapsed_summary_turn_for_line(abs_line: usize) -> Option<usize> {
+    #[cfg(test)]
+    {
+        return None;
+    }
+    #[cfg(not(test))]
+    {
+        let snapshot = LAST_COLLAPSED_SUMMARY_LINES
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .ok()?;
+        snapshot
+            .iter()
+            .find(|(line, _)| *line == abs_line)
+            .map(|(_, turn)| *turn)
     }
 }
 
@@ -2403,6 +2449,16 @@ pub(crate) fn message_hash_from_screen(column: u16, row: u16) -> Option<u64> {
     let point = copy_point_from_screen(column, row)?;
     let snapshot = copy_snapshot_for_pane(point.pane)?;
     snapshot.message_hash_for_line(point.abs_line)
+}
+
+/// If a screen click landed on a collapsed-turn summary line, return the turn
+/// index (the display_message position of the meta footer for that turn).
+pub(crate) fn collapsed_summary_turn_for_line_from_screen(
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    let point = copy_point_from_screen(column, row)?;
+    collapsed_summary_turn_for_line(point.abs_line)
 }
 
 pub fn draw(frame: &mut Frame, app: &dyn TuiState) {
