@@ -1156,6 +1156,15 @@ pub struct App {
     /// `DisplayMessage::stable_cache_hash()`. Absent entries default to
     /// `ThinkingBlockState::Collapsed`.
     thinking_block_states: std::collections::HashMap<crate::tui::ThinkingBlockId, crate::tui::ThinkingBlockState>,
+    /// Per-message expanded/verbose toggle state, keyed by
+    /// `DisplayMessage::stable_cache_hash()`. When a message hash is present,
+    /// the message renders in its verbose (expanded) form. Absent entries render
+    /// a compact indicator line. Toggled by clicking on the message.
+    expanded_messages: std::collections::HashSet<u64>,
+    /// Monotonic version bumped on every per-message expand/collapse toggle.
+    /// Included in the body cache key so the transcript rebuilds with the
+    /// correct rendering after a toggle.
+    expanded_messages_version: u64,
     // Auto-hide deadline for the pinned image side pane only.
     pinned_images_auto_hide_deadline: Option<Instant>,
     pinned_images_seen_count: usize,

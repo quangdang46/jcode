@@ -1536,22 +1536,53 @@ pub(super) fn build_notification_spans(app: &dyn TuiState) -> Vec<Span<'static>>
                     format!("🧊 cache cold{}", tokens_str),
                     Style::default().fg(rgb(140, 180, 255)),
                 ));
-            } else if cache_info.remaining_secs <= 60 {
+            } else {
+                let remaining_secs = cache_info.remaining_secs;
                 let tokens_str = cache_info
                     .cached_tokens
                     .map(|t| {
-                        if t >= 1_000 {
-                            format!(" {}K", t / 1000)
+                        if t >= 1_000_000 {
+                            format!(" ({:.1}M tok)", t as f64 / 1_000_000.0)
+                        } else if t >= 1_000 {
+                            format!(" ({}K tok)", t / 1000)
                         } else {
-                            format!(" {}", t)
+                            format!(" ({} tok)", t)
                         }
                     })
                     .unwrap_or_default();
+
+                let (color, label) = if remaining_secs > 300 {
+                    // Green: >5 min
+                    (
+                        rgb(100, 200, 100),
+                        format!(
+                            "⏳ cache {:.0}m{}",
+                            remaining_secs as f64 / 60.0,
+                            tokens_str
+                        ),
+                    )
+                } else if remaining_secs > 60 {
+                    // Red: <5 min but >=1 min
+                    (
+                        rgb(255, 100, 100),
+                        format!("⏳ cache {}s{}", remaining_secs, tokens_str),
+                    )
+                } else {
+                    // Flashing: <1 min — alternate red / dark using frame-based time
+                    let flash_on = (app.animation_elapsed() * 2.0) as u64 % 2 == 0;
+                    let color = if flash_on {
+                        rgb(255, 100, 100)
+                    } else {
+                        rgb(80, 30, 30)
+                    };
+                    (
+                        color,
+                        format!("⏳ cache {}s{}", remaining_secs, tokens_str),
+                    )
+                };
+
                 push_sep(&mut spans);
-                spans.push(Span::styled(
-                    format!("⏳ cache {}s{}", cache_info.remaining_secs, tokens_str),
-                    Style::default().fg(rgb(255, 193, 7)),
-                ));
+                spans.push(Span::styled(label, Style::default().fg(color)));
             }
         }
     }

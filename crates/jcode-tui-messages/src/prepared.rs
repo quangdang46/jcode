@@ -292,6 +292,33 @@ impl PreparedChatFrame {
             .map(String::as_str)
     }
 
+    /// Given an absolute wrapped line index, return the `DisplayMessage`
+    /// stable cache hash of the message that line belongs to. Returns `None`
+    /// when the line is outside any message (header, streaming, etc.) or
+    /// when boundary data is unavailable.
+    pub fn message_hash_for_abs_line(&self, abs_line: usize) -> Option<u64> {
+        // Only Body sections have per-message boundaries.
+        let body = self.sections.iter().find(|s| s.kind == PreparedSectionKind::Body)?;
+        if abs_line < body.line_start {
+            return None;
+        }
+        let local = abs_line - body.line_start;
+        let pm = &body.prepared;
+        if local >= pm.wrapped_lines.len() {
+            return None;
+        }
+        let boundaries = &pm.message_boundaries;
+        if boundaries.is_empty() {
+            return None;
+        }
+        // wrapped_line_map[local] gives the pre-wrap (raw) line index.
+        let prewrap_line = pm.wrapped_line_map.get(local)?.raw_line;
+        // Boundaries are cumulative pre-wrap line counts after each message.
+        // The first boundary whose wrapped_len > prewrap_line owns this line.
+        let boundary_idx = boundaries.partition_point(|b| b.wrapped_len <= prewrap_line);
+        Some(boundaries.get(boundary_idx)?.msg_hash)
+    }
+
     pub fn wrapped_line_map(&self, abs_line: usize) -> Option<WrappedLineMap> {
         let (section, local) = self.line_section(abs_line)?;
         let map = section.prepared.wrapped_line_map.get(local)?;

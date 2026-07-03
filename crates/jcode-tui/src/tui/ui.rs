@@ -131,8 +131,8 @@ use messages::get_cached_message_lines;
 #[cfg_attr(test, allow(unused_imports))]
 pub(crate) use messages::{
     render_assistant_message, render_background_task_message, render_reasoning_message,
-    render_collapsed_reasoning_block, render_swarm_message, render_system_message,
-    render_tool_message, render_usage_message,
+    render_collapsed_reasoning_block, render_collapsed_assistant_block, render_swarm_message,
+    render_system_message, render_tool_message, render_usage_message,
 };
 pub use pinned_ui::{
     SidePanelDebugStats, SidePanelMermaidProbe, SidePanelMermaidProbeRect,
@@ -219,6 +219,7 @@ thread_local! {
     static TEST_PROMPT_VIEWPORT_STATE: RefCell<PromptViewportState> = RefCell::new(PromptViewportState::default());
     static TEST_COPY_VIEWPORT: RefCell<CopyViewportSnapshots> = RefCell::new(CopyViewportSnapshots::default());
     static TEST_NEW_MESSAGES_PILL_AREA: RefCell<Option<Rect>> = const { RefCell::new(None) };
+    static TEST_STICKY_PROMPT_AREA: RefCell<Option<Rect>> = const { RefCell::new(None) };
 }
 
 /// Get the last known max scroll value (from the most recent render frame).
@@ -815,6 +816,10 @@ struct BodyCacheKey {
     /// expand-level geometry into the body, so a level change must rebuild the
     /// body exactly like an image-set change does.
     expanded_images_version: u64,
+    /// Monotonic per-message expanded-state version. Bumped whenever a message
+    /// is toggled between collapsed/expanded, busting the body cache so the
+    /// new rendering takes effect.
+    expanded_messages_version: u64,
 }
 
 #[derive(Clone)]
@@ -1230,6 +1235,46 @@ pub(crate) fn record_new_messages_pill_area(area: Rect) {
     }
 }
 
+/// Rectangle of the sticky prompt header on the most recent render frame.
+/// Returns `None` if no sticky header was rendered.
+pub(crate) fn last_sticky_prompt_area() -> Option<Rect> {
+    #[cfg(test)]
+    {
+        return TEST_STICKY_PROMPT_AREA.with(|snapshot| *snapshot.borrow());
+    }
+    #[cfg(not(test))]
+    {
+        sticky_prompt_area_state()
+            .lock()
+            .ok()
+            .and_then(|snapshot| *snapshot)
+    }
+}
+
+#[cfg(not(test))]
+static STICKY_PROMPT_AREA: OnceLock<Mutex<Option<Rect>>> = OnceLock::new();
+
+#[cfg(not(test))]
+fn sticky_prompt_area_state() -> &'static Mutex<Option<Rect>> {
+    STICKY_PROMPT_AREA.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) fn record_sticky_prompt_area(area: Rect) {
+    #[cfg(test)]
+    {
+        TEST_STICKY_PROMPT_AREA.with(|snapshot| {
+            *snapshot.borrow_mut() = Some(area);
+        });
+        return;
+    }
+    #[cfg(not(test))]
+    {
+        if let Ok(mut snapshot) = sticky_prompt_area_state().lock() {
+            *snapshot = Some(area);
+        }
+    }
+}
+
 /// Rectangle of the "N new message(s)" pill on the most recent render frame.
 /// Returns `None` if no pill was rendered.
 pub(crate) fn last_new_messages_pill_area() -> Option<Rect> {
@@ -1423,6 +1468,9 @@ pub(crate) fn clear_test_render_state_for_tests() {
     TEST_PROMPT_VIEWPORT_STATE.with(|state| {
         *state.borrow_mut() = PromptViewportState::default();
     });
+    TEST_STICKY_PROMPT_AREA.with(|snapshot| {
+        *snapshot.borrow_mut() = None;
+    });
 }
 
 /// Test-only: render just the onboarding welcome screen into `area`, using the
@@ -1536,6 +1584,17 @@ impl CopyViewportSnapshot {
                     && region.abs_line_idx == abs_line + 1
             })
             .map(|region| region.hash)
+    }
+
+    /// Return the stable cache hash of the message that contains the given
+    /// absolute wrapped line, if this snapshot is backed by a ChatFrame.
+    fn message_hash_for_line(&self, abs_line: usize) -> Option<u64> {
+        match &self.data {
+            CopyViewportData::ChatFrame { prepared } => {
+                prepared.message_hash_for_abs_line(abs_line)
+            }
+            CopyViewportData::Dense { .. } => None,
+        }
     }
 }
 
@@ -2335,6 +2394,15 @@ pub(crate) fn inline_image_expand_target_from_screen(column: u16, row: u16) -> O
     } else {
         None
     }
+}
+
+/// If a screen location lands on a transcript message, return the message's
+/// stable cache hash (for toggling expanded/collapsed state). Returns `None`
+/// when the location is outside any message (header, streaming, etc.).
+pub(crate) fn message_hash_from_screen(column: u16, row: u16) -> Option<u64> {
+    let point = copy_point_from_screen(column, row)?;
+    let snapshot = copy_snapshot_for_pane(point.pane)?;
+    snapshot.message_hash_for_line(point.abs_line)
 }
 
 pub fn draw(frame: &mut Frame, app: &dyn TuiState) {

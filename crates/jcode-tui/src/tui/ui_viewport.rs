@@ -1066,56 +1066,31 @@ pub(super) fn draw_messages(
                 };
 
                 let text_flat = prompt_text.replace('\n', " ");
-                let text_chars: Vec<char> = text_flat.chars().collect();
-                let is_long = text_chars.len() > content_width;
-
-                let preview_lines: Vec<Line<'static>> = if !is_long {
-                    vec![
-                        Line::from(vec![
-                            Span::styled(num_str.clone(), dim_style.fg(dim_color()).bg(user_bg())),
-                            Span::styled("› ", dim_style.fg(user_color()).bg(user_bg())),
-                            Span::styled(text_flat, dim_style.fg(user_text()).bg(user_bg())),
-                        ])
-                        .alignment(align),
-                    ]
+                // Sticky header: always exactly 1 row, truncate with ellipsis.
+                let truncated = if content_width > 0 && text_flat.chars().count() > content_width {
+                    let cap = content_width.saturating_sub(1).max(1);
+                    let truncated: String = text_flat.chars().take(cap).collect();
+                    format!("{}…", truncated.trim_end())
                 } else {
-                    let half = content_width.max(4);
-                    let head: String = text_chars[..half.min(text_chars.len())].iter().collect();
-                    let tail_start = text_chars.len().saturating_sub(half);
-                    let tail: String = text_chars[tail_start..].iter().collect();
-
-                    let first = Line::from(vec![
-                        Span::styled(num_str.clone(), dim_style.fg(dim_color()).bg(user_bg())),
-                        Span::styled("› ", dim_style.fg(user_color()).bg(user_bg())),
-                        Span::styled(
-                            format!("{} ...", head.trim_end()),
-                            dim_style.fg(user_text()).bg(user_bg()),
-                        ),
-                    ])
-                    .alignment(align);
-
-                    let padding: String = " ".repeat(prefix_len);
-                    let second = Line::from(vec![
-                        Span::styled(padding, dim_style.bg(user_bg())),
-                        Span::styled(
-                            format!("... {}", tail.trim_start()),
-                            dim_style.fg(user_text()).bg(user_bg()),
-                        ),
-                    ])
-                    .alignment(align);
-
-                    vec![first, second]
+                    text_flat.clone()
                 };
 
-                let line_count = preview_lines.len() as u16;
+                let sticky_line = Line::from(vec![
+                    Span::styled(num_str.clone(), dim_style.fg(dim_color()).bg(user_bg())),
+                    Span::styled("› ", dim_style.fg(user_color()).bg(user_bg())),
+                    Span::styled(truncated, dim_style.fg(user_text()).bg(user_bg())),
+                ])
+                .alignment(align);
+
                 let preview_area = Rect {
                     x: content_area.x,
                     y: render_area.y,
                     width: content_area.width.saturating_sub(1),
-                    height: line_count,
+                    height: 1,
                 };
                 clear_area(frame, preview_area);
-                frame.render_widget(Paragraph::new(preview_lines), preview_area);
+                frame.render_widget(Paragraph::new(vec![sticky_line]), preview_area);
+                super::record_sticky_prompt_area(preview_area);
             }
         }
     }
@@ -1190,6 +1165,9 @@ fn compute_prompt_preview_line_count(
     scroll: usize,
     area_width: u16,
 ) -> u16 {
+    if area_width < 4 {
+        return 0;
+    }
     let last_offscreen = lower_bound(wrapped_user_prompt_starts, scroll).checked_sub(1);
     let Some(prompt_order) = last_offscreen else {
         return 0;
@@ -1201,12 +1179,8 @@ fn compute_prompt_preview_line_count(
     if prompt_text.is_empty() {
         return 0;
     }
-    let num_str = format!("{}", prompt_order + 1);
-    let prefix_len = num_str.len() + 2;
-    let content_width = area_width.saturating_sub(prefix_len as u16 + 2) as usize;
-    let text_flat = prompt_text.replace('\n', " ");
-    let display_width = UnicodeWidthStr::width(text_flat.as_str());
-    if display_width > content_width { 2 } else { 1 }
+    // Sticky header: always exactly 1 row.
+    1
 }
 
 fn compute_max_scroll_with_prompt_preview(

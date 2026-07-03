@@ -58,6 +58,13 @@ impl App {
 
     pub(super) fn build_turn_footer(&self, duration: Option<f32>) -> Option<String> {
         let mut parts = Vec::new();
+
+        // Model and provider prefix (always present).
+        let model = <Self as TuiState>::provider_model(self);
+        let provider = <Self as TuiState>::provider_name(self);
+        parts.push(model);
+        parts.push(provider);
+
         if let Some(secs) = duration {
             let duration_ms = (secs.max(0.0) * 1000.0).round() as u64;
             parts.push(Message::format_duration(duration_ms));
@@ -79,11 +86,7 @@ impl App {
             parts.push(cache);
         }
 
-        if parts.is_empty() {
-            None
-        } else {
-            Some(parts.join(" · "))
-        }
+        Some(parts.join(" · "))
     }
 
     pub(super) fn has_streaming_footer_stats(&self) -> bool {

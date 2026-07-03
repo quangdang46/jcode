@@ -189,6 +189,24 @@ impl App {
         true
     }
 
+    /// If a left-click landed on a transcript message, toggle its expanded/
+    /// collapsed state and return `true`. Returns `false` when no expandable
+    /// message was hit (the click should fall through to link/selection handling).
+    pub(super) fn try_toggle_message_expand_at(&mut self, column: u16, row: u16) -> bool {
+        let Some(hash) = super::super::ui::message_hash_from_screen(column, row) else {
+            return false;
+        };
+        // No-op on non-message hashes (0).
+        if hash == 0 {
+            return false;
+        }
+        if !self.expanded_messages.remove(&hash) {
+            self.expanded_messages.insert(hash);
+        }
+        self.expanded_messages_version = self.expanded_messages_version.wrapping_add(1);
+        true
+    }
+
     pub(super) fn try_open_link_at(&mut self, column: u16, row: u16) -> bool {
         self.try_open_link_at_with(column, row, |url| {
             super::helpers::open_path_or_url_detached(url)
@@ -1463,6 +1481,12 @@ impl App {
             finish_mouse_event!(false, "open_link");
         }
 
+        if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
+            && self.try_toggle_message_expand_at(mouse.column, mouse.row)
+        {
+            finish_mouse_event!(false, "toggle_message_expand");
+        }
+
         // Click on the "N new message(s)" / "Jump to bottom" pill: follow chat bottom.
         if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
             && self.auto_scroll_paused
@@ -1477,6 +1501,23 @@ impl App {
         {
             self.follow_chat_bottom();
             finish_mouse_event!(false, "new_messages_pill_click");
+        }
+
+        // Click on the sticky prompt header (the dimmed line showing the last
+        // offscreen user prompt at the top of the chat viewport): scroll to
+        // that prompt's first line.
+        if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
+            && super::super::ui::last_sticky_prompt_area()
+                .is_some_and(|area| {
+                    super::super::layout_utils::point_in_rect(
+                        mouse.column,
+                        mouse.row,
+                        area,
+                    )
+                })
+        {
+            self.scroll_to_prev_prompt();
+            finish_mouse_event!(false, "sticky_prompt_header_click");
         }
 
         match mouse.kind {

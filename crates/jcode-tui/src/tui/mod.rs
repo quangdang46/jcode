@@ -642,6 +642,17 @@ pub trait TuiState {
     fn expanded_images_version(&self) -> u64 {
         0
     }
+    /// Whether the given message (identified by stable cache hash) is in its
+    /// expanded (verbose) state. When false, the message renders compacted to a
+    /// single indicator line. The default returns `false` for all messages.
+    fn is_message_expanded(&self, _msg_hash: u64) -> bool {
+        false
+    }
+    /// Monotonic version bumped on every per-message expand/collapse toggle.
+    /// Used by the body cache key to bust the cache when toggle state changes.
+    fn expanded_messages_version(&self) -> u64 {
+        0
+    }
 }
 
 #[cfg(feature = "dev-bins")]

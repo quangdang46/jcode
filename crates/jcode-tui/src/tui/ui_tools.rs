@@ -816,6 +816,18 @@ pub(super) fn collapsible_tool_item_label(tc: &ToolCall) -> String {
     }
 }
 
+/// Returns true if this tool name supports grouped rendering.
+///
+/// Grouped tools (bash, subagent) are wrapped in a box when 2+
+/// appear consecutively from the same assistant turn.
+/// Single calls stay ungrouped (per CLAUDECODE_UI.md §37).
+pub(super) fn is_groupable_tool_name(name: &str) -> bool {
+    matches!(
+        canonical_tool_name(name),
+        "bash" | "subagent" | "task" | "task_runner"
+    )
+}
+
 pub(super) fn is_memory_store_tool(tc: &ToolCall) -> bool {
     match tc.name.as_str() {
         "memory" => tc

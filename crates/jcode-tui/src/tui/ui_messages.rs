@@ -105,6 +105,23 @@ pub(crate) fn render_collapsed_reasoning_block(width: u16) -> Vec<Line<'static>>
     vec![line]
 }
 
+/// Render a collapsed assistant message: a single dim line with an expand
+/// hint. Use when the user has not explicitly toggled the message to verbose.
+pub(crate) fn render_collapsed_assistant_block(width: u16) -> Vec<Line<'static>> {
+    let centered = markdown::center_code_blocks();
+    let text = "  ···  click to expand";
+    let mut line = Line::from(Span::styled(
+        text.to_string(),
+        Style::default().fg(dim_color()),
+    ));
+    if centered {
+        let pad = (width as usize).saturating_sub(text.len()) / 2;
+        line.spans.insert(0, Span::raw(" ".repeat(pad)));
+        line.alignment = Some(ratatui::layout::Alignment::Left);
+    }
+    vec![line]
+}
+
 fn render_assistant_tool_call_lines(
     tool_calls: &[String],
     width: usize,
@@ -1868,8 +1885,6 @@ pub(crate) fn render_tool_message(
         &token_suffix,
         row_width,
     );
-    let rendered_tool_line_text = super::line_plain_text(&rendered_tool_line);
-
     // Optionally render the full agentgrep search output inline in the
     // transcript. Gated behind `display.show_agentgrep_output` (default false)
     // so most users keep the compact one-line summary.
@@ -1882,38 +1897,15 @@ pub(crate) fn render_tool_message(
         }
     }
 
-    if tools_ui::canonical_tool_name(&tc.name) == "bash"
-        && !rendered_tool_line_text.contains('$')
-        && let Some(command) = tc.input.get("command").and_then(|v| v.as_str())
-    {
-        let detail_width = row_width.saturating_sub(4).max(1);
-        if detail_width >= 20 {
-            let summary = tools_ui::get_tool_summary_with_budget(tc, 60, Some(detail_width));
-            let cmd_display = if !summary.trim().is_empty() {
-                summary
-            } else {
-                let input_val = tc
-                    .input
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| tc.input.get("file_path").and_then(|v| v.as_str()))
-                    .or_else(|| tc.input.get("path").and_then(|v| v.as_str()))
-                    .or_else(|| tc.input.get("name").and_then(|v| v.as_str()))
-                    .or_else(|| tc.input.get("code").and_then(|v| v.as_str()))
-                    .or_else(|| tc.input.get("url").and_then(|v| v.as_str()))
-                    .or_else(|| tc.input.get("question").and_then(|v| v.as_str()))
-                    .or_else(|| tc.input.get("message").and_then(|v| v.as_str()))
-                    .or_else(|| tc.input.get("spec").and_then(|v| v.as_str()))
-                    .unwrap_or("");
-                if input_val.is_empty() {
-                    String::new()
-                } else {
-                    format!("$ {}", input_val)
-                }
-            };
-
-            if !cmd_display.is_empty() {
-                lines.push(rendered_tool_line);
+    // ExpandShellOutputContext: push the bash tool summary line and render
+    // bash output inline beneath it (CLAUDECODE_UI.md §8).
+    // The latest bash result shows full output; all bash results are expanded
+    // here with output body inline, capped to prevent transcript flooding.
+    if tools_ui::canonical_tool_name(&tc.name) == "bash" {
+        lines.push(rendered_tool_line);
+        if !msg.content.trim().is_empty() {
+            for line in render_agentgrep_output_body(&msg.content, row_width) {
+                lines.push(line);
             }
         }
     }
@@ -2105,6 +2097,140 @@ pub(crate) fn render_tool_message(
     }
 
     lines
+}
+
+/// Render a turn footer message as a dim separator line.
+///
+/// Matching CLAUDECODE_UI.md section 6 "Assistant Turn Footer":
+///
+/// ```text
+/// ─── sonnet-4 · Anthropic · 3.2s · ~1,240 tokens ───────────────────
+/// ```
+///
+/// The metadata text is centered with `───` separators extending to the
+/// available width.  The raw text stored for copy selection is just the
+/// metadata (without separators).
+pub(crate) fn render_turn_footer(content: &str, width: u16) -> Line<'static> {
+    let sep = "─";
+    let text = content.trim();
+    let text_width = unicode_width::UnicodeWidthStr::width(text);
+    let inner_pad = 2; // space before and after text
+    let left_prefix = "─── ";  // 4 chars
+    let left_prefix_width = unicode_width::UnicodeWidthStr::width(left_prefix);
+    let avail = (width as usize).saturating_sub(left_prefix_width + inner_pad);
+    let padding = avail.saturating_sub(text_width);
+    if text_width > avail {
+        // Text too long — just show the text without separators.
+        Line::from(Span::styled(text.to_string(), Style::default().fg(dim_color())))
+    } else {
+        Line::from(Span::styled(
+            format!("─── {} {}", text, sep.repeat(padding)),
+            Style::default().fg(dim_color()),
+        ))
+    }
+}
+
+/// Render a grouped tool use container: 2+ consecutive Bash/Agent tool
+/// calls from the same assistant turn, merged into a box.
+///
+/// Layout:
+///   ╭─ ✓ Bash (2 calls) · 1.2k ───────────────────────╮
+///   │  ✓ $ cargo build                                 │
+///   │  ● $ cargo check                                  │
+///   ╰──────────────────────────────────────────────────╯
+///
+/// Single calls are NOT grouped — they render individually via
+/// `render_tool_message`. This only fires for runs of 2+.
+pub(crate) fn render_grouped_tool_use(
+    messages: &[&DisplayMessage],
+    width: usize,
+) -> Vec<Line<'static>> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+
+    let tool_name = messages[0]
+        .tool_data
+        .as_ref()
+        .map(|tc| tools_ui::resolve_display_tool_name(&tc.name))
+        .unwrap_or("tool");
+
+    let display_name = match tools_ui::canonical_tool_name(tool_name) {
+        "bash" => "Bash",
+        "subagent" | "task" | "task_runner" => "Agent",
+        other => other,
+    };
+
+    let total = messages.len();
+    let failed = messages
+        .iter()
+        .filter(|msg| {
+            msg.tool_data
+                .as_ref()
+                .is_some_and(|_| tools_ui::tool_output_looks_failed(&msg.content))
+        })
+        .count();
+    let all_ok = failed == 0;
+
+    let total_tokens: usize = messages
+        .iter()
+        .map(|msg| crate::util::estimate_tokens(&msg.content))
+        .sum();
+
+    let (icon, _) = if all_ok {
+        ("✓", rgb(100, 180, 100))
+    } else if failed == total {
+        ("●", rgb(220, 100, 100))
+    } else {
+        ("⚠", rgb(214, 184, 92))
+    };
+
+    let token_part = if total_tokens > 0 {
+        format!(
+            " · {}",
+            crate::util::format_approx_token_count(total_tokens)
+        )
+    } else {
+        String::new()
+    };
+
+    let title = format!(
+        " {} {} ({} calls){} ",
+        icon, display_name, total, token_part
+    );
+    let border_style = Style::default().fg(super::tool_color());
+
+    // Build sub-item lines (one per tool result)
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(messages.len());
+
+    for msg in messages {
+        let Some(ref tc) = msg.tool_data else {
+            continue;
+        };
+
+        let sub_errored = tools_ui::tool_output_looks_failed(&msg.content);
+        let (sub_icon, sub_color) = if sub_errored {
+            ("●", rgb(220, 100, 100))
+        } else {
+            ("✓", rgb(100, 180, 100))
+        };
+
+        let sub_summary = if let Some(error_summary) =
+            tools_ui::concise_tool_error_summary(&msg.content)
+        {
+            error_summary
+        } else {
+            tools_ui::get_tool_summary_with_budget(tc, 50, None)
+        };
+
+        lines.push(Line::from(vec![Span::styled(
+            format!(" {} {} ", sub_icon, sub_summary),
+            Style::default().fg(sub_color),
+        )]));
+    }
+
+    let max_box_width = width.min(120).max(20);
+    super::render_rounded_box(&title, lines, max_box_width, border_style)
 }
 
 /// Render a collapsed read/search group: consecutive Read/Grep/Glob/LS tool

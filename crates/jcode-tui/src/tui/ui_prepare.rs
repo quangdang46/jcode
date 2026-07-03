@@ -2,6 +2,55 @@ use super::*;
 use crate::tui::ui::{self, WrappedLineMap};
 use crate::tui::ThinkingBlockState;
 
+// ── Grouped tool use helpers ──
+
+/// Normalize a tool name to a grouping key so "bash" stays "bash" and
+/// "subagent" / "task" / "task_runner" all map to "subagent".
+fn tool_group_key(name: &str) -> &str {
+    match tools_ui::canonical_tool_name(name) {
+        "bash" => "bash",
+        "subagent" | "task" | "task_runner" => "subagent",
+        other => other,
+    }
+}
+
+/// Scan `messages` from `start_idx` to the end of a consecutive run of
+/// groupable tools sharing the same group key.  Returns `start_idx` when
+/// the message at that position is not groupable or is the only one.
+fn find_tool_group_end(messages: &[DisplayMessage], start_idx: usize) -> usize {
+    let Some(msg) = messages.get(start_idx) else {
+        return start_idx;
+    };
+    if msg.effective_role() != "tool" {
+        return start_idx;
+    }
+    let Some(ref tc) = msg.tool_data else {
+        return start_idx;
+    };
+    let key = tool_group_key(&tc.name);
+    if !tools_ui::is_groupable_tool_name(&tc.name) {
+        return start_idx;
+    }
+
+    let mut end = start_idx;
+    for idx in (start_idx + 1)..messages.len() {
+        let next = &messages[idx];
+        if next.effective_role() != "tool" {
+            break;
+        }
+        let Some(ref next_tc) = next.tool_data else {
+            break;
+        };
+        if tool_group_key(&next_tc.name) != key {
+            break;
+        }
+        end = idx;
+    }
+    end
+}
+
+// ── / Grouped tool use helpers ──
+
 /// Auxiliary render data for an assistant message that is otherwise recomputed
 /// by re-parsing markdown on every body rebuild. Building the body misses its
 /// cache whenever `display_messages_version` changes (e.g. an in-place edit to
@@ -878,6 +927,7 @@ fn prepare_body_cached(app: &dyn TuiState, width: u16) -> Arc<PreparedMessages> 
         pin_images: app.pin_images(),
         inline_images_visible: app.inline_images_visible(),
         images_signature: app.side_pane_images_signature(),
+        expanded_messages_version: app.expanded_messages_version(),
     };
     let msg_count = app.display_messages().len();
     let cache_lookup_start = Instant::now();
@@ -1087,56 +1137,57 @@ fn render_message_into(
         }
         "assistant" => {
             let content_width = width.saturating_sub(4);
-            let cached = get_cached_message_lines(
-                msg,
-                content_width,
-                app.diff_mode(),
-                render_assistant_message,
-            );
-            let message_copy_targets = assistant_message_copy_targets(&msg.content, &cached);
-            for target in message_copy_targets {
-                acc.copy_targets
-                    .push(offset_copy_target(target, acc.lines.len()));
-            }
-            let aux = assistant_aux_data(
-                msg,
-                &cached,
-                content_width,
-                centered,
-                app.diff_mode(),
-                align,
-            );
-            let content_line_count = aux.content_line_count;
-            let logical_plain_lines = &aux.logical_plain_lines;
-            let raw_base = acc.raw_plain_lines.len();
-            let content_maps = map_display_lines_to_logical_lines(
-                &cached[..content_line_count],
-                logical_plain_lines,
-                raw_base,
-            );
-            if let Some(maps) = content_maps {
-                // Content lines map back into the logical markdown lines for
-                // text selection; seed those raws contiguously. Trailing
-                // tool-summary lines (idx >= content_line_count) and any line
-                // the mapping could not cover fall back to self-raws via
-                // `push_auto`, keeping `raw_plain_lines` message-contiguous.
-                acc.raw_plain_lines
-                    .extend(logical_plain_lines.iter().cloned());
-                for (idx, line) in cached.into_iter().enumerate() {
-                    let line = align_if_unset(line, align);
-                    if let Some(map) = maps.get(idx).copied() {
-                        acc.lines.push(line);
-                        acc.line_raw_overrides.push(Some(map));
-                        acc.line_copy_offsets.push(0);
-                    } else {
-                        acc.push_auto(line);
+            let msg_hash = msg.stable_cache_hash();
+            if app.is_message_expanded(msg_hash) {
+                // ── Expanded rendering (full content) ──
+                let cached = get_cached_message_lines(
+                    msg,
+                    content_width,
+                    app.diff_mode(),
+                    render_assistant_message,
+                );
+                let message_copy_targets = assistant_message_copy_targets(&msg.content, &cached);
+                for target in message_copy_targets {
+                    acc.copy_targets
+                        .push(offset_copy_target(target, acc.lines.len()));
+                }
+                let aux = assistant_aux_data(
+                    msg,
+                    &cached,
+                    content_width,
+                    centered,
+                    app.diff_mode(),
+                    align,
+                );
+                let content_line_count = aux.content_line_count;
+                let logical_plain_lines = &aux.logical_plain_lines;
+                let raw_base = acc.raw_plain_lines.len();
+                let content_maps = map_display_lines_to_logical_lines(
+                    &cached[..content_line_count],
+                    logical_plain_lines,
+                    raw_base,
+                );
+                if let Some(maps) = content_maps {
+                    acc.raw_plain_lines
+                        .extend(logical_plain_lines.iter().cloned());
+                    for (idx, line) in cached.into_iter().enumerate() {
+                        let line = align_if_unset(line, align);
+                        if let Some(map) = maps.get(idx).copied() {
+                            acc.lines.push(line);
+                            acc.line_raw_overrides.push(Some(map));
+                            acc.line_copy_offsets.push(0);
+                        } else {
+                            acc.push_auto(line);
+                        }
+                    }
+                } else {
+                    for line in cached {
+                        acc.push_auto(align_if_unset(line, align));
                     }
                 }
             } else {
-                // Logical mapping failed; every display line uses its own plain
-                // text as the raw, matching the previous wrap-time fallback but
-                // recorded contiguously and in message order.
-                for line in cached {
+                // ── Collapsed rendering (compact) ──
+                for line in render_collapsed_assistant_block(content_width) {
                     acc.push_auto(align_if_unset(line, align));
                 }
             }
@@ -1145,24 +1196,22 @@ fn render_message_into(
             let raw_line = acc.raw_plain_lines.len();
             acc.raw_plain_lines.push(msg.content.clone());
             let raw_width = unicode_width::UnicodeWidthStr::width(msg.content.as_str());
-            let prefix_width = if centered {
-                0
+            let effective_width = if centered {
+                width.saturating_sub(1)
             } else {
-                unicode_width::UnicodeWidthStr::width("  ")
+                width.saturating_sub(3)
             };
-            acc.lines.push(
-                Line::from(vec![
-                    Span::raw(if centered { "" } else { "  " }),
-                    Span::styled(msg.content.clone(), Style::default().fg(dim_color())),
-                ])
-                .alignment(align),
-            );
+            let mut footer_line = messages::render_turn_footer(&msg.content, effective_width);
+            if !centered {
+                footer_line.spans.insert(0, Span::raw("  "));
+            }
+            acc.lines.push(footer_line.alignment(align));
             acc.line_raw_overrides.push(Some(WrappedLineMap {
                 raw_line,
                 start_col: 0,
                 end_col: raw_width,
             }));
-            acc.line_copy_offsets.push(prefix_width);
+            acc.line_copy_offsets.push(0);
         }
         "tool" => {
             let tool_start_line = acc.lines.len();
@@ -1441,8 +1490,13 @@ pub(super) fn prepare_body_incremental(
 
     let body_has_content = !prev.wrapped_lines.is_empty();
 
-    for (new_msg_offset, msg) in new_messages.iter().enumerate() {
+    // Use a while loop so we can skip ahead for grouped tool rendering.
+    let full_messages = app.display_messages();
+    let mut new_offset = 0;
+    while new_offset < new_messages.len() {
+        let msg = &new_messages[new_offset];
         let role = msg.effective_role();
+        let full_idx = prev_msg_count + new_offset;
         if (body_has_content || !new_lines.is_empty()) && role != "tool" && role != "meta" {
             new_lines.push(Line::from(""));
             new_line_raw_overrides.push(None);
@@ -1499,106 +1553,226 @@ pub(super) fn prepare_body_incremental(
             }
             "assistant" => {
                 let content_width = width.saturating_sub(4);
-                let cached = get_cached_message_lines(
-                    msg,
-                    content_width,
-                    app.diff_mode(),
-                    render_assistant_message,
-                );
-                let cached_copy_targets = assistant_message_copy_targets(&msg.content, &cached);
-                for target in cached_copy_targets {
-                    new_copy_targets.push(offset_copy_target(target, new_lines.len()));
-                }
-                for line in cached {
-                    new_lines.push(align_if_unset(line, align));
-                    new_line_raw_overrides.push(None);
-                    new_line_copy_offsets.push(0);
+                let msg_hash = msg.stable_cache_hash();
+                if app.is_message_expanded(msg_hash) {
+                    // ── Expanded rendering (full content) ──
+                    let cached = get_cached_message_lines(
+                        msg,
+                        content_width,
+                        app.diff_mode(),
+                        render_assistant_message,
+                    );
+                    let cached_copy_targets = assistant_message_copy_targets(&msg.content, &cached);
+                    for target in cached_copy_targets {
+                        new_copy_targets.push(offset_copy_target(target, new_lines.len()));
+                    }
+                    for line in cached {
+                        new_lines.push(align_if_unset(line, align));
+                        new_line_raw_overrides.push(None);
+                        new_line_copy_offsets.push(0);
+                    }
+                } else {
+                    // ── Collapsed rendering (compact) ──
+                    for line in render_collapsed_assistant_block(content_width) {
+                        new_lines.push(align_if_unset(line, align));
+                        new_line_raw_overrides.push(None);
+                        new_line_copy_offsets.push(0);
+                    }
                 }
             }
             "meta" => {
                 let raw_line = new_raw_plain_lines.len();
                 new_raw_plain_lines.push(msg.content.clone());
                 let raw_width = unicode_width::UnicodeWidthStr::width(msg.content.as_str());
-                let prefix_width = if centered {
-                    0
+                let effective_width = if centered {
+                    width.saturating_sub(1)
                 } else {
-                    unicode_width::UnicodeWidthStr::width("  ")
+                    width.saturating_sub(3)
                 };
-                new_lines.push(
-                    Line::from(vec![
-                        Span::raw(if centered { "" } else { "  " }),
-                        Span::styled(msg.content.clone(), Style::default().fg(dim_color())),
-                    ])
-                    .alignment(align),
-                );
+                let mut footer_line = messages::render_turn_footer(&msg.content, effective_width);
+                if !centered {
+                    footer_line.spans.insert(0, Span::raw("  "));
+                }
+                new_lines.push(footer_line.alignment(align));
                 new_line_raw_overrides.push(Some(WrappedLineMap {
                     raw_line,
                     start_col: 0,
                     end_col: raw_width,
                 }));
-                new_line_copy_offsets.push(prefix_width);
+                new_line_copy_offsets.push(0);
             }
             "tool" => {
-                let tool_start_line = new_lines.len();
-                let cached =
-                    get_cached_message_lines(msg, width, app.diff_mode(), render_tool_message);
-                if let Some(target) = tool_message_copy_target(msg, cached.len()) {
-                    new_copy_targets.push(offset_copy_target(target, tool_start_line));
-                }
-                for line in cached {
-                    new_lines.push(align_if_unset(line, align));
-                    new_line_raw_overrides.push(None);
-                    new_line_copy_offsets.push(0);
-                }
-                if let Some(ref tc) = msg.tool_data {
-                    let is_edit_tool = tools_ui::is_edit_tool_name(&tc.name);
-                    if is_edit_tool {
-                        let file_path = tc
-                            .input
-                            .get("file_path")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string)
-                            .or_else(|| {
-                                tc.input
-                                    .get("patch_text")
-                                    .and_then(|v| v.as_str())
-                                    .and_then(|patch_text| {
-                                        match tools_ui::canonical_tool_name(&tc.name) {
-                                            "apply_patch" => {
-                                                tools_ui::extract_apply_patch_primary_file(
-                                                    patch_text,
-                                                )
-                                            }
-                                            "patch" => {
-                                                tools_ui::extract_unified_patch_primary_file(
-                                                    patch_text,
-                                                )
-                                            }
-                                            _ => None,
-                                        }
-                                    })
-                            })
-                            .unwrap_or_else(|| "unknown".to_string());
-                        let expandable =
-                            messages::edit_tool_inline_diff_is_expandable(tc, &msg.content, width);
-                        new_edit_tool_line_ranges.push((
-                            prev_msg_count + new_msg_offset,
-                            file_path,
-                            tool_start_line,
-                            new_lines.len(),
-                            expandable,
-                        ));
-                    }
-                    if let Some(items) = anchored_images.by_tool.get(&tc.id) {
-                        for line in super::inline_image_ui::anchored_image_lines(
-                            items,
-                            width,
-                            inline_images_visible,
-                            &crate::tui::ui::inline_image_ui::AppExpandLevels(app),
-                        ) {
-                            new_lines.push(line);
+                // Check whether this tool starts a groupable run in the full
+                // messages list.  If the message immediately before the
+                // incremental boundary is also a groupable tool, the first
+                // part was already rendered individually and we cannot
+                // retroactively group — render individually instead.
+                let prev_is_also_groupable = full_idx > 0
+                    && full_messages[full_idx - 1].effective_role() == "tool"
+                    && full_messages[full_idx - 1]
+                        .tool_data
+                        .as_ref()
+                        .is_some_and(|tc| tools_ui::is_groupable_tool_name(&tc.name));
+
+                if !prev_is_also_groupable {
+                    let group_end = find_tool_group_end(full_messages, full_idx);
+                    if group_end > full_idx {
+                        // ── grouped rendering ──
+                        let group_msgs: Vec<&DisplayMessage> = (full_idx..=group_end)
+                            .map(|i| &full_messages[i])
+                            .collect();
+                        let group_lines = messages::render_grouped_tool_use(
+                            &group_msgs,
+                            width as usize,
+                        );
+                        for line in group_lines {
+                            new_lines.push(align_if_unset(line, align));
                             new_line_raw_overrides.push(None);
                             new_line_copy_offsets.push(0);
+                        }
+                        let skipped = group_end - full_idx;
+                        new_offset += skipped; // +1 below → group_end + 1
+                    } else {
+                        // ── individual tool rendering ──
+                        let tool_start_line = new_lines.len();
+                        let cached = get_cached_message_lines(
+                            msg,
+                            width,
+                            app.diff_mode(),
+                            render_tool_message,
+                        );
+                        if let Some(target) = tool_message_copy_target(msg, cached.len()) {
+                            new_copy_targets
+                                .push(offset_copy_target(target, tool_start_line));
+                        }
+                        for line in cached {
+                            new_lines.push(align_if_unset(line, align));
+                            new_line_raw_overrides.push(None);
+                            new_line_copy_offsets.push(0);
+                        }
+                        if let Some(ref tc) = msg.tool_data {
+                            let is_edit_tool = tools_ui::is_edit_tool_name(&tc.name);
+                            if is_edit_tool {
+                                let file_path = tc
+                                    .input
+                                    .get("file_path")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string)
+                                    .or_else(|| {
+                                        tc.input
+                                            .get("patch_text")
+                                            .and_then(|v| v.as_str())
+                                            .and_then(|patch_text| {
+                                                match tools_ui::canonical_tool_name(&tc.name) {
+                                                    "apply_patch" => {
+                                                        tools_ui::extract_apply_patch_primary_file(
+                                                            patch_text,
+                                                        )
+                                                    }
+                                                    "patch" => {
+                                                        tools_ui::extract_unified_patch_primary_file(
+                                                            patch_text,
+                                                        )
+                                                    }
+                                                    _ => None,
+                                                }
+                                            })
+                                    })
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                let expandable = messages::edit_tool_inline_diff_is_expandable(
+                                    tc, &msg.content, width,
+                                );
+                                new_edit_tool_line_ranges.push((
+                                    full_idx,
+                                    file_path,
+                                    tool_start_line,
+                                    new_lines.len(),
+                                    expandable,
+                                ));
+                            }
+                            if let Some(items) = anchored_images.by_tool.get(&tc.id) {
+                                for line in super::inline_image_ui::anchored_image_lines(
+                                    items,
+                                    width,
+                                    inline_images_visible,
+                                    &crate::tui::ui::inline_image_ui::AppExpandLevels(app),
+                                ) {
+                                    new_lines.push(line);
+                                    new_line_raw_overrides.push(None);
+                                    new_line_copy_offsets.push(0);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Previous message was a groupable tool that was already
+                    // rendered individually; render this one individually too.
+                    let tool_start_line = new_lines.len();
+                    let cached = get_cached_message_lines(
+                        msg,
+                        width,
+                        app.diff_mode(),
+                        render_tool_message,
+                    );
+                    if let Some(target) = tool_message_copy_target(msg, cached.len()) {
+                        new_copy_targets.push(offset_copy_target(target, tool_start_line));
+                    }
+                    for line in cached {
+                        new_lines.push(align_if_unset(line, align));
+                        new_line_raw_overrides.push(None);
+                        new_line_copy_offsets.push(0);
+                    }
+                    if let Some(ref tc) = msg.tool_data {
+                        let is_edit_tool = tools_ui::is_edit_tool_name(&tc.name);
+                        if is_edit_tool {
+                            let file_path = tc
+                                .input
+                                .get("file_path")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string)
+                                .or_else(|| {
+                                    tc.input
+                                        .get("patch_text")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|patch_text| {
+                                            match tools_ui::canonical_tool_name(&tc.name) {
+                                                "apply_patch" => {
+                                                    tools_ui::extract_apply_patch_primary_file(
+                                                        patch_text,
+                                                    )
+                                                }
+                                                "patch" => {
+                                                    tools_ui::extract_unified_patch_primary_file(
+                                                        patch_text,
+                                                    )
+                                                }
+                                                _ => None,
+                                            }
+                                        })
+                                })
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let expandable = messages::edit_tool_inline_diff_is_expandable(
+                                tc, &msg.content, width,
+                            );
+                            new_edit_tool_line_ranges.push((
+                                full_idx,
+                                file_path,
+                                tool_start_line,
+                                new_lines.len(),
+                                expandable,
+                            ));
+                        }
+                        if let Some(items) = anchored_images.by_tool.get(&tc.id) {
+                            for line in super::inline_image_ui::anchored_image_lines(
+                                items,
+                                width,
+                                inline_images_visible,
+                                &crate::tui::ui::inline_image_ui::AppExpandLevels(app),
+                            ) {
+                                new_lines.push(line);
+                                new_line_raw_overrides.push(None);
+                                new_line_copy_offsets.push(0);
+                            }
                         }
                     }
                 }
@@ -1774,6 +1948,7 @@ pub(super) fn prepare_body_incremental(
             }
             _ => {}
         }
+        new_offset += 1;
     }
 
     let new_wrapped = wrap_lines_with_map(
@@ -1955,7 +2130,11 @@ pub(super) fn prepare_body(
     let inline_images_visible = app.inline_images_visible();
     let mut anchor_prompt_ordinal = 0usize;
 
-    for (msg_idx, msg) in app.display_messages().iter().enumerate() {
+    // Use a while loop so we can skip ahead for grouped tool rendering.
+    let messages = app.display_messages();
+    let mut msg_idx = 0;
+    while msg_idx < messages.len() {
+        let msg = &messages[msg_idx];
         let role = msg.effective_role();
         let align = default_message_alignment(role, centered);
         if !lines.is_empty() && role != "tool" && role != "meta" && role != "swarm" {
@@ -2001,136 +2180,173 @@ pub(super) fn prepare_body(
             }
             "assistant" => {
                 let content_width = width.saturating_sub(4);
-                let cached = get_cached_message_lines(
-                    msg,
-                    content_width,
-                    app.diff_mode(),
-                    render_assistant_message,
-                );
-                let message_copy_targets = assistant_message_copy_targets(&msg.content, &cached);
-                for target in message_copy_targets {
-                    copy_targets.push(offset_copy_target(target, lines.len()));
-                }
-                let aux = assistant_aux_data(
-                    msg,
-                    &cached,
-                    content_width,
-                    centered,
-                    app.diff_mode(),
-                    align,
-                );
-                let content_line_count = aux.content_line_count;
-                let logical_plain_lines = &aux.logical_plain_lines;
-                let raw_base = raw_plain_lines.len();
-                raw_plain_lines.extend(logical_plain_lines.iter().cloned());
-                let content_maps = map_display_lines_to_logical_lines(
-                    &cached[..content_line_count],
-                    logical_plain_lines,
-                    raw_base,
-                );
-
-                for (idx, line) in cached.into_iter().enumerate() {
-                    lines.push(align_if_unset(line, align));
-                    if idx < content_line_count {
-                        line_raw_overrides.push(
-                            content_maps
-                                .as_ref()
-                                .and_then(|maps| maps.get(idx).copied()),
-                        );
-                    } else {
-                        line_raw_overrides.push(None);
+                let msg_hash = msg.stable_cache_hash();
+                if app.is_message_expanded(msg_hash) {
+                    // ── Expanded rendering (full content) ──
+                    let cached = get_cached_message_lines(
+                        msg,
+                        content_width,
+                        app.diff_mode(),
+                        render_assistant_message,
+                    );
+                    let message_copy_targets = assistant_message_copy_targets(&msg.content, &cached);
+                    for target in message_copy_targets {
+                        copy_targets.push(offset_copy_target(target, lines.len()));
                     }
-                    line_copy_offsets.push(0);
+                    let aux = assistant_aux_data(
+                        msg,
+                        &cached,
+                        content_width,
+                        centered,
+                        app.diff_mode(),
+                        align,
+                    );
+                    let content_line_count = aux.content_line_count;
+                    let logical_plain_lines = &aux.logical_plain_lines;
+                    let raw_base = raw_plain_lines.len();
+                    raw_plain_lines.extend(logical_plain_lines.iter().cloned());
+                    let content_maps = map_display_lines_to_logical_lines(
+                        &cached[..content_line_count],
+                        logical_plain_lines,
+                        raw_base,
+                    );
+
+                    for (idx, line) in cached.into_iter().enumerate() {
+                        lines.push(align_if_unset(line, align));
+                        if idx < content_line_count {
+                            line_raw_overrides.push(
+                                content_maps
+                                    .as_ref()
+                                    .and_then(|maps| maps.get(idx).copied()),
+                            );
+                        } else {
+                            line_raw_overrides.push(None);
+                        }
+                        line_copy_offsets.push(0);
+                    }
+                } else {
+                    // ── Collapsed rendering (compact) ──
+                    for line in render_collapsed_assistant_block(content_width) {
+                        lines.push(align_if_unset(line, align));
+                        line_raw_overrides.push(None);
+                        line_copy_offsets.push(0);
+                    }
                 }
             }
             "meta" => {
                 let raw_line = raw_plain_lines.len();
                 raw_plain_lines.push(msg.content.clone());
                 let raw_width = unicode_width::UnicodeWidthStr::width(msg.content.as_str());
-                let prefix_width = if centered {
-                    0
+                let effective_width = if centered {
+                    width.saturating_sub(1)
                 } else {
-                    unicode_width::UnicodeWidthStr::width("  ")
+                    width.saturating_sub(3)
                 };
-                lines.push(
-                    Line::from(vec![
-                        Span::raw(if centered { "" } else { "  " }),
-                        Span::styled(msg.content.clone(), Style::default().fg(dim_color())),
-                    ])
-                    .alignment(align),
-                );
+                let mut footer_line = messages::render_turn_footer(&msg.content, effective_width);
+                if !centered {
+                    footer_line.spans.insert(0, Span::raw("  "));
+                }
+                lines.push(footer_line.alignment(align));
                 line_raw_overrides.push(Some(WrappedLineMap {
                     raw_line,
                     start_col: 0,
                     end_col: raw_width,
                 }));
-                line_copy_offsets.push(prefix_width);
+                line_copy_offsets.push(0);
             }
             "tool" => {
-                let tool_start_line = lines.len();
-                let cached =
-                    get_cached_message_lines(msg, width, app.diff_mode(), render_tool_message);
-                if let Some(target) = tool_message_copy_target(msg, cached.len()) {
-                    copy_targets.push(offset_copy_target(target, tool_start_line));
-                }
-                for line in cached {
-                    lines.push(align_if_unset(line, align));
-                    line_raw_overrides.push(None);
-                    line_copy_offsets.push(0);
-                }
-                if let Some(ref tc) = msg.tool_data {
-                    let is_edit_tool = matches!(
-                        tc.name.as_str(),
-                        "edit"
-                            | "Edit"
-                            | "write"
-                            | "multiedit"
-                            | "patch"
-                            | "Patch"
-                            | "apply_patch"
-                            | "ApplyPatch"
-                    );
-                    if is_edit_tool {
-                        let file_path = tc
-                            .input
-                            .get("file_path")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string)
-                            .or_else(|| {
-                                tc.input
-                                    .get("patch_text")
-                                    .and_then(|v| v.as_str())
-                                    .and_then(|patch_text| match tc.name.as_str() {
-                                        "apply_patch" | "ApplyPatch" => {
-                                            tools_ui::extract_apply_patch_primary_file(patch_text)
-                                        }
-                                        "patch" | "Patch" => {
-                                            tools_ui::extract_unified_patch_primary_file(patch_text)
-                                        }
-                                        _ => None,
-                                    })
-                            })
-                            .unwrap_or_else(|| "unknown".to_string());
-                        let expandable =
-                            messages::edit_tool_inline_diff_is_expandable(tc, &msg.content, width);
-                        edit_tool_line_ranges.push((
-                            msg_idx,
-                            file_path,
-                            tool_start_line,
-                            lines.len(),
-                            expandable,
-                        ));
+                // Check whether this tool starts a groupable run (2+ same-type
+                // consecutive tool calls from this assistant turn).
+                let group_end = find_tool_group_end(messages, msg_idx);
+                if group_end > msg_idx {
+                    // ── grouped rendering ──
+                    let group_msgs: Vec<&DisplayMessage> = (msg_idx..=group_end)
+                        .map(|i| &messages[i])
+                        .collect();
+                    let group_lines =
+                        messages::render_grouped_tool_use(&group_msgs, width as usize);
+                    for line in group_lines {
+                        lines.push(align_if_unset(line, align));
+                        line_raw_overrides.push(None);
+                        line_copy_offsets.push(0);
                     }
-                    if let Some(items) = anchored_images.by_tool.get(&tc.id) {
-                        for line in super::inline_image_ui::anchored_image_lines(
-                            items,
-                            width,
-                            inline_images_visible,
-                            &crate::tui::ui::inline_image_ui::AppExpandLevels(app),
-                        ) {
-                            lines.push(line);
-                            line_raw_overrides.push(None);
-                            line_copy_offsets.push(0);
+                    msg_idx = group_end; // will be incremented below to group_end + 1
+                } else {
+                    // ── individual tool rendering ──
+                    let tool_start_line = lines.len();
+                    let cached = get_cached_message_lines(
+                        msg,
+                        width,
+                        app.diff_mode(),
+                        render_tool_message,
+                    );
+                    if let Some(target) = tool_message_copy_target(msg, cached.len()) {
+                        copy_targets.push(offset_copy_target(target, tool_start_line));
+                    }
+                    for line in cached {
+                        lines.push(align_if_unset(line, align));
+                        line_raw_overrides.push(None);
+                        line_copy_offsets.push(0);
+                    }
+                    if let Some(ref tc) = msg.tool_data {
+                        let is_edit_tool = matches!(
+                            tc.name.as_str(),
+                            "edit"
+                                | "Edit"
+                                | "write"
+                                | "multiedit"
+                                | "patch"
+                                | "Patch"
+                                | "apply_patch"
+                                | "ApplyPatch"
+                        );
+                        if is_edit_tool {
+                            let file_path = tc
+                                .input
+                                .get("file_path")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string)
+                                .or_else(|| {
+                                    tc.input
+                                        .get("patch_text")
+                                        .and_then(|v| v.as_str())
+                                        .and_then(|patch_text| match tc.name.as_str() {
+                                            "apply_patch" | "ApplyPatch" => {
+                                                tools_ui::extract_apply_patch_primary_file(
+                                                    patch_text,
+                                                )
+                                            }
+                                            "patch" | "Patch" => {
+                                                tools_ui::extract_unified_patch_primary_file(
+                                                    patch_text,
+                                                )
+                                            }
+                                            _ => None,
+                                        })
+                                })
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let expandable = messages::edit_tool_inline_diff_is_expandable(
+                                tc, &msg.content, width,
+                            );
+                            edit_tool_line_ranges.push((
+                                msg_idx,
+                                file_path,
+                                tool_start_line,
+                                lines.len(),
+                                expandable,
+                            ));
+                        }
+                        if let Some(items) = anchored_images.by_tool.get(&tc.id) {
+                            for line in super::inline_image_ui::anchored_image_lines(
+                                items,
+                                width,
+                                inline_images_visible,
+                                &crate::tui::ui::inline_image_ui::AppExpandLevels(app),
+                            ) {
+                                lines.push(line);
+                                line_raw_overrides.push(None);
+                                line_copy_offsets.push(0);
+                            }
                         }
                     }
                 }
@@ -2306,6 +2522,7 @@ pub(super) fn prepare_body(
             }
             _ => {}
         }
+        msg_idx += 1;
     }
 
     // Show thinking indicator when processing but no stream output yet (Claude Code style).

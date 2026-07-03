@@ -251,7 +251,7 @@ fn test_build_turn_footer_uses_compact_duration_labels() {
 
     assert_eq!(
         app.build_turn_footer(Some(316.1)),
-        Some("5m 16s".to_string())
+        Some("unknown · mock · 5m 16s".to_string())
     );
-    assert_eq!(app.build_turn_footer(Some(9.2)), Some("9.2s".to_string()));
+    assert_eq!(app.build_turn_footer(Some(9.2)), Some("unknown · mock · 9.2s".to_string()));
 }

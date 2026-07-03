@@ -822,6 +822,14 @@ impl crate::tui::TuiState for App {
             .unwrap_or_default()
     }
 
+    fn is_message_expanded(&self, msg_hash: u64) -> bool {
+        self.expanded_messages.contains(&msg_hash)
+    }
+
+    fn expanded_messages_version(&self) -> u64 {
+        self.expanded_messages_version
+    }
+
     fn current_session_id(&self) -> Option<String> {
         if self.is_remote {
             self.remote_session_id.clone()
