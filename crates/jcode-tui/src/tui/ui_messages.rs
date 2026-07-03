@@ -2107,6 +2107,135 @@ pub(crate) fn render_tool_message(
     lines
 }
 
+/// Render a collapsed read/search group: consecutive Read/Grep/Glob/LS tool
+/// calls from the same assistant turn, merged into one compact summary row.
+///
+/// Layout (active):
+///   ✓ Read 5 files · 2.4k
+///   ├─ src/auth.rs
+///   ├─ src/token.rs
+///   └─ src/main.rs
+///
+/// Layout (with errors):
+///   ✗ Read 2/3 files · 1.1k
+///   ├─ src/auth.rs
+///   ├─ src/broken.rs
+///   └─ src/token.rs
+pub(crate) fn render_collapsed_read_search_group(
+    messages: &[&DisplayMessage],
+    width: usize,
+) -> Vec<Line<'static>> {
+    if messages.is_empty() {
+        return Vec::new();
+    }
+
+    let tool_name = messages[0]
+        .tool_data
+        .as_ref()
+        .map(|tc| tc.name.as_str())
+        .unwrap_or("read");
+
+    let group_label = tools_ui::collapsible_read_search_group_label(tool_name);
+    let total = messages.len();
+
+    // Count errors.
+    let failed = messages
+        .iter()
+        .filter(|msg| {
+            msg.tool_data
+                .as_ref()
+                .is_some_and(|tc| tools_ui::tool_output_looks_failed(&msg.content))
+        })
+        .count();
+    let all_ok = failed == 0;
+
+    // Count tokens across all outputs.
+    let total_tokens: usize = messages
+        .iter()
+        .map(|msg| crate::util::estimate_tokens(&msg.content))
+        .sum();
+    let token_label = crate::util::format_approx_token_count(total_tokens);
+    let token_color = match crate::util::approx_tool_output_token_severity(total_tokens) {
+        crate::util::ApproxTokenSeverity::Normal => rgb(118, 118, 118),
+        crate::util::ApproxTokenSeverity::Warning => rgb(214, 184, 92),
+        crate::util::ApproxTokenSeverity::Danger => rgb(224, 118, 118),
+    };
+
+    // Summary text: "Read 5 files" or "Grep 2/3 files".
+    let summary_text = if all_ok {
+        format!("{} {} file{}", group_label, total, if total == 1 { "" } else { "s" })
+    } else {
+        format!(
+            "{} {}/{} file{}",
+            group_label,
+            total - failed,
+            total,
+            if total == 1 { "" } else { "s" }
+        )
+    };
+
+    // Build the summary header line.
+    let (icon, icon_color) = if all_ok {
+        ("✓", rgb(100, 180, 100))
+    } else {
+        ("✗", rgb(220, 100, 100))
+    };
+
+    let mut tool_line = vec![
+        Span::styled(format!("  {} ", icon), Style::default().fg(icon_color)),
+        Span::styled(summary_text, Style::default().fg(tool_color())),
+    ];
+
+    let token_suffix = Line::from(vec![
+        Span::styled(" · ", Style::default().fg(dim_color())),
+        Span::styled(token_label, Style::default().fg(token_color)),
+    ]);
+
+    let rendered_tool_line = super::truncate_line_preserving_suffix_to_width(
+        &Line::from(tool_line),
+        &token_suffix,
+        width,
+    );
+
+    // Build tree-style item lines.
+    let mut lines = vec![rendered_tool_line];
+    let item_count = messages.len();
+    for (idx, msg) in messages.iter().enumerate() {
+        let is_last = idx + 1 == item_count;
+        let connector = if is_last { "└─" } else { "├─" };
+        let item_label = msg
+            .tool_data
+            .as_ref()
+            .map(tools_ui::collapsible_tool_item_label)
+            .unwrap_or_default();
+
+        let item_line = super::truncate_line_with_ellipsis_to_width(
+            &Line::from(vec![
+                Span::styled(format!("    {} ", connector), Style::default().fg(dim_color())),
+                Span::styled(item_label, Style::default().fg(dim_color())),
+            ]),
+            width,
+        );
+        lines.push(item_line);
+    }
+
+    lines
+}
+
+/// Render a collapsed read/search group: consecutive Read/Grep/Glob/LS tool
+/// calls from the same assistant turn, merged into one compact summary row.
+///
+/// Layout (active):
+///   ✓ Read 5 files · 2.4k
+///   ├─ src/auth.rs
+///   ├─ src/token.rs
+///   └─ src/main.rs
+///
+/// Layout (with errors):
+///   ✗ Read 2/3 files · 1.1k
+///   ├─ src/auth.rs
+///   ├─ src/broken.rs
+///   └─ src/token.rs
 struct ToolOutputTokenBadge {
     label: String,
     color: Color,
@@ -2125,6 +2254,5 @@ fn tool_output_token_badge(content: &str) -> ToolOutputTokenBadge {
     }
 }
 
-#[cfg(test)]
 #[path = "ui_messages/tests.rs"]
 mod tests;

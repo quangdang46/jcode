@@ -772,6 +772,50 @@ pub(super) fn batch_subcall_index(id: &str) -> Option<usize> {
         .ok()
 }
 
+/// Returns true if this tool call should be part of a collapsed read/search group.
+///
+/// Read/Grep/Glob/LS calls are collapsed into a single compact summary row when
+/// they appear consecutively from the same assistant turn (CLAUDECODE_UI.md §37).
+pub(super) fn is_collapsible_read_search_tool(tc: &ToolCall) -> bool {
+    matches!(
+        canonical_tool_name(&tc.name),
+        "read" | "grep" | "glob" | "ls"
+            | "ffs glob" | "ffs outline" | "ffs symbol" | "ffs find" | "ffs grep"
+    )
+}
+
+/// Get a human-readable label for the group header from a tool name.
+pub(super) fn collapsible_read_search_group_label(name: &str) -> &'static str {
+    match canonical_tool_name(name) {
+        "read" => "Read",
+        "grep" | "ffs grep" => "Grep",
+        "glob" | "ffs glob" => "Glob",
+        "ls" => "Ls",
+        _ => "Search",
+    }
+}
+
+/// Extract the item label for a collapsible tool (file path, pattern, or command).
+pub(super) fn collapsible_tool_item_label(tc: &ToolCall) -> String {
+    match canonical_tool_name(&tc.name) {
+        "read" => tc.input.get("file_path")
+            .and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
+        "grep" | "ffs grep" => {
+            let pattern = tc.input.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+            let path = tc.input.get("path").and_then(|v| v.as_str());
+            match path {
+                Some(p) => format!("'{}' in {}", truncate_middle_display(pattern, 24), p),
+                None => format!("'{}'", truncate_middle_display(pattern, 28)),
+            }
+        }
+        "glob" | "ffs glob" => tc.input.get("pattern")
+            .and_then(|v| v.as_str()).unwrap_or("*").to_string(),
+        "ls" => tc.input.get("path")
+            .and_then(|v| v.as_str()).unwrap_or(".").to_string(),
+        _ => get_tool_summary(tc),
+    }
+}
+
 pub(super) fn is_memory_store_tool(tc: &ToolCall) -> bool {
     match tc.name.as_str() {
         "memory" => tc

@@ -340,19 +340,84 @@ fn push_user_prompt_lines(
     content: &str,
     align: ratatui::layout::Alignment,
 ) {
+    const TRUNCATE_AT: usize = 10000;
+    const HEAD_TAIL: usize = 2500;
+
     let prefix_width = unicode_width::UnicodeWidthStr::width(prompt_num.to_string().as_str())
         + unicode_width::UnicodeWidthStr::width("› ");
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
-    for (line_idx, content_line) in normalized.split('\n').enumerate() {
-        let raw_line = raw_plain_lines.len();
-        raw_plain_lines.push(content_line.to_string());
-        let prompt_width = unicode_width::UnicodeWidthStr::width(content_line);
-        let rendered_line_idx = lines.len();
-        let is_first_line = line_idx == 0;
-        if is_first_line {
-            user_line_indices.push(rendered_line_idx);
-        }
 
+    // Fast byte-length gate, then precise char-count check for Unicode content.
+    if normalized.len() <= TRUNCATE_AT
+        || normalized.chars().count() <= TRUNCATE_AT
+    {
+        // ── Not truncated: render all lines normally ──
+        for (line_idx, content_line) in normalized.split('\n').enumerate() {
+            let raw_line = raw_plain_lines.len();
+            raw_plain_lines.push(content_line.to_string());
+            let prompt_width = unicode_width::UnicodeWidthStr::width(content_line);
+            let rendered_line_idx = lines.len();
+            let is_first_line = line_idx == 0;
+            if is_first_line {
+                user_line_indices.push(rendered_line_idx);
+            }
+
+            let prefix_spans = if is_first_line {
+                vec![
+                    Span::styled(
+                        format!("{}", prompt_num),
+                        user_prompt_number_style(num_color),
+                    ),
+                    Span::styled("› ", user_prompt_accent_style()),
+                ]
+            } else {
+                vec![Span::styled(
+                    " ".repeat(prefix_width),
+                    user_prompt_accent_style(),
+                )]
+            };
+            let mut spans = prefix_spans;
+            spans.push(Span::styled(
+                content_line.to_string(),
+                user_prompt_text_style(),
+            ));
+            lines.push(Line::from(spans).alignment(align));
+            line_raw_overrides.push(Some(WrappedLineMap {
+                raw_line,
+                start_col: 0,
+                end_col: prompt_width,
+            }));
+            line_copy_offsets.push(prefix_width);
+        }
+        return;
+    }
+
+    // ── Truncated display: head(2500 chars) + dim ellipsis + tail(2500 chars) ──
+    // raw_plain_lines still receive every line so text selection/copy gets the
+    // full content. user_prompt_texts (stored separately by the caller) already
+    // holds the complete prompt for clipboard operations.
+    let chars: Vec<char> = normalized.chars().collect();
+    let char_count = chars.len();
+
+    let head: String = chars[..HEAD_TAIL].iter().collect();
+    let tail_start = char_count.saturating_sub(HEAD_TAIL);
+    let tail: String = chars[tail_start..].iter().collect();
+
+    // Count newlines in the hidden mid-section for the ellipsis label.
+    let mid_newlines = chars[HEAD_TAIL..tail_start]
+        .iter()
+        .filter(|&&c| c == '\n')
+        .count();
+
+    let render_line = |lines: &mut Vec<Line<'static>>,
+                       raw_plain_lines: &mut Vec<String>,
+                       line_raw_overrides: &mut Vec<Option<WrappedLineMap>>,
+                       line_copy_offsets: &mut Vec<usize>,
+                       line_text: &str,
+                       is_first_line: bool| {
+        let raw_line = raw_plain_lines.len();
+        raw_plain_lines.push(line_text.to_string());
+        let prompt_width = unicode_width::UnicodeWidthStr::width(line_text);
         let prefix_spans = if is_first_line {
             vec![
                 Span::styled(
@@ -369,7 +434,7 @@ fn push_user_prompt_lines(
         };
         let mut spans = prefix_spans;
         spans.push(Span::styled(
-            content_line.to_string(),
+            line_text.to_string(),
             user_prompt_text_style(),
         ));
         lines.push(Line::from(spans).alignment(align));
@@ -379,6 +444,41 @@ fn push_user_prompt_lines(
             end_col: prompt_width,
         }));
         line_copy_offsets.push(prefix_width);
+    };
+
+    // 1. Head portion (first 2500 chars), split by newlines.
+    let mut rendered_head = false;
+    for (idx, hl) in head.split('\n').enumerate() {
+        render_line(lines, raw_plain_lines, line_raw_overrides, line_copy_offsets, hl, idx == 0);
+        if !rendered_head {
+            user_line_indices.push(lines.len() - 1);
+            rendered_head = true;
+        }
+    }
+
+    // 2. Dimmed ellipsis line showing omitted line count.
+    // Always uses continuation prefix because the head portion is non-empty.
+    // raw_plain_lines gets a blank entry so the line count stays in sync.
+    {
+        let raw_line = raw_plain_lines.len();
+        raw_plain_lines.push(String::new());
+        let ellipsis_text = format!("… +{} lines …", mid_newlines);
+        let spans = vec![
+            Span::styled(" ".repeat(prefix_width), user_prompt_accent_style()),
+            Span::styled(ellipsis_text, Style::default().fg(dim_color())),
+        ];
+        lines.push(Line::from(spans).alignment(align));
+        line_raw_overrides.push(Some(WrappedLineMap {
+            raw_line,
+            start_col: 0,
+            end_col: 0,
+        }));
+        line_copy_offsets.push(prefix_width);
+    }
+
+    // 3. Tail portion (last 2500 chars), split by newlines.
+    for tl in tail.split('\n') {
+        render_line(lines, raw_plain_lines, line_raw_overrides, line_copy_offsets, tl, false);
     }
 }
 
