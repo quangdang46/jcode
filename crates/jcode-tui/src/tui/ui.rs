@@ -2940,13 +2940,15 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     // Use packed layout when content fits, scrolling layout otherwise
     let use_packed = content_height + fixed_height <= available_height;
 
-    // Two-level layout: top (messages + queued + swarm) grows to fill,
-    // bottom (status + input + dialogs) capped at 50% of chat area height (CC pattern).
-    let top_bottom = Layout::default()
+    // Three-level layout: top (messages + queued + swarm) grows to fill,
+    // middle (status bar) always 1 row — never capped,
+    // bottom (input + dialogs) capped at 50% of chat area height (CC pattern).
+    let top_mid_bot = Layout::default()
         .direction(Direction::Vertical)
         .constraints(vec![
-            Constraint::Min(1),
-            Constraint::Max(chat_area.height / 2),
+            Constraint::Min(1),                          // 0 Messages (fills remaining)
+            Constraint::Length(1),                       // 1 Status bar (always visible)
+            Constraint::Max(chat_area.height / 2),       // 2 Input + dialogs (capped)
         ])
         .split(chat_area);
     let top_chunks = Layout::default()
@@ -2964,20 +2966,20 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
                 Constraint::Length(swarm_strip_height),   // 2 Swarm strip
             ]
         })
-        .split(top_bottom[0]);
+        .split(top_mid_bot[0]);
+    let status_area = top_mid_bot[1];
     let bottom_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(vec![
-            Constraint::Length(1),                    // 0 Status line
-            Constraint::Length(notification_height),  // 1 Notification line
-            Constraint::Length(inline_block_height),  // 2 Inline UI
-            Constraint::Length(inline_ui_gap_height), // 3 Inline UI/input spacing
-            Constraint::Length(input_height),         // 4 Input
-            Constraint::Length(overscroll_height),    // 5 Overscroll status line
-            Constraint::Length(donut_height),         // 6 Donut animation
+            Constraint::Length(notification_height),  // 0 Notification line
+            Constraint::Length(inline_block_height),  // 1 Inline UI
+            Constraint::Length(inline_ui_gap_height), // 2 Inline UI/input spacing
+            Constraint::Length(input_height),         // 3 Input
+            Constraint::Length(overscroll_height),    // 4 Overscroll status line
+            Constraint::Length(donut_height),         // 5 Donut animation
         ])
-        .split(top_bottom[1]);
-    record_status_area(bottom_chunks[0]);
+        .split(top_mid_bot[2]);
+    record_status_area(status_area);
 
     // Draw the inline swarm strip directly above the status line if present.
     if swarm_strip_height > 0 {
@@ -2993,8 +2995,8 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         if queued_height > 0 {
             capture.layout.queued_area = Some(top_chunks[1].into());
         }
-        capture.layout.status_area = Some(bottom_chunks[0].into());
-        capture.layout.input_area = Some(bottom_chunks[4].into());
+        capture.layout.status_area = Some(status_area.into());
+        capture.layout.input_area = Some(bottom_chunks[3].into());
         capture.layout.input_lines_raw = app.input().lines().count().max(1);
         capture.layout.input_lines_wrapped = base_input_height as usize;
 
@@ -3071,7 +3073,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         capture.layout.messages_area = Some(messages_area.into());
         capture.layout.diagram_area = diagram_area.map(|r| r.into());
     }
-    record_layout_snapshot(messages_area, diagram_area, diff_pane_area, Some(bottom_chunks[4]));
+    record_layout_snapshot(messages_area, diagram_area, diff_pane_area, Some(bottom_chunks[3]));
 
     let margins = if onboarding_welcome {
         onboarding::draw_onboarding_welcome(frame, app, messages_area);
@@ -3181,23 +3183,22 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         }
         input_ui::draw_queued(frame, app, top_chunks[1], user_count + 1);
     }
-    let status_bar_visible = frame.area().height >= 24
-        && app.prompt_history_info().is_none();
+    let status_bar_visible = frame.area().height >= 24;
     if status_bar_visible {
         if let Some(ref mut capture) = debug_capture {
             capture.render_order.push("draw_status".to_string());
         }
-        input_ui::draw_status(frame, app, bottom_chunks[0], pending_count);
+        input_ui::draw_status(frame, app, status_area, pending_count);
     }
     if notification_height > 0 {
-        input_ui::draw_notification(frame, app, bottom_chunks[1]);
+        input_ui::draw_notification(frame, app, bottom_chunks[0]);
     }
     if inline_block_height > 0 {
-        draw_inline_ui(frame, app, bottom_chunks[2]);
+        draw_inline_ui(frame, app, bottom_chunks[1]);
     }
     // Top separator line above input (with history counter, like Claude Code)
-    if bottom_chunks[1].height > 0 {
-        let sep_w = bottom_chunks[1].width as usize;
+    if bottom_chunks[0].height > 0 {
+        let sep_w = bottom_chunks[0].width as usize;
         if sep_w > 12 {
             let (nav_pos, nav_total) = app.prompt_history_info().unwrap_or((0, 0));
             let _next_prompt = user_count + pending_count + 1;
@@ -3212,14 +3213,14 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
             let right = sep_w - label_w - left;
             let sep_str = format!("{}{}{}", "─".repeat(left), label, "─".repeat(right),);
             let sep_line = Line::from(Span::styled(sep_str, Style::default().fg(rgb(50, 55, 65))));
-            frame.render_widget(Paragraph::new(sep_line), bottom_chunks[1]);
+            frame.render_widget(Paragraph::new(sep_line), bottom_chunks[0]);
         }
     }
     // Input
     input_ui::draw_input(
         frame,
         app,
-        bottom_chunks[4],
+        bottom_chunks[3],
         user_count + pending_count + 1,
         &mut debug_capture,
     );
@@ -3227,7 +3228,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     // Command suggestion overlay drawn as an absolute floating rect above the
     // input area, matching the Claude Code SuggestionsOverlay pattern.
     if input_ui::has_active_suggestions(app) {
-        let input_area = bottom_chunks[4];
+        let input_area = bottom_chunks[3];
         let suggestions = app.command_suggestions();
         let overlay_height = input_ui::command_suggestion_overlay_height(&suggestions);
         if overlay_height > 0 && input_area.y > overlay_height {
@@ -3242,10 +3243,10 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     }
 
     if overscroll_height > 0 {
-        input_ui::draw_overscroll_status(frame, app, bottom_chunks[5]);
+        input_ui::draw_overscroll_status(frame, app, bottom_chunks[4]);
     }
     if donut_height > 0 {
-        animations::draw_idle_animation(frame, app, bottom_chunks[6]);
+        animations::draw_idle_animation(frame, app, bottom_chunks[5]);
     }
 
     // Draw info widget overlays (skip during idle animation - they look out of place)
@@ -3319,6 +3320,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
 
     if visual_debug::overlay_enabled() {
         let mut all_chunks = top_chunks.to_vec();
+        all_chunks.push(status_area);
         all_chunks.extend_from_slice(&bottom_chunks);
         overlays::draw_debug_overlay(frame, &placements, &all_chunks);
     }

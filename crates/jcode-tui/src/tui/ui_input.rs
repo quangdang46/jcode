@@ -706,7 +706,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                     && perm_mode != "auto" && app.connection_type().is_none()
                 {
                     Line::from(Span::styled(
-                        format!("⏵ {} (shift+tab to cycle)", perm_mode),
+                        format!("» {} on (shift+tab to cycle)", perm_mode.replace('-', " ")),
                         Style::default().fg(rgb(120, 200, 255)),
                     ))
                 } else {
