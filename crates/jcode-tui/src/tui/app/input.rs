@@ -2081,7 +2081,7 @@ pub(super) fn handle_global_control_shortcuts(
             });
             true
         }
-        KeyCode::Char('e') => {
+        KeyCode::Char('e') if app.input.is_empty() => {
             let reasoning_indices: Vec<usize> = app
                 .display_messages
                 .iter()
