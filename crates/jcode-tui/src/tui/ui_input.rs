@@ -698,7 +698,21 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
         let spinner = super::activity_indicator(elapsed, 12.5);
 
         match app.status() {
-            ProcessingStatus::Idle => Line::from(""),
+            ProcessingStatus::Idle => {
+                // Show permission mode pill when not in default/auto mode
+                let perm_mode = crate::dcg_bridge::mode_to_str(crate::dcg_bridge::current_mode());
+                let mode = composer_mode(app.input(), app.is_remote_mode());
+                if !perm_mode.is_empty() && !mode.is_shell()
+                    && perm_mode != "auto" && app.connection_type().is_none()
+                {
+                    Line::from(Span::styled(
+                        format!("⏵ {} (shift+tab to cycle)", perm_mode),
+                        Style::default().fg(rgb(120, 200, 255)),
+                    ))
+                } else {
+                    Line::from("")
+                }
+            }
             ProcessingStatus::Sending => {
                 let mut spans = vec![
                     Span::styled(spinner, Style::default().fg(ai_color())),
@@ -2352,8 +2366,14 @@ fn send_mode_indicator(app: &dyn TuiState) -> (&'static str, Color) {
             ("󰖟", rgb(140, 180, 255))
         }
     } else {
-        // Idle: no glyph. The faint dir · model hint is drawn instead.
-        ("", asap_color())
+        // Check permission mode — show pill when not in default/auto mode
+        let perm_mode = crate::dcg_bridge::mode_to_str(crate::dcg_bridge::current_mode());
+        if !perm_mode.is_empty() && perm_mode != "auto" {
+            (perm_mode, rgb(120, 200, 255))
+        } else {
+            // Idle: no glyph. The faint dir · model hint is drawn instead.
+            ("", asap_color())
+        }
     }
 }
 
