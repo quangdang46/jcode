@@ -127,7 +127,9 @@ fn main() {
     // ---- New list+detail panel ----
     let gm = |name: &str, role: Option<&str>, status: &str, body: &[&str]| GalleryMember {
         label: name.to_string(),
+        icon: None,
         status: status.to_string(),
+        task: None,
         role: role.map(str::to_string),
         body: body.iter().map(|s| s.to_string()).collect(),
         sort_key: name.to_string(),
@@ -178,20 +180,16 @@ fn main() {
             label: "focus".into(),
         },
         SwarmStripHint {
-            key: "j/k".into(),
+            key: "alt+↑/↓".into(),
             label: "select".into(),
         },
         SwarmStripHint {
-            key: "o".into(),
-            label: "pop out".into(),
-        },
-        SwarmStripHint {
-            key: "enter".into(),
+            key: "alt+o".into(),
             label: "open".into(),
         },
         SwarmStripHint {
             key: "esc".into(),
-            label: "back".into(),
+            label: "exit".into(),
         },
     ];
     print_lines(
@@ -204,14 +202,15 @@ fn main() {
             Some("alt+w controls"),
             0,
             90,
+            16,
         ),
     );
     print_lines(
         "STRIP: focused, selected #1 @ width 90",
-        &render_swarm_strip(&panel_members, 1, true, &hints, None, 3, 90),
+        &render_swarm_strip(&panel_members, 1, true, &hints, None, 3, 90, 16),
     );
     print_lines(
         "STRIP: focused narrow @ width 54",
-        &render_swarm_strip(&panel_members, 0, true, &hints, None, 5, 54),
+        &render_swarm_strip(&panel_members, 0, true, &hints, None, 5, 54, 12),
     );
 }

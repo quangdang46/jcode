@@ -36,11 +36,51 @@ fn preserve_reasoning_context_defaults_to_enabled() {
 }
 
 #[test]
-fn swarm_spawn_mode_defaults_to_visible() {
+fn swarm_spawn_mode_defaults_to_inline() {
     assert_eq!(
         Config::default().agents.swarm_spawn_mode,
-        SwarmSpawnMode::Visible
+        SwarmSpawnMode::Inline
     );
+}
+
+#[test]
+fn swarm_max_concurrent_agents_defaults_high_for_deep_fanout() {
+    // Deep mode is meant to fan out wide; the default must be high (not the old
+    // hardcoded run_plan default of 3).
+    assert_eq!(Config::default().agents.swarm_max_concurrent_agents, 32);
+}
+
+#[test]
+fn mermaid_feature_defaults_on_and_parses_false() {
+    assert!(Config::default().features.mermaid);
+
+    let cfg: Config =
+        toml::from_str("[features]\nmermaid = false\n").expect("features.mermaid should parse");
+    assert!(!cfg.features.mermaid);
+}
+
+#[test]
+fn mermaid_environment_override_uses_standard_boolean_values() {
+    let _guard = crate::storage::lock_test_env();
+    let previous = std::env::var_os("JCODE_ENABLE_MERMAID");
+    crate::env::set_var("JCODE_ENABLE_MERMAID", "off");
+
+    let mut cfg = Config::default();
+    cfg.apply_env_overrides();
+    assert!(!cfg.features.mermaid);
+
+    restore_env_var("JCODE_ENABLE_MERMAID", previous);
+}
+
+#[test]
+fn swarm_max_concurrent_agents_parses_and_allows_zero_for_unbounded() {
+    let cfg: Config = toml::from_str("[agents]\nswarm_max_concurrent_agents = 64\n")
+        .expect("swarm_max_concurrent_agents should parse");
+    assert_eq!(cfg.agents.swarm_max_concurrent_agents, 64);
+
+    let cfg: Config = toml::from_str("[agents]\nswarm_max_concurrent_agents = 0\n")
+        .expect("zero should parse (means unbounded up to the member cap)");
+    assert_eq!(cfg.agents.swarm_max_concurrent_agents, 0);
 }
 
 #[test]
@@ -247,14 +287,13 @@ fn test_env_override_memory_sidecar() {
 fn tool_config_defaults_to_full_toolset() {
     let selection = ToolConfig::default().selection();
     assert!(selection.allowed_tools.is_none());
-    assert!(selection.disabled_tools.contains("gmail"));
-    assert!(selection.disabled_tools.contains("lsp"));
+    assert!(selection.disabled_tools.is_empty());
 }
 
 #[test]
-fn tool_config_explicit_enabled_default_disabled_tools_opts_in() {
+fn tool_config_explicit_enabled_uses_allow_list() {
     let cfg = ToolConfig {
-        enabled: vec!["gmail".to_string(), "lsp".to_string()],
+        enabled: vec!["gmail".to_string()],
         ..ToolConfig::default()
     };
     let selection = cfg.selection();
@@ -263,13 +302,11 @@ fn tool_config_explicit_enabled_default_disabled_tools_opts_in() {
         .expect("explicit enabled is an allow-list");
 
     assert!(allowed.contains("gmail"));
-    assert!(allowed.contains("lsp"));
     assert!(!selection.disabled_tools.contains("gmail"));
-    assert!(!selection.disabled_tools.contains("lsp"));
 }
 
 #[test]
-fn tool_config_all_enabled_sentinel_opts_in_gmail_without_allow_list() {
+fn tool_config_all_enabled_sentinel_keeps_unrestricted_toolset() {
     let cfg = ToolConfig {
         enabled: vec!["*".to_string()],
         ..ToolConfig::default()
@@ -278,7 +315,6 @@ fn tool_config_all_enabled_sentinel_opts_in_gmail_without_allow_list() {
 
     assert!(selection.allowed_tools.is_none());
     assert!(!selection.disabled_tools.contains("gmail"));
-    assert!(!selection.disabled_tools.contains("lsp"));
 }
 
 #[test]
@@ -292,7 +328,6 @@ fn tool_config_explicit_disabled_overrides_all_enabled_sentinel() {
 
     assert!(selection.allowed_tools.is_none());
     assert!(selection.disabled_tools.contains("gmail"));
-    assert!(!selection.disabled_tools.contains("lsp"));
 }
 
 #[test]
@@ -388,8 +423,7 @@ fn tool_config_disabled_only_keeps_full_profile_with_deny_list() {
     assert!(selection.allowed_tools.is_none());
     assert!(selection.disabled_tools.contains("browser"));
     assert!(selection.disabled_tools.contains("swarm"));
-    assert!(selection.disabled_tools.contains("gmail"));
-    assert!(selection.disabled_tools.contains("lsp"));
+    assert!(!selection.disabled_tools.contains("gmail"));
 }
 
 #[test]
@@ -419,8 +453,13 @@ fn test_generated_default_config_uses_low_openai_reasoning_effort() {
         "generated default config should document ACP profile settings"
     );
     assert!(
-        content.contains("[agents]") && content.contains("swarm_spawn_mode = \"visible\""),
+        content.contains("[agents]") && content.contains("swarm_spawn_mode = \"inline\""),
         "generated default config should document agent spawn defaults"
+    );
+    assert!(
+        content.contains("memory_model = \"gpt-5.6-luna\"")
+            && content.contains("reasoning effort \"none\""),
+        "generated default config should document the Luna memory sidecar default"
     );
 
     // Effort keys come from the per-platform keybinding registry; the template
@@ -442,7 +481,7 @@ fn test_generated_default_config_uses_low_openai_reasoning_effort() {
     // The generated file must always be valid TOML for the current Config schema.
     let parsed: Config =
         toml::from_str(&content).expect("generated default config should parse as Config");
-    assert_eq!(parsed.agents.swarm_spawn_mode, SwarmSpawnMode::Visible);
+    assert_eq!(parsed.agents.swarm_spawn_mode, SwarmSpawnMode::Inline);
 
     if let Some(prev) = prev_home {
         crate::env::set_var("JCODE_HOME", prev);
@@ -860,5 +899,65 @@ fn populate_context_limits_from_config_ref_seeds_global_cache() {
         crate::provider::context_limit_for_model(model_id),
         Some(1_000_000),
         "global context-limit resolution should respect named provider context_window"
+    );
+}
+
+#[test]
+fn populate_context_limits_from_config_seeds_qualified_runtime_model_shapes() {
+    use super::{NamedProviderConfig, NamedProviderModelConfig};
+
+    // Regression test for issue #421: the runtime request model can be
+    // provider-qualified (`cachyai-a2000:qwen...`) or a slash path served by
+    // llama.cpp (`ornith-box-1:/opt/models/ornith-1.0-35b-Q4_K_M.gguf`). The
+    // configured context_window must resolve for every shape, not just the
+    // bare id, otherwise budgeting falls back to the 200K default and
+    // over-sends context.
+    let mut cfg = Config::default();
+    cfg.providers.insert(
+        "issue421-gateway".to_string(),
+        NamedProviderConfig {
+            base_url: "http://10.15.15.53:8080/v1".to_string(),
+            models: vec![
+                NamedProviderModelConfig {
+                    id: "issue421-qwen-128k".to_string(),
+                    context_window: Some(131_072),
+                    input: Vec::new(),
+                },
+                NamedProviderModelConfig {
+                    id: "/opt/models/issue421-ornith-35b-q4.gguf".to_string(),
+                    context_window: Some(131_072),
+                    input: Vec::new(),
+                },
+            ],
+            ..Default::default()
+        },
+    );
+
+    populate_context_limits_from_config_ref(&cfg);
+
+    // Bare id.
+    assert_eq!(
+        crate::provider::context_limit_for_model("issue421-qwen-128k"),
+        Some(131_072)
+    );
+    // Profile-qualified spec, as persisted by session restore.
+    assert_eq!(
+        crate::provider::context_limit_for_model("issue421-gateway:issue421-qwen-128k"),
+        Some(131_072),
+        "profile-qualified model spec must resolve the configured context_window"
+    );
+    // Slash-path model id: the lookup reduces to the slash base.
+    assert_eq!(
+        crate::provider::context_limit_for_model("/opt/models/issue421-ornith-35b-q4.gguf"),
+        Some(131_072),
+        "slash-path model id must resolve the configured context_window"
+    );
+    // Profile-qualified slash-path spec, exactly as reported in issue #421.
+    assert_eq!(
+        crate::provider::context_limit_for_model(
+            "issue421-gateway:/opt/models/issue421-ornith-35b-q4.gguf"
+        ),
+        Some(131_072),
+        "profile-qualified slash-path spec must resolve the configured context_window"
     );
 }

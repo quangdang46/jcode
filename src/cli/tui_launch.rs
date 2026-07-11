@@ -86,6 +86,7 @@ pub async fn run_tui_client(
     startup_hints: Option<setup_hints::StartupHints>,
     server_spawning: bool,
     fresh_spawn: bool,
+    remote_working_dir: Option<String>,
 ) -> Result<()> {
     startup_profile::mark("tui_client_enter");
     let (terminal, tui_runtime) = init_tui_runtime()?;
@@ -140,7 +141,7 @@ pub async fn run_tui_client(
     startup_profile::mark("pre_run_remote");
     startup_profile::report_to_log();
 
-    let result = app.run_remote(terminal).await;
+    let result = app.run_remote(terminal, remote_working_dir).await;
 
     // On the error path, `?` returns here while `tui_runtime` is still alive, so
     // its `Drop` guarantees the terminal is restored (issue #214). On the happy
@@ -452,21 +453,14 @@ pub fn list_sessions() -> Result<()> {
                 exe.to_path_buf(),
                 vec![
                     "--resume".to_string(),
-                    crate::casr_adapter::imported_opencode_session_id(session_id),
+                    crate::import::imported_opencode_session_id(session_id),
                 ],
             ),
-            jcode_tui_session_picker::ResumeTarget::ForeignSession {
-                provider_slug,
-                session_id,
-                ..
-            } => (
+            jcode_tui_session_picker::ResumeTarget::CursorSession { session_id, .. } => (
                 exe.to_path_buf(),
                 vec![
                     "--resume".to_string(),
-                    crate::casr_adapter::imported_session_id_for_provider(
-                        provider_slug,
-                        session_id,
-                    ),
+                    crate::import::imported_cursor_session_id(session_id),
                 ],
             ),
         }
@@ -507,14 +501,9 @@ pub fn list_sessions() -> Result<()> {
             jcode_tui_session_picker::ResumeTarget::OpenCodeSession { session_id, .. } => {
                 format!("◌ OpenCode {}", &session_id[..session_id.len().min(8)])
             }
-            jcode_tui_session_picker::ResumeTarget::ForeignSession {
-                provider_slug,
-                session_id,
-                ..
-            } => format!(
-                "💾 {provider_slug} {}",
-                &session_id[..session_id.len().min(8)]
-            ),
+            jcode_tui_session_picker::ResumeTarget::CursorSession { session_id, .. } => {
+                format!("💾 Cursor {}", &session_id[..session_id.len().min(8)])
+            }
         };
         let command = crate::terminal_launch::TerminalCommand::new(program, args).title(title);
         crate::terminal_launch::spawn_command_in_new_terminal(&command, cwd)

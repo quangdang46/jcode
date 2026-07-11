@@ -1,3 +1,13 @@
+pub const MERMAID_PENDING_PLACEHOLDER_TEXT: &str = "↻ rendering mermaid diagram...";
+
+pub fn line_is_mermaid_pending_placeholder(line: &::ratatui::text::Line<'_>) -> bool {
+    let mut spans = line.spans.iter();
+    let first = match spans.next() {
+        Some(span) => span.content.as_ref(),
+        None => return false,
+    };
+    first.starts_with("↻ rendering mermaid") && spans.next().is_none()
+}
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use ratatui::prelude::*;
 use serde::Serialize;
@@ -22,10 +32,21 @@ mod types;
 
 pub use types::{CopyTargetKind, DiagramDisplayMode, MarkdownSpacingMode, RawCopyTarget};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct MarkdownConfigSnapshot {
     pub diagram_mode: DiagramDisplayMode,
     pub markdown_spacing: MarkdownSpacingMode,
+    pub mermaid_enabled: bool,
+}
+
+impl Default for MarkdownConfigSnapshot {
+    fn default() -> Self {
+        Self {
+            diagram_mode: DiagramDisplayMode::default(),
+            markdown_spacing: MarkdownSpacingMode::default(),
+            mermaid_enabled: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -82,8 +103,9 @@ mod wrap;
 #[cfg(test)]
 pub(crate) use context::with_markdown_spacing_mode_override;
 pub use context::{
-    center_code_blocks, get_diagram_mode_override, set_center_code_blocks,
-    set_diagram_mode_override, with_deferred_mermaid_render_context,
+    center_code_blocks, get_diagram_mode_override, mermaid_rendering_enabled,
+    set_center_code_blocks, set_diagram_mode_override, with_deferred_mermaid_render_context,
+    with_diagram_mode_scope, with_mermaid_rendering_override,
 };
 use context::{
     deferred_mermaid_render_context_enabled, effective_diagram_mode,
@@ -104,7 +126,7 @@ pub use render_core_adapter::{
     styled_line_to_line,
 };
 
-pub use render_full::render_markdown_with_width;
+pub use render_full::{render_markdown_with_width, thread_render_count};
 pub use render_lazy::render_markdown_lazy;
 pub use render_support::extract_copy_targets_from_rendered_lines;
 
@@ -345,23 +367,51 @@ fn push_block_separator(
 }
 
 fn normalize_block_separators(lines: &mut Vec<Line<'static>>) {
-    let mut normalized = Vec::with_capacity(lines.len());
+    let mut normalized: Vec<Line<'static>> = Vec::with_capacity(lines.len());
     let mut previous_blank = true;
+    // Blank lines that belong to an image/diagram placeholder body. The
+    // marker line is followed by `rows - 1` intentionally blank lines that the
+    // draw step paints the image over, and the region scan
+    // (`compute_image_regions`) sizes the image by the blank run following the
+    // marker. Collapsing that run shrinks the rendered diagram to a sliver, so
+    // it must survive separator normalization verbatim.
+    let mut preserve_blanks: usize = 0;
+    // Prefix of `normalized` that trailing-blank trimming must not touch:
+    // a placeholder body can legitimately end the rendered text.
+    let mut protected_len = 0usize;
 
     for line in lines.drain(..) {
         let is_blank = line_is_blank(&line);
         if is_blank {
+            if preserve_blanks > 0 {
+                preserve_blanks -= 1;
+                normalized.push(Line::default());
+                protected_len = normalized.len();
+                previous_blank = true;
+                continue;
+            }
             if previous_blank {
                 continue;
             }
             normalized.push(Line::default());
         } else {
+            preserve_blanks =
+                if let Some((_, rows, _)) = mermaid::parse_inline_image_placeholder(&line) {
+                    rows.saturating_sub(1) as usize
+                } else if mermaid::parse_image_placeholder(&line).is_some() {
+                    // Crop-style markers (video export) do not encode their
+                    // height; keep every directly following blank fill line.
+                    usize::MAX
+                } else {
+                    0
+                };
             normalized.push(line);
         }
         previous_blank = is_blank;
     }
 
-    while normalized.last().map(line_is_blank).unwrap_or(false) {
+    while normalized.len() > protected_len && normalized.last().map(line_is_blank).unwrap_or(false)
+    {
         normalized.pop();
     }
 
@@ -473,18 +523,8 @@ struct CenteredStructuredBlockState {
     ranges: Vec<std::ops::Range<usize>>,
 }
 
-fn diagram_side_only() -> bool {
-    matches!(effective_diagram_mode(), DiagramDisplayMode::Pinned)
-}
-
 fn mermaid_should_register_active() -> bool {
     !matches!(effective_diagram_mode(), DiagramDisplayMode::None)
-}
-
-fn mermaid_rendering_enabled() -> bool {
-    // Temporarily disable Mermaid for users while the renderer is unstable.
-    // Developers can opt in explicitly to keep iterating on the feature.
-    std::env::var("JCODE_ENABLE_MERMAID").is_ok_and(|value| value == "1")
 }
 
 fn mermaid_sidebar_placeholder(text: &str) -> Line<'static> {
@@ -867,27 +907,21 @@ fn count_unescaped_double_dollar(line: &str) -> usize {
 }
 
 fn math_inline_span(math: &str) -> Span<'static> {
-    Span::styled(format!("${}$", math), Style::default().fg(math_fg()))
+    Span::styled(
+        jcode_render_core::render_inline_latex(math),
+        Style::default().fg(math_fg()),
+    )
 }
 
 fn math_display_lines(math: &str) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     let dim = Style::default().fg(md_dim_color());
     out.push(Line::from(Span::styled("┌─ math ", dim)).left_aligned());
-    for line in math.lines() {
+    for line in jcode_render_core::render_display_latex(math) {
         out.push(
             Line::from(vec![
                 Span::styled("│ ", dim),
-                Span::styled(line.to_string(), Style::default().fg(math_fg())),
-            ])
-            .left_aligned(),
-        );
-    }
-    if math.is_empty() {
-        out.push(
-            Line::from(vec![
-                Span::styled("│ ", dim),
-                Span::styled("", Style::default().fg(math_fg())),
+                Span::styled(line, Style::default().fg(math_fg())),
             ])
             .left_aligned(),
         );

@@ -94,9 +94,11 @@ pub(super) async fn handle_tick(app: &mut App, remote: &mut RemoteConnection) ->
     }
 
     needs_redraw |= app.refresh_todos_view_if_needed();
+    needs_redraw |= app.refresh_todo_card_if_needed();
     needs_redraw |= app.refresh_side_panel_linked_content_if_due();
     needs_redraw |= app.poll_model_picker_load();
     needs_redraw |= app.poll_session_picker_load();
+    needs_redraw |= app.poll_session_picker_presence();
     needs_redraw |= app.onboarding_tick();
 
     let _ = check_debug_command(app, remote).await;
@@ -278,12 +280,10 @@ pub(super) async fn handle_terminal_event(
     match event {
         Some(Ok(Event::FocusGained)) => {
             input_attribution.event = Some("focus_gained".to_string());
-            needs_redraw |= app.set_client_focused(true);
             app.note_client_focus(true);
         }
         Some(Ok(Event::FocusLost)) => {
             input_attribution.event = Some("focus_lost".to_string());
-            app.set_client_focused(false);
         }
         Some(Ok(Event::Key(key))) => {
             input_attribution.event = Some(format!("key:{:?}:{:?}", key.code, key.kind));
@@ -391,10 +391,12 @@ pub(super) async fn handle_terminal_event(
         Some(Ok(Event::Mouse(mouse))) => {
             input_attribution.event = Some(format!("mouse:{:?}", mouse.kind));
             input_attribution.scroll_delta = mouse_scroll_delta(&mouse);
-            app.note_client_interaction();
-            handle_mouse_event(app, mouse);
-            needs_redraw = true;
-            needs_redraw |= dispatch_compacted_history_load(app, remote).await;
+            if !matches!(mouse.kind, MouseEventKind::Moved) {
+                app.note_client_interaction();
+                handle_mouse_event(app, mouse);
+                needs_redraw = true;
+                needs_redraw |= dispatch_compacted_history_load(app, remote).await;
+            }
         }
         Some(Ok(Event::Resize(_, _))) => {
             input_attribution.event = Some("resize".to_string());
@@ -619,12 +621,9 @@ fn handle_terminal_event_while_disconnected(
 
     match event {
         Some(Ok(Event::FocusGained)) => {
-            needs_redraw |= app.set_client_focused(true);
             app.note_client_focus(true);
         }
-        Some(Ok(Event::FocusLost)) => {
-            app.set_client_focused(false);
-        }
+        Some(Ok(Event::FocusLost)) => {}
         Some(Ok(Event::Key(key))) => {
             app.note_client_interaction();
             app.update_copy_badge_key_event(key);
@@ -639,9 +638,11 @@ fn handle_terminal_event_while_disconnected(
             needs_redraw = true;
         }
         Some(Ok(Event::Mouse(mouse))) => {
-            app.note_client_interaction();
-            handle_mouse_event(app, mouse);
-            needs_redraw = true;
+            if !matches!(mouse.kind, MouseEventKind::Moved) {
+                app.note_client_interaction();
+                handle_mouse_event(app, mouse);
+                needs_redraw = true;
+            }
         }
         Some(Ok(Event::Resize(_, _))) => {
             needs_redraw = app.should_redraw_after_resize();
@@ -658,7 +659,7 @@ fn handle_terminal_event_while_disconnected(
 
 pub(super) async fn handle_remote_event<B: Backend>(
     app: &mut App,
-    _terminal: &mut Terminal<B>,
+    terminal: &mut Terminal<B>,
     remote: &mut RemoteConnection,
     state: &mut RemoteRunState,
     event: RemoteRead,
@@ -694,6 +695,19 @@ pub(super) async fn handle_remote_event<B: Backend>(
             Ok((RemoteEventOutcome::Continue, needs_redraw))
         }
         RemoteRead::Event(ServerEvent::ClientDebugRequest { id, command }) => {
+            // Frame-oriented debug commands used to enable visual debugging and
+            // immediately read the frame buffer. On the first request the buffer
+            // is still empty because no draw has happened since enabling capture.
+            // Render once before producing the response so callers always receive
+            // the current TUI state rather than "no frames captured".
+            if debug_command_needs_current_frame(&command) {
+                crate::tui::visual_debug::enable();
+                if let Err(error) = terminal.draw(|frame| crate::tui::ui::draw(frame, app)) {
+                    let output = format!("ERR: failed to capture current frame: {error}");
+                    let _ = remote.send_client_debug_response(id, output).await;
+                    return Ok((RemoteEventOutcome::Continue, false));
+                }
+            }
             let output = handle_debug_command(app, &command, remote).await;
             let _ = remote.send_client_debug_response(id, output).await;
             process_remote_followups(app, remote).await;
@@ -718,6 +732,25 @@ pub(super) async fn handle_remote_event<B: Backend>(
             Ok((RemoteEventOutcome::Continue, needs_redraw))
         }
     }
+}
+
+pub(super) fn debug_command_needs_current_frame(command: &str) -> bool {
+    matches!(
+        command.trim(),
+        "frame"
+            | "frame-normalized"
+            | "screen"
+            | "screen-json"
+            | "screen-json-normalized"
+            | "layout"
+            | "margins"
+            | "widgets"
+            | "info-widgets"
+            | "render-stats"
+            | "render-order"
+            | "anomalies"
+            | "theme"
+    )
 }
 
 pub(super) fn handle_disconnect(

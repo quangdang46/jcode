@@ -4,9 +4,53 @@ use crate::storage;
 use jcode_swarm_core::{SwarmLifecycleStatus, SwarmMemberRecord};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex, Weak};
 use tokio::sync::mpsc;
 
-const SWARM_STATE_DIR: &str = "jcode-swarm-state";
+/// Directory name under the durable state dir (`~/.jcode/state`).
+const SWARM_STATE_DIR: &str = "swarm";
+/// Pre-0.36 location under the runtime dir (tmpfs on Linux, wiped on reboot).
+const LEGACY_SWARM_STATE_DIR: &str = "jcode-swarm-state";
+
+/// Serialize each swarm's complete snapshot/read/write operation. Callers must
+/// acquire this before reading the independently locked in-memory maps so an
+/// older snapshot cannot finish after a newer one.
+static SWARM_OPERATION_LOCKS: LazyLock<StdMutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+/// Protect primary/backup comparisons and filesystem updates, including tests
+/// and recovery paths that invoke the synchronous persistence helpers directly.
+static SWARM_FILE_LOCKS: LazyLock<StdMutex<HashMap<String, Weak<StdMutex<()>>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct SwarmStateFileVersion(Option<Vec<u8>>);
+
+pub(super) fn swarm_operation_lock(swarm_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut locks = SWARM_OPERATION_LOCKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(swarm_id).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(swarm_id.to_string(), Arc::downgrade(&lock));
+    lock
+}
+
+fn swarm_file_lock(swarm_id: &str) -> Arc<StdMutex<()>> {
+    let mut locks = SWARM_FILE_LOCKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(swarm_id).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(StdMutex::new(()));
+    locks.insert(swarm_id.to_string(), Arc::downgrade(&lock));
+    lock
+}
 
 pub(super) struct LoadedSwarmRuntimeState {
     pub plans: HashMap<String, VersionedPlan>,
@@ -62,7 +106,57 @@ fn now_unix_ms() -> u64 {
 }
 
 fn state_dir() -> PathBuf {
-    storage::runtime_dir().join(SWARM_STATE_DIR)
+    storage::durable_state_dir().join(SWARM_STATE_DIR)
+}
+
+fn legacy_state_dir() -> PathBuf {
+    storage::runtime_dir().join(LEGACY_SWARM_STATE_DIR)
+}
+
+/// One-time migration from the legacy runtime-dir location (tmpfs, wiped on
+/// reboot) to the durable state dir. Copies legacy snapshots only when the
+/// new dir has none, so an already-migrated dir is never clobbered.
+fn migrate_legacy_state() {
+    let new_dir = state_dir();
+    let has_new_state = std::fs::read_dir(&new_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+        })
+        .unwrap_or(false);
+    if has_new_state {
+        return;
+    }
+
+    let legacy_dir = legacy_state_dir();
+    let Ok(entries) = std::fs::read_dir(&legacy_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() || path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let Some(file_name) = path.file_name() else {
+            continue;
+        };
+        if let Err(err) = storage::ensure_dir(&new_dir) {
+            crate::logging::warn(&format!(
+                "Failed to create swarm state dir {}: {}",
+                new_dir.display(),
+                err
+            ));
+            return;
+        }
+        if let Err(err) = std::fs::copy(&path, new_dir.join(file_name)) {
+            crate::logging::warn(&format!(
+                "Failed to migrate legacy swarm state {}: {}",
+                path.display(),
+                err
+            ));
+        }
+    }
 }
 
 fn state_path(swarm_id: &str) -> PathBuf {
@@ -77,6 +171,57 @@ fn state_path(swarm_id: &str) -> PathBuf {
         })
         .collect();
     state_dir().join(format!("{}.json", sanitized))
+}
+
+fn read_primary_version(swarm_id: &str) -> SwarmStateFileVersion {
+    SwarmStateFileVersion(std::fs::read(state_path(swarm_id)).ok())
+}
+
+pub(super) fn capture_swarm_state_version(swarm_id: &str) -> SwarmStateFileVersion {
+    let file_lock = swarm_file_lock(swarm_id);
+    let _guard = file_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    read_primary_version(swarm_id)
+}
+
+fn remove_snapshot_files(swarm_id: &str) -> bool {
+    let path = state_path(swarm_id);
+    // First atomically replace the primary with an empty tombstone. The write
+    // may rotate the old primary to `.bak`, but load_runtime_state ignores that
+    // backup while the tombstone exists. Thus every crash point is safe: before
+    // rename the deletion did not happen, and after rename the old state is
+    // already logically invalid even if physical cleanup is interrupted.
+    let tombstone = PersistedSwarmState {
+        swarm_id: swarm_id.to_string(),
+        plan: None,
+        coordinator_session_id: None,
+        members: Vec::new(),
+        updated_at_unix_ms: now_unix_ms(),
+    };
+    if let Err(err) = storage::write_json_fast(&path, &tombstone) {
+        crate::logging::warn(&format!(
+            "Failed to tombstone swarm state {}: {}",
+            path.display(),
+            err
+        ));
+        return false;
+    }
+
+    let mut removed = true;
+    for candidate in [path.with_extension("bak"), path] {
+        if let Err(err) = std::fs::remove_file(&candidate)
+            && err.kind() != std::io::ErrorKind::NotFound
+        {
+            removed = false;
+            crate::logging::warn(&format!(
+                "Failed to remove swarm state {}: {}",
+                candidate.display(),
+                err
+            ));
+        }
+    }
+    removed
 }
 
 fn from_persisted_plan(mut plan: PersistedVersionedPlan, updated_at_unix_ms: u64) -> VersionedPlan {
@@ -138,10 +283,24 @@ fn recover_member_status(
         );
     }
 
+    // An idle headless worker has no process to drive it after a server restart.
+    // Keep its completion report, but mark it stopped instead of eagerly loading
+    // its full session history and tool registry forever. Coordinators can spawn
+    // a fresh worker when more work arrives.
+    if is_headless && status == SwarmLifecycleStatus::Ready {
+        return (
+            SwarmLifecycleStatus::Stopped,
+            append_recovery_detail(detail, "idle worker not restored after server restart"),
+        );
+    }
+
+    // Done headless members finished their work before the reload. Nothing
+    // in-flight was lost and their completion report remains available.
     if is_headless
         && !matches!(
             status,
             SwarmLifecycleStatus::Completed
+                | SwarmLifecycleStatus::Done
                 | SwarmLifecycleStatus::Failed
                 | SwarmLifecycleStatus::Stopped
         )
@@ -175,6 +334,7 @@ fn from_persisted_member(member: PersistedSwarmMember) -> SwarmMember {
 }
 
 pub(super) fn load_runtime_state() -> LoadedSwarmRuntimeState {
+    migrate_legacy_state();
     let dir = state_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return LoadedSwarmRuntimeState {
@@ -192,6 +352,19 @@ pub(super) fn load_runtime_state() -> LoadedSwarmRuntimeState {
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {
+            continue;
+        }
+        // `.bak` files are corruption-recovery fallbacks, not co-equal
+        // snapshots. When the primary `.json` still exists, reading the
+        // `.bak` alongside it can resurrect state the primary deliberately
+        // dropped (e.g. a cleared plan: the rotate-on-write keeps the old
+        // plan-bearing snapshot as `.bak`, and a union-load would re-insert
+        // that plan forever). `read_json` already falls back to the `.bak`
+        // internally when the primary is corrupt, so skipping it here loses
+        // nothing.
+        if path.extension().and_then(|ext| ext.to_str()) == Some("bak")
+            && path.with_extension("json").is_file()
+        {
             continue;
         }
         let Ok(state) = storage::read_json::<PersistedSwarmState>(&path) else {
@@ -235,8 +408,27 @@ pub(super) fn persist_swarm_state(
     coordinator_session_id: Option<&str>,
     swarm_members: &[SwarmMember],
 ) {
+    let file_lock = swarm_file_lock(swarm_id);
+    let _guard = file_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
     if swarm_plan.is_none() && coordinator_session_id.is_none() && swarm_members.is_empty() {
-        let _ = std::fs::remove_file(state_path(swarm_id));
+        let _ = remove_snapshot_files(swarm_id);
+        return;
+    }
+
+    // A snapshot can be captured before another task advances the plan and
+    // reach disk afterwards. Never let that stale completion regress the
+    // durable plan. Full member/coordinator ordering is provided by the
+    // per-swarm operation lock around load_runtime + this write.
+    if let Some(candidate_plan) = swarm_plan
+        && let Ok(current) = storage::read_json::<PersistedSwarmState>(&state_path(swarm_id))
+        && current
+            .plan
+            .as_ref()
+            .is_some_and(|plan| plan.version > candidate_plan.version)
+    {
         return;
     }
 
@@ -262,8 +454,27 @@ pub(super) fn persist_swarm_state(
     }
 }
 
+#[cfg(test)]
 pub(super) fn remove_swarm_state(swarm_id: &str) {
-    let _ = std::fs::remove_file(state_path(swarm_id));
+    let file_lock = swarm_file_lock(swarm_id);
+    let _guard = file_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _ = remove_snapshot_files(swarm_id);
+}
+
+pub(super) fn remove_swarm_state_if_version(
+    swarm_id: &str,
+    expected: &SwarmStateFileVersion,
+) -> bool {
+    let file_lock = swarm_file_lock(swarm_id);
+    let _guard = file_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if &read_primary_version(swarm_id) != expected {
+        return false;
+    }
+    remove_snapshot_files(swarm_id)
 }
 
 #[cfg(test)]

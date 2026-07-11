@@ -10,6 +10,7 @@ pub enum SessionSource {
     Codex,
     Pi,
     OpenCode,
+    Cursor,
 }
 
 impl SessionSource {
@@ -20,6 +21,7 @@ impl SessionSource {
             Self::Codex => Some("🧠 Codex"),
             Self::Pi => Some("π Pi"),
             Self::OpenCode => Some("◌ OpenCode"),
+            Self::Cursor => Some("▮ Cursor"),
         }
     }
 }
@@ -36,10 +38,15 @@ pub enum SessionFilterMode {
     All,
     CatchUp,
     Saved,
+    /// Sessions with a live process right now (from the active-pid registry),
+    /// annotated with whether each is still streaming a response or is ready
+    /// for input. Backs the opt-in "active sessions manager" view.
+    Active,
     ClaudeCode,
     Codex,
     Pi,
     OpenCode,
+    Cursor,
     /// External CLI transcripts (Codex and/or Claude Code) shown together.
     /// Used by the first-run onboarding "continue where you left off" picker so
     /// it surfaces every external CLI the user is logged into, not just one.
@@ -51,11 +58,13 @@ impl SessionFilterMode {
         match self {
             Self::All => Self::CatchUp,
             Self::CatchUp => Self::Saved,
-            Self::Saved => Self::ClaudeCode,
+            Self::Saved => Self::Active,
+            Self::Active => Self::ClaudeCode,
             Self::ClaudeCode => Self::Codex,
             Self::Codex => Self::Pi,
             Self::Pi => Self::OpenCode,
-            Self::OpenCode => Self::All,
+            Self::OpenCode => Self::Cursor,
+            Self::Cursor => Self::All,
             // ExternalClis is an onboarding-only composite filter, not part of
             // the user-facing cycle; treat it as a no-op anchor.
             Self::ExternalClis => Self::All,
@@ -64,13 +73,15 @@ impl SessionFilterMode {
 
     pub fn previous(self) -> Self {
         match self {
-            Self::All => Self::OpenCode,
+            Self::All => Self::Cursor,
             Self::CatchUp => Self::All,
             Self::Saved => Self::CatchUp,
-            Self::ClaudeCode => Self::Saved,
+            Self::Active => Self::Saved,
+            Self::ClaudeCode => Self::Active,
             Self::Codex => Self::ClaudeCode,
             Self::Pi => Self::Codex,
             Self::OpenCode => Self::Pi,
+            Self::Cursor => Self::OpenCode,
             Self::ExternalClis => Self::All,
         }
     }
@@ -80,11 +91,13 @@ impl SessionFilterMode {
             Self::All => None,
             Self::CatchUp => Some("⏭ catch up"),
             Self::Saved => Some("📌 saved"),
+            Self::Active => Some("⚡ active"),
             Self::ClaudeCode => Some("🧵 Claude Code"),
             Self::Codex => Some("🧠 Codex"),
             Self::Pi => Some("π Pi"),
             Self::OpenCode => Some("◌ OpenCode"),
-            Self::ExternalClis => Some("🧠 Codex + 🧵 Claude Code + π Pi + ◌ OpenCode"),
+            Self::Cursor => Some("▮ Cursor"),
+            Self::ExternalClis => Some("🧠 Codex + 🧵 Claude Code + π Pi + ◌ OpenCode + ▮ Cursor"),
         }
     }
 }
@@ -218,6 +231,18 @@ pub fn session_is_open_code(source: SessionSource, provider_key: Option<&str>) -
         .map(|key| {
             let key = key.to_ascii_lowercase();
             key == "opencode" || key == "opencode-go" || key.contains("opencode")
+        })
+        .unwrap_or(false)
+}
+
+pub fn session_is_cursor(source: SessionSource, provider_key: Option<&str>) -> bool {
+    if source == SessionSource::Cursor {
+        return true;
+    }
+    provider_key
+        .map(|key| {
+            let key = key.to_ascii_lowercase();
+            key == "cursor" || key == "cursor-agent"
         })
         .unwrap_or(false)
 }

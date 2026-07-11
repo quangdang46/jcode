@@ -89,6 +89,7 @@ fn test_cold_cache_warning_keeps_redrawing_at_deep_idle() {
             ttl_secs: 300,
             is_cold: true,
             cached_tokens: Some(4000),
+        cold_for_secs: 0,
         }),
         ..Default::default()
     };
@@ -111,6 +112,7 @@ fn test_cold_cache_warning_keeps_redrawing_at_deep_idle() {
             ttl_secs: 300,
             is_cold: false,
             cached_tokens: Some(4000),
+        cold_for_secs: 0,
         }),
         ..Default::default()
     };
@@ -128,6 +130,7 @@ fn test_cold_cache_warning_keeps_redrawing_at_deep_idle() {
             ttl_secs: 300,
             is_cold: false,
             cached_tokens: Some(4000),
+        cold_for_secs: 0,
         }),
         ..Default::default()
     };
@@ -135,6 +138,83 @@ fn test_cold_cache_warning_keeps_redrawing_at_deep_idle() {
         !crate::tui::periodic_redraw_required(&warm),
         "a warm cache far from expiry should stay deep-idle"
     );
+}
+
+#[test]
+fn test_active_swarm_spinner_keeps_redrawing_at_deep_idle() {
+    // Regression: the swarm strip/dock animates a 12.5 fps status spinner for
+    // active agents off the wall clock. A coordinator that is just watching
+    // its agents goes deep-idle itself, and without a dedicated wakeup the
+    // idle loop stops repainting, freezing every agent's spinner mid-frame.
+    fn swarm_member(status: &str) -> crate::protocol::SwarmMemberStatus {
+        crate::protocol::SwarmMemberStatus {
+            session_id: format!("session-{status}"),
+            friendly_name: Some("worker".to_string()),
+            status: status.to_string(),
+            detail: None,
+            task_label: None,
+            role: None,
+            is_headless: Some(true),
+            live_attachments: None,
+            status_age_secs: Some(3),
+            output_tail: None,
+            report_back_to_session_id: None,
+            todo_progress: None,
+            todo_items: Vec::new(),
+            runtime: crate::protocol::SwarmMemberRuntime::default(),
+        }
+    }
+
+    let deep_idle = crate::tui::REDRAW_DEEP_IDLE_AFTER + Duration::from_secs(1);
+
+    let quiet = TestState {
+        display_messages: vec![DisplayMessage::system("seed".to_string())],
+        time_since_activity: Some(deep_idle),
+        ..Default::default()
+    };
+    assert!(
+        !crate::tui::periodic_redraw_required(&quiet),
+        "a quiet deep-idle session should not require periodic redraws"
+    );
+
+    // Every active status must keep the spinner animating.
+    for status in ["running", "streaming", "thinking"] {
+        let animating = TestState {
+            display_messages: vec![DisplayMessage::system("seed".to_string())],
+            time_since_activity: Some(deep_idle),
+            swarm_members: vec![swarm_member(status)],
+            ..Default::default()
+        };
+        assert!(
+            crate::tui::periodic_redraw_required(&animating),
+            "an {status} swarm agent must keep driving redraws at deep idle"
+        );
+        assert_eq!(
+            crate::tui::redraw_interval(&animating),
+            crate::tui::REDRAW_SWARM_SPINNER,
+            "an {status} swarm agent should repaint at the spinner cadence"
+        );
+    }
+
+    // Terminal statuses render fixed glyphs: no animation frames needed, the
+    // deep-idle short-circuit must stay in effect.
+    for status in ["completed", "failed", "stopped", "ready", "blocked"] {
+        let settled = TestState {
+            display_messages: vec![DisplayMessage::system("seed".to_string())],
+            time_since_activity: Some(deep_idle),
+            swarm_members: vec![swarm_member(status)],
+            ..Default::default()
+        };
+        assert!(
+            !crate::tui::periodic_redraw_required(&settled),
+            "a {status} swarm agent renders a static glyph and should stay deep-idle"
+        );
+        assert_eq!(
+            crate::tui::redraw_interval(&settled),
+            crate::tui::REDRAW_DEEP_IDLE,
+            "a {status} swarm agent should not bump the redraw cadence"
+        );
+    }
 }
 
 fn record_test_chat_snapshot(text: &str) {
@@ -176,6 +256,7 @@ fn make_prepared_messages_with_content_bytes(bytes: usize, marker: &str) -> Arc<
         edit_tool_ranges: Vec::new(),
         copy_targets: Vec::new(),
         message_boundaries: Vec::new(),
+    mermaid_pending_epoch: None,
     })
 }
 

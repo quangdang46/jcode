@@ -94,6 +94,9 @@ pub enum Request {
         session_id: Option<String>,
     },
 
+    /// Set permission mode (bypass-permissions, plan, etc.)
+    #[serde(rename = "set_permission_mode")]
+    SetPermissionMode { id: u64, mode: String },
     /// Execute a client debug command (forwarded to TUI)
     #[serde(rename = "client_debug_command")]
     ClientDebugCommand { id: u64, command: String },
@@ -283,10 +286,6 @@ pub enum Request {
         mode: jcode_config_types::CompactionMode,
     },
 
-    /// Set the permission mode for tool execution.
-    #[serde(rename = "set_permission_mode")]
-    SetPermissionMode { id: u64, mode: String },
-
     /// Set or clear the active session's custom display title.
     #[serde(rename = "rename_session")]
     RenameSession {
@@ -412,6 +411,10 @@ pub enum Request {
         delivery: Option<CommDeliveryMode>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         wake: Option<bool>,
+        /// Sender-provided one-line summary. Receiving UIs render long
+        /// message bodies collapsed to this with an expand control.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tldr: Option<String>,
     },
 
     /// List agents and their activity
@@ -512,7 +515,21 @@ pub enum Request {
         request_nonce: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         spawn_mode: Option<String>,
+        /// Optional per-spawn model override. Takes precedence over
+        /// `agents.swarm_model` config. Supports explicit auth-route prefixes
+        /// (e.g. `openai-api:gpt-5.5`) and the `inherit`/`coordinator`
+        /// sentinels to force coordinator inheritance past a config pin.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        /// Optional reasoning effort for the spawned agent (e.g. `none`,
+        /// `low`, `medium`, `high`, `xhigh`, `max`). Unset = provider default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
+
+    /// List models/routes available for spawning swarm agents
+    #[serde(rename = "comm_list_models")]
+    CommListModels { id: u64, session_id: String },
 
     /// Stop/destroy an agent session (coordinator only)
     #[serde(rename = "comm_stop")]
@@ -567,6 +584,10 @@ pub enum Request {
         /// Optional blockers/follow-up summary.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         follow_up: Option<String>,
+        /// Reporter-provided one-line summary. Receiving UIs render long
+        /// report bodies collapsed to this with an expand control.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tldr: Option<String>,
     },
 
     /// Read another agent's full conversation context
@@ -613,6 +634,14 @@ pub enum Request {
         spawn_if_needed: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        /// Optional model override for workers spawned by this assignment
+        /// (same semantics as CommSpawn::model).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        /// Optional reasoning effort for workers spawned by this assignment
+        /// (same semantics as CommSpawn::effort).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
     },
 
     /// Control an existing assigned task lifecycle (coordinator only)
@@ -660,6 +689,17 @@ pub enum Request {
         /// Timeout in seconds (default 3600 = 1 hour)
         #[serde(default)]
         timeout_secs: Option<u64>,
+        /// Run the wait as a detached background watcher instead of blocking the
+        /// requesting turn. Defaults to true so the agent stays responsive.
+        #[serde(default = "default_true")]
+        background: bool,
+        /// When backgrounded, surface a notification card on completion.
+        #[serde(default = "default_true")]
+        notify: bool,
+        /// When backgrounded, wake an idle requesting agent with the result (or
+        /// soft-interrupt it if busy). Defaults to true.
+        #[serde(default = "default_true")]
+        wake: bool,
     },
 }
 
@@ -728,10 +768,9 @@ pub enum ServerEvent {
         error: Option<String>,
     },
 
-    /// Rendered images produced by a tool result during the live turn (e.g. the
-    /// `read` tool reading an image file). Lets remote clients populate the
-    /// pinned-image side pane immediately, instead of waiting for the next full
-    /// History reload.
+    /// Rendered images produced during the live turn, including image-bearing
+    /// tool results and provider-native image generation. Lets remote clients
+    /// render them inline immediately instead of waiting for History reload.
     #[serde(rename = "side_pane_images")]
     SidePaneImages {
         session_id: String,
@@ -871,6 +910,20 @@ pub enum ServerEvent {
     /// so it does not blend into streaming model output.
     #[serde(rename = "interrupted")]
     Interrupted,
+
+    /// The provider ended the turn without any visible assistant output,
+    /// typically a model-side guardrail/refusal stop (e.g. Anthropic
+    /// `stop_reason: "refusal"`), or a reasoning-only response with no final
+    /// text. Rendered as a system notice so the user learns why no response
+    /// arrived instead of the turn ending silently.
+    #[serde(rename = "provider_guardrail")]
+    ProviderGuardrail {
+        /// Raw provider stop reason, when known (e.g. "refusal").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
+        /// Human-readable explanation for display.
+        message: String,
+    },
 
     /// Relevant memory was injected into the conversation
     #[serde(rename = "memory_injected")]
@@ -1168,15 +1221,6 @@ pub enum ServerEvent {
     },
 
     /// Compaction mode changed (response to set_compaction_mode)
-
-    /// Permission mode changed.
-    #[serde(rename = "permission_mode_changed")]
-    PermissionModeChanged {
-        id: u64,
-        mode: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
     #[serde(rename = "compaction_mode_changed")]
     CompactionModeChanged {
         id: u64,
@@ -1301,6 +1345,23 @@ pub enum ServerEvent {
         new_session_id: String,
     },
 
+    /// Response to comm_list_models request
+    #[serde(rename = "comm_list_models_response")]
+    CommListModelsResponse {
+        id: u64,
+        /// The coordinator's currently active model (spawn default when no
+        /// override is configured or requested).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current_model: Option<String>,
+        /// The configured `agents.swarm_model` pin, if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        configured_swarm_model: Option<String>,
+        /// All model routes known to the server (model + provider + auth
+        /// method + availability + rough cost estimate).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        model_routes: Vec<jcode_provider_core::ModelRoute>,
+    },
+
     /// Response to comm_await_members request
     #[serde(rename = "comm_await_members_response")]
     CommAwaitMembersResponse {
@@ -1311,6 +1372,11 @@ pub enum ServerEvent {
         members: Vec<AwaitedMemberStatus>,
         /// Human-readable summary
         summary: String,
+        /// True when the wait was handed off to a detached background watcher.
+        /// In that case `members`/`completed` describe the current snapshot, not
+        /// a final result; completion is delivered later via notify/wake.
+        #[serde(default)]
+        background_started: bool,
     },
 
     /// Response to split request — new session created with cloned conversation

@@ -1,93 +1,33 @@
-use jcode_plugin_core::PluginEvent;
-use jcode_plugin_core::events::{EventInput, HandlerAction};
-pub use jcode_plugin_runtime::{
-    DISABLE_ALL_PLUGINS, FORCE_DENY, PluginSystem, SKIP_HOOKS, check_kill_switches, is_force_deny,
-};
-use std::sync::OnceLock;
-use std::sync::atomic::Ordering;
+/// Stub: plugin system is not yet wired up.
 
-static PLUGIN_SYSTEM: OnceLock<PluginSystem> = OnceLock::new();
+pub struct PluginSystem {
+    pub registry: PluginRegistry,
+    pub loader: PluginLoader,
+}
 
-pub async fn init_plugins(config: &jcode_plugin_core::config::PluginConfig) {
-    if PLUGIN_SYSTEM.get().is_some() {
-        return;
-    }
-    crate::logging::info("Initializing plugin system");
-    match PluginSystem::initialize(config).await {
-        Ok(system) => {
-            crate::logging::info("Plugin system initialized successfully");
-            // Wire the ApprovalGate dispatcher into the tool execution path
-            // so Registry::execute() can check the gate before running any tool.
-            crate::tool::set_gate_dispatcher(system.dispatcher.clone());
-            let _ = PLUGIN_SYSTEM.set(system);
-        }
-        Err(e) => {
-            crate::logging::warn(&format!("Plugin system initialization failed: {e}"));
-        }
+pub struct PluginRegistry;
+pub struct PluginLoader;
+
+impl PluginRegistry {
+    pub async fn list(&self) -> Vec<(PluginId, ())> {
+        vec![]
     }
 }
 
-pub fn plugin_system() -> Option<&'static PluginSystem> {
-    PLUGIN_SYSTEM.get()
+impl PluginLoader {
+    pub async fn reload(&self, _id: &PluginId) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
-pub fn plugin_count() -> usize {
-    plugin_system()
-        .map(|sys| sys.dispatcher.plugin_count())
-        .unwrap_or(0)
+pub struct PluginId;
+
+impl PluginId {
+    pub fn short_name(&self) -> &str {
+        ""
+    }
 }
 
-pub enum PermissionVerdict {
-    Allow,
-    Deny,
-    Defer,
-}
-
-pub async fn check_permission(action: &str, args: &serde_json::Value) -> PermissionVerdict {
-    if DISABLE_ALL_PLUGINS.load(Ordering::SeqCst) {
-        return PermissionVerdict::Defer;
-    }
-
-    if is_force_deny() {
-        return PermissionVerdict::Deny;
-    }
-
-    let sys = match PLUGIN_SYSTEM.get() {
-        Some(s) => s,
-        None => return PermissionVerdict::Defer,
-    };
-
-    if SKIP_HOOKS.load(Ordering::SeqCst) {
-        return PermissionVerdict::Defer;
-    }
-
-    let tool_name = args
-        .get("tool")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let target = args
-        .get("target")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let event = PluginEvent::PermissionRequest;
-    let input = EventInput::PermissionRequest {
-        action: action.to_string(),
-        tool_name,
-        target,
-        session_id: String::new(),
-    };
-
-    let results = sys.dispatch_event(event, input, None).await;
-
-    for (_id, result) in &results {
-        match &result.action {
-            HandlerAction::Deny => return PermissionVerdict::Deny,
-            HandlerAction::Allow => return PermissionVerdict::Allow,
-            _ => continue,
-        }
-    }
-
-    PermissionVerdict::Defer
+pub fn plugin_system() -> Option<PluginSystem> {
+    None
 }

@@ -69,7 +69,7 @@ impl Agent {
         let alerts = self.take_alerts();
         if !alerts.is_empty() {
             let alert_text = format!(
-                "[NOTIFICATION]\nYou received {} notification(s) from other agents working in this codebase:\n\n{}\n\nUse the communicate tool (actions: list, read, message/broadcast, dm, channel, share) to coordinate with other agents.",
+                "[NOTIFICATION]\nYou received {} notification(s) from other agents working in this codebase:\n\n{}\n\nUse the communicate tool to coordinate with other agents (prefer dm; broadcast reaches only your spawned subtree).",
                 alerts.len(),
                 alerts.join("\n\n---\n\n")
             );
@@ -282,22 +282,27 @@ impl Agent {
         self.persist_session_best_effort("provider session reset");
     }
 
-    /// Rewind the conversation to a 1-based visible conversation message index.
+    /// Rewind the conversation to a 1-based visible transcript message index.
+    ///
+    /// The index is interpreted against the same rendered transcript the TUI
+    /// numbers in `/rewind` (user/assistant entries only, tool cards and
+    /// system notices excluded). Mapping through raw stored messages instead
+    /// would count tool-result messages the UI never numbers, sending
+    /// `/rewind N` far earlier than the on-screen message N (issue #432).
     ///
     /// Provider-side resumable sessions are reset so the next request sends the
     /// truncated context from scratch instead of continuing from a stale upstream
     /// conversation.
     pub fn rewind_to_message(&mut self, message_index: usize) -> Result<usize, String> {
-        let message_count = self.session.visible_conversation_message_count();
-        let Some(stored_len) = self
-            .session
-            .stored_len_for_visible_conversation_message(message_index)
-        else {
+        let targets = self.session.rewind_target_stored_indices();
+        let message_count = targets.len();
+        if message_index == 0 || message_index > message_count {
             return Err(format!(
                 "Invalid message number: {}. Valid range: 1-{}",
                 message_index, message_count
             ));
-        };
+        }
+        let stored_len = targets[message_index - 1] + 1;
 
         let removed = message_count - message_index;
         self.rewind_undo_snapshot = Some(RewindUndoSnapshot {
@@ -322,7 +327,7 @@ impl Agent {
             return Err("No rewind to undo.".to_string());
         };
 
-        let current_count = self.session.visible_conversation_message_count();
+        let current_count = self.session.rewind_target_count();
         let restored = snapshot.visible_message_count.saturating_sub(current_count);
         self.session.replace_messages(snapshot.messages);
         self.provider_session_id = snapshot.provider_session_id;
@@ -403,6 +408,20 @@ impl Agent {
     /// Whether this session streams an inline output tail to the bus.
     pub(crate) fn inline_output_tap(&self) -> bool {
         self.inline_output_tap
+    }
+
+    /// Publish the current rolling activity tail to the bus for the
+    /// coordinator's inline gallery. No-op unless the inline tap is enabled.
+    pub(crate) fn publish_inline_tail(&self) {
+        if !self.inline_output_tap {
+            return;
+        }
+        crate::bus::Bus::global().publish(crate::bus::BusEvent::SwarmOutputTail(
+            crate::bus::SwarmOutputTail {
+                session_id: self.session.id.clone(),
+                tail: self.inline_tail.render(),
+            },
+        ));
     }
 
     /// Check whether memory features are enabled for this session.
@@ -987,14 +1006,20 @@ impl Agent {
             }
 
             // Check for skill invocation
-            if let Some(skill_name) = SkillRegistry::parse_invocation(input) {
-                if let Some(skill) = skills.get(skill_name) {
+            if let Some(invocation) = SkillRegistry::parse_invocation(input) {
+                if let Some(skill) = skills.get(invocation.name) {
                     println!("Activating skill: {}", skill.name);
                     println!("{}\n", skill.description);
-                    self.active_skill = Some(skill_name.to_string());
+                    self.active_skill = Some(invocation.name.to_string());
+                    if let Some(prompt) = invocation.prompt {
+                        if let Err(e) = self.run_once(prompt).await {
+                            eprintln!("\nError: {}\n", e);
+                        }
+                        println!();
+                    }
                     continue;
                 } else {
-                    println!("Unknown skill: /{}", skill_name);
+                    println!("Unknown skill: /{}", invocation.name);
                     println!(
                         "Available: {}",
                         skills

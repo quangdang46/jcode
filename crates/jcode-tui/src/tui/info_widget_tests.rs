@@ -2,9 +2,10 @@ use super::{
     BackgroundInfo, CacheHitInfo, CacheMissAttribution, GraphEdge, GraphNode, InfoWidgetData,
     Margins, MemoryActivity, MemoryEvent, MemoryEventKind, MemoryInfo, MemoryState, PipelineState,
     StepStatus, SwarmInfo, UsageInfo, UsageProvider, WidgetKind, calculate_placements,
-    effective_prompt_tokens, occasional_status_tip, render_kv_cache_widget, render_memory_compact,
-    render_memory_widget, render_model_widget, render_todos_compact, render_todos_expanded,
-    render_todos_widget, render_usage_compact, render_usage_widget, truncate_smart,
+    calculate_widget_height, effective_prompt_tokens, occasional_status_tip,
+    render_kv_cache_widget, render_memory_compact, render_memory_widget, render_model_widget,
+    render_todos_compact, render_todos_expanded, render_todos_widget, render_usage_compact,
+    render_usage_widget, swarm_plan_todos, truncate_smart,
 };
 use crate::protocol::SwarmMemberStatus;
 use ratatui::layout::Rect;
@@ -99,6 +100,7 @@ fn todos_widgets_show_item_and_aggregate_confidence() {
     let data = InfoWidgetData {
         todos: vec![
             crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Validate confidence UI".to_string(),
@@ -108,8 +110,10 @@ fn todos_widgets_show_item_and_aggregate_confidence() {
                 completion_confidence: None,
                 blocked_by: Vec::new(),
                 assigned_to: None,
+                confidence_history: Vec::new(),
             },
             crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-2".to_string(),
                 content: "Ship completed item".to_string(),
@@ -119,6 +123,7 @@ fn todos_widgets_show_item_and_aggregate_confidence() {
                 completion_confidence: Some(95),
                 blocked_by: Vec::new(),
                 assigned_to: None,
+                confidence_history: Vec::new(),
             },
         ],
         ..Default::default()
@@ -141,6 +146,7 @@ fn todos_widgets_show_item_and_aggregate_confidence() {
 #[test]
 fn todos_widgets_render_group_headers_when_groups_present() {
     let mk = |group: Option<&str>, id: &str, status: &str| crate::todo::TodoItem {
+        active_form: None,
         group: group.map(|g| g.to_string()),
         id: id.to_string(),
         content: format!("task {id}"),
@@ -150,6 +156,7 @@ fn todos_widgets_render_group_headers_when_groups_present() {
         completion_confidence: None,
         blocked_by: Vec::new(),
         assigned_to: None,
+        confidence_history: Vec::new(),
     };
     let data = InfoWidgetData {
         todos: vec![
@@ -178,6 +185,7 @@ fn todos_widgets_render_group_headers_when_groups_present() {
 #[test]
 fn todos_widgets_stay_flat_without_groups() {
     let mk = |id: &str, status: &str| crate::todo::TodoItem {
+        active_form: None,
         group: None,
         id: id.to_string(),
         content: format!("task {id}"),
@@ -187,6 +195,7 @@ fn todos_widgets_stay_flat_without_groups() {
         completion_confidence: None,
         blocked_by: Vec::new(),
         assigned_to: None,
+        confidence_history: Vec::new(),
     };
     let data = InfoWidgetData {
         todos: vec![mk("a", "completed"), mk("b", "pending")],
@@ -199,6 +208,7 @@ fn todos_widgets_stay_flat_without_groups() {
 #[test]
 fn todos_widget_renders_exact_pips_for_small_lists() {
     let mk = |status: &str| crate::todo::TodoItem {
+        active_form: None,
         group: None,
         id: status.to_string(),
         content: format!("item {status}"),
@@ -208,6 +218,7 @@ fn todos_widget_renders_exact_pips_for_small_lists() {
         completion_confidence: None,
         blocked_by: Vec::new(),
         assigned_to: None,
+        confidence_history: Vec::new(),
     };
     let data = InfoWidgetData {
         todos: vec![
@@ -241,6 +252,316 @@ fn todos_widget_renders_exact_pips_for_small_lists() {
     let all = lines_text(&lines);
     assert!(!all.contains('█'), "old block bar should be gone: {all}");
     assert!(!all.contains('░'), "old empty bar should be gone: {all}");
+}
+
+fn plan_item(id: &str, status: &str) -> crate::plan::PlanItem {
+    crate::plan::PlanItem {
+        content: format!("task {id}"),
+        status: status.to_string(),
+        priority: "medium".to_string(),
+        id: id.to_string(),
+        subsystem: None,
+        file_scope: Vec::new(),
+        blocked_by: Vec::new(),
+        assigned_to: None,
+    }
+}
+
+#[test]
+fn swarm_plan_todos_normalizes_scheduler_statuses() {
+    let items = vec![
+        plan_item("a", "running"),
+        plan_item("b", "running_stale"),
+        plan_item("c", "done"),
+        plan_item("d", "completed"),
+        plan_item("e", "failed"),
+        plan_item("f", "stopped"),
+        plan_item("g", "crashed"),
+        plan_item("h", "queued"),
+        plan_item("i", "ready"),
+        plan_item("j", "blocked"),
+        plan_item("k", "pending"),
+        plan_item("l", "in_progress"),
+        plan_item("m", "weird_custom_status"),
+    ];
+    let todos = swarm_plan_todos(&items);
+    let status_of = |id: &str| {
+        todos
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| t.status.clone())
+            .unwrap()
+    };
+    // Active scheduler states surface as in_progress (▶ amber, sorts first).
+    assert_eq!(status_of("a"), "in_progress");
+    assert_eq!(status_of("b"), "in_progress");
+    // Terminal success maps onto completed (✓).
+    assert_eq!(status_of("c"), "completed");
+    assert_eq!(status_of("d"), "completed");
+    // Terminal failure maps onto cancelled (✗) instead of an open circle.
+    assert_eq!(status_of("e"), "cancelled");
+    assert_eq!(status_of("f"), "cancelled");
+    assert_eq!(status_of("g"), "cancelled");
+    // Runnable / blocked states render as pending (○).
+    assert_eq!(status_of("h"), "pending");
+    assert_eq!(status_of("i"), "pending");
+    assert_eq!(status_of("j"), "pending");
+    // Statuses the todo renderer already understands pass through.
+    assert_eq!(status_of("k"), "pending");
+    assert_eq!(status_of("l"), "in_progress");
+    // Arbitrary strings pass through unchanged (rendered as open ○).
+    assert_eq!(status_of("m"), "weird_custom_status");
+}
+
+#[test]
+fn swarm_plan_todos_preserve_blockers_and_assignee_and_flow_to_renderer() {
+    let mut blocked = plan_item("audit-x", "queued");
+    blocked.blocked_by = vec!["audit-y".to_string()];
+    let mut running = plan_item("audit-y", "running");
+    running.assigned_to = Some("worker-1".to_string());
+    let items = vec![blocked, running];
+
+    let todos = swarm_plan_todos(&items);
+    assert_eq!(todos[0].blocked_by, vec!["audit-y".to_string()]);
+    assert_eq!(todos[1].assigned_to.as_deref(), Some("worker-1"));
+
+    let data = InfoWidgetData {
+        todos,
+        ..Default::default()
+    };
+    let text = lines_text(&render_todos_expanded(&data, Rect::new(0, 0, 80, 14)));
+    // Blocked items get the dependency marker and suffix.
+    assert!(text.contains("⊳"), "blocked glyph missing: {text}");
+    assert!(text.contains("(blocked)"), "blocked suffix missing: {text}");
+    // The running item sorts first as in_progress.
+    let running_idx = text.find("task audit-y").unwrap();
+    let blocked_idx = text.find("task audit-x").unwrap();
+    assert!(running_idx < blocked_idx, "active-first order: {text}");
+}
+
+#[test]
+fn swarm_plan_running_items_render_before_completed_in_large_plans() {
+    // 120-item deep plan: 100 completed, 1 running near the end, rest queued.
+    // The running item must be visible in the small line budget instead of
+    // hiding behind the "+N more" footer.
+    let mut items: Vec<crate::plan::PlanItem> = (0..100)
+        .map(|i| plan_item(&format!("done-{i}"), "completed"))
+        .collect();
+    items.push(plan_item("hot-task", "running"));
+    for i in 0..19 {
+        items.push(plan_item(&format!("queued-{i}"), "queued"));
+    }
+
+    let data = InfoWidgetData {
+        todos: swarm_plan_todos(&items),
+        ..Default::default()
+    };
+    let text = lines_text(&render_todos_widget(&data, Rect::new(0, 0, 60, 8)));
+    assert!(
+        text.contains("task hot-task"),
+        "running plan item should be visible in the budgeted list: {text}"
+    );
+    assert!(text.contains("+"), "footer summarizes the rest: {text}");
+}
+
+#[test]
+fn todo_widget_header_says_plan_when_showing_swarm_plan_projection() {
+    let items = vec![plan_item("a", "running"), plan_item("b", "queued")];
+    let plan_data = InfoWidgetData {
+        todos: swarm_plan_todos(&items),
+        todos_are_swarm_plan: true,
+        ..Default::default()
+    };
+    for text in [
+        lines_text(&render_todos_widget(&plan_data, Rect::new(0, 0, 60, 8))),
+        lines_text(&render_todos_expanded(&plan_data, Rect::new(0, 0, 60, 14))),
+        lines_text(&render_todos_compact(&plan_data, Rect::new(0, 0, 60, 3))),
+    ] {
+        assert!(text.contains("Plan"), "plan header missing: {text}");
+        assert!(!text.contains("Todos"), "plan must not claim Todos: {text}");
+    }
+
+    let todo_data = InfoWidgetData {
+        todos: swarm_plan_todos(&items),
+        todos_are_swarm_plan: false,
+        ..Default::default()
+    };
+    let text = lines_text(&render_todos_widget(&todo_data, Rect::new(0, 0, 60, 8)));
+    assert!(text.contains("Todos"), "todos header missing: {text}");
+}
+
+fn todo_item(id: &str, content: &str, status: &str, group: Option<&str>) -> crate::todo::TodoItem {
+    crate::todo::TodoItem {
+        active_form: None,
+        content: content.to_string(),
+        status: status.to_string(),
+        priority: "medium".to_string(),
+        id: id.to_string(),
+        group: group.map(|g| g.to_string()),
+        blocked_by: Vec::new(),
+        assigned_to: None,
+        confidence: Some(80),
+        completion_confidence: None,
+        confidence_history: Vec::new(),
+    }
+}
+
+/// Join spans without separators so assertions can match text that spans
+/// multiple styled segments (e.g. "hill " + "85%").
+fn lines_text_concat(lines: &[ratatui::text::Line<'_>]) -> String {
+    lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn flat_todo_list_shows_hill_climbability_on_header_in_all_widget_sizes() {
+    let data = InfoWidgetData {
+        todos: vec![
+            todo_item("a", "optimize grep", "in_progress", None),
+            todo_item("b", "add bench", "pending", None),
+        ],
+        todo_goals: vec![crate::todo::TodoGoal {
+            group: None,
+            hill_climbability: Some(85),
+            objective: Some("p50 under 50ms".to_string()),
+        }],
+        ..Default::default()
+    };
+    for text in [
+        lines_text_concat(&render_todos_widget(&data, Rect::new(0, 0, 70, 8))),
+        lines_text_concat(&render_todos_expanded(&data, Rect::new(0, 0, 70, 14))),
+        lines_text_concat(&render_todos_compact(&data, Rect::new(0, 0, 70, 3))),
+    ] {
+        assert!(text.contains("hill 85%"), "hill suffix missing: {text}");
+    }
+}
+
+#[test]
+fn grouped_todos_show_hill_climbability_on_their_group_headers() {
+    let data = InfoWidgetData {
+        todos: vec![
+            todo_item("a", "speed up search", "in_progress", Some("optimize grep")),
+            todo_item("b", "sketch layout", "pending", Some("onboarding design")),
+        ],
+        todo_goals: vec![
+            crate::todo::TodoGoal {
+                group: Some("optimize grep".to_string()),
+                hill_climbability: Some(90),
+                objective: Some("p50 under 50ms".to_string()),
+            },
+            crate::todo::TodoGoal {
+                group: Some("onboarding design".to_string()),
+                hill_climbability: Some(20),
+                objective: None,
+            },
+        ],
+        ..Default::default()
+    };
+    for text in [
+        lines_text_concat(&render_todos_widget(&data, Rect::new(0, 0, 70, 10))),
+        lines_text_concat(&render_todos_expanded(&data, Rect::new(0, 0, 70, 14))),
+    ] {
+        assert!(text.contains("hill 90%"), "group hill missing: {text}");
+        assert!(text.contains("hill 20%"), "low group hill missing: {text}");
+    }
+}
+
+#[test]
+fn todos_without_goals_render_no_hill_suffix() {
+    let data = InfoWidgetData {
+        todos: vec![todo_item("a", "do a thing", "pending", None)],
+        ..Default::default()
+    };
+    for text in [
+        lines_text_concat(&render_todos_widget(&data, Rect::new(0, 0, 70, 8))),
+        lines_text_concat(&render_todos_expanded(&data, Rect::new(0, 0, 70, 14))),
+        lines_text_concat(&render_todos_compact(&data, Rect::new(0, 0, 70, 3))),
+    ] {
+        assert!(!text.contains("hill"), "unexpected hill suffix: {text}");
+    }
+}
+
+#[test]
+fn hill_suffix_renders_safely_at_tiny_sizes() {
+    let data = InfoWidgetData {
+        todos: vec![todo_item(
+            "a",
+            "very long content that will need truncation 汉字 emoji 🚀",
+            "in_progress",
+            Some("a very long group name that must truncate"),
+        )],
+        todo_goals: vec![crate::todo::TodoGoal {
+            group: Some("a very long group name that must truncate".to_string()),
+            hill_climbability: Some(100),
+            objective: None,
+        }],
+        ..Default::default()
+    };
+    for (w, h) in [(0, 0), (1, 1), (5, 2), (12, 4), (200, 50)] {
+        let rect = Rect::new(0, 0, w, h);
+        let _ = render_todos_widget(&data, rect);
+        let _ = render_todos_expanded(&data, rect);
+        let _ = render_todos_compact(&data, rect);
+    }
+}
+
+#[test]
+fn swarm_plan_gate_items_render_like_normal_items() {
+    // Deep-mode critique gates share the plan item shape; only the id differs.
+    let mut gate = plan_item("explore-root::gate", "queued");
+    gate.content = "Critique the work of 'explore-root' adversarially.".to_string();
+    gate.blocked_by = vec!["explore-root".to_string()];
+    let items = vec![plan_item("explore-root", "running"), gate];
+
+    let data = InfoWidgetData {
+        todos: swarm_plan_todos(&items),
+        ..Default::default()
+    };
+    let text = lines_text(&render_todos_expanded(&data, Rect::new(0, 0, 80, 14)));
+    assert!(text.contains("Critique the work"), "{text}");
+    assert!(text.contains("(blocked)"), "gate blocked on parent: {text}");
+}
+
+#[test]
+fn swarm_plan_todos_render_safely_at_extreme_sizes() {
+    // Panic-safety sweep: long ids, wide glyphs, huge plans, tiny rects.
+    let mut items: Vec<crate::plan::PlanItem> = (0..300)
+        .map(|i| {
+            let mut item = plan_item(
+                &format!("very-long-node-id-{i}::gate::retry::{}", "x".repeat(80)),
+                match i % 5 {
+                    0 => "running",
+                    1 => "completed",
+                    2 => "failed",
+                    3 => "queued",
+                    _ => "blocked",
+                },
+            );
+            item.content = format!("宽字符 emoji 🚀 test {} {}", i, "汉".repeat(40));
+            item.blocked_by = vec!["dep".to_string()];
+            item
+        })
+        .collect();
+    items.push(plan_item("", ""));
+
+    let data = InfoWidgetData {
+        todos: swarm_plan_todos(&items),
+        ..Default::default()
+    };
+    for (w, h) in [(0, 0), (1, 1), (2, 5), (7, 3), (20, 8), (200, 50)] {
+        let rect = Rect::new(0, 0, w, h);
+        let _ = render_todos_widget(&data, rect);
+        let _ = render_todos_expanded(&data, rect);
+        let _ = render_todos_compact(&data, rect);
+    }
 }
 
 #[test]
@@ -321,7 +642,7 @@ fn memory_widget_hides_sidecar_model_when_idle() {
         .join("\n")
         .to_lowercase();
 
-    assert!(text.contains("memory"));
+    assert!(text.contains("3 memories"));
     assert!(!text.contains("model:"));
     assert!(!text.contains("gpt-5.3"));
     assert!(text.contains("3 memories"));
@@ -484,7 +805,39 @@ fn memory_widget_does_not_stay_done_after_idle_settles() {
 
     assert!(text.contains("128 memories"), "{text}");
     assert!(!text.contains("done"), "{text}");
-    assert!(text.contains("idle") || text.contains("trace:"), "{text}");
+    assert!(!text.contains("idle"), "{text}");
+    assert!(!text.contains("trace:"), "{text}");
+}
+
+#[test]
+fn memory_widget_never_renders_uppercase_state_badges() {
+    let data = InfoWidgetData {
+        memory_info: Some(MemoryInfo {
+            total_count: 128,
+            activity: Some(MemoryActivity {
+                state: MemoryState::SidecarChecking { count: 3 },
+                state_since: Instant::now(),
+                pipeline: None,
+                recent_events: Vec::new(),
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let text = render_memory_widget(&data, Rect::new(0, 0, 40, 8))
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(text.contains("128 memories"), "{text}");
+    for badge in [
+        "IDLE", "SEARCH", "VERIFY", "READY", "INJECT", "SAVE", "UPDATE", "TOOL", "DONE", "FAILED",
+        "DISABLED",
+    ] {
+        assert!(!text.contains(badge), "unexpected badge {badge}: {text}");
+    }
 }
 
 #[test]
@@ -579,12 +932,13 @@ fn memory_compact_shows_memory_count_before_status() {
         .to_lowercase();
 
     assert!(text.contains("128 memories"), "{text}");
-    assert!(text.contains("idle"), "{text}");
+    assert!(!text.contains("idle"), "{text}");
+    assert!(!text.contains(" · "), "{text}");
     assert!(!text.contains("memory ·"), "{text}");
 }
 
 #[test]
-fn memory_widget_shows_disabled_badge_when_disabled() {
+fn memory_widget_is_hidden_when_disabled() {
     let data = InfoWidgetData {
         memory_info: Some(MemoryInfo {
             total_count: 12,
@@ -596,28 +950,9 @@ fn memory_widget_shows_disabled_badge_when_disabled() {
         ..Default::default()
     };
 
-    // Header/expanded view should render a DISABLED badge alongside the count.
-    let text = render_memory_widget(&data, Rect::new(0, 0, 40, 5))
-        .iter()
-        .flat_map(|line| line.spans.iter())
-        .map(|span| span.content.as_ref())
-        .collect::<Vec<_>>()
-        .join("\n")
-        .to_lowercase();
-
-    assert!(text.contains("disabled"), "{text}");
-    assert!(text.contains("12 memories"), "{text}");
-
-    // Compact (overview) view should also show the disabled state.
-    let compact = render_memory_compact(data.memory_info.as_ref().unwrap(), 40)
-        .iter()
-        .flat_map(|line| line.spans.iter())
-        .map(|span| span.content.as_ref())
-        .collect::<Vec<_>>()
-        .join("\n")
-        .to_lowercase();
-
-    assert!(compact.contains("disabled"), "{compact}");
+    assert!(render_memory_widget(&data, Rect::new(0, 0, 40, 5)).is_empty());
+    assert!(render_memory_compact(data.memory_info.as_ref().unwrap(), 40).is_empty());
+    assert!(!data.has_data_for(WidgetKind::MemoryActivity));
 }
 
 #[test]
@@ -923,6 +1258,81 @@ fn render_context_compact_reports_updating_when_snapshot_is_stale() {
     );
 }
 
+fn managed_member(id: &str, status: &str, role: Option<&str>) -> SwarmMemberStatus {
+    SwarmMemberStatus {
+        session_id: id.to_string(),
+        friendly_name: Some(id.to_string()),
+        status: status.to_string(),
+        detail: None,
+        task_label: None,
+        role: role.map(str::to_string),
+        is_headless: Some(true),
+        live_attachments: None,
+        status_age_secs: Some(3),
+        output_tail: Some("streaming some work".to_string()),
+        report_back_to_session_id: Some("parent".to_string()),
+        todo_progress: Some((2, 5)),
+        todo_items: Vec::new(),
+        runtime: crate::protocol::SwarmMemberRuntime::default(),
+    }
+}
+
+/// With managed members present, the SwarmStatus widget switches to compact
+/// mode: agents tally + node progress bar, and has_data_for admits the
+/// widget into layout.
+#[test]
+fn swarm_widget_dock_mode_lists_managed_agents() {
+    let data = InfoWidgetData {
+        swarm_info: Some(SwarmInfo {
+            managed_members: vec![
+                managed_member("researcher", "running", Some("coordinator")),
+                managed_member("reviewer", "completed", None),
+            ],
+            plan_progress: Some((3, 2, 7)),
+            selected: 0,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert!(data.has_data_for(WidgetKind::SwarmStatus));
+    // Managing agents bumps the dock's effective priority near the top.
+    assert!(data.effective_priority(WidgetKind::SwarmStatus) < WidgetKind::SwarmStatus.priority());
+
+    let lines = super::render_swarm_widget(&data, Rect::new(0, 0, 34, 10));
+    let text = lines_text(&lines);
+    assert!(text.contains("1/2 agents"), "got: {text}");
+    assert!(text.contains("nodes 3/7"), "got: {text}");
+    // Second line is the plan progress bar (low-profile underline cells).
+    assert_eq!(lines.len(), 2, "compact widget is exactly two lines");
+    let bar: String = lines[1].spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        bar.chars().all(|c| c == '▁') && !bar.is_empty(),
+        "expected underline bar cells: {bar}"
+    );
+    // Height: summary line + bar (+ borders).
+    let h = calculate_widget_height(WidgetKind::SwarmStatus, &data, 34, 20);
+    assert_eq!(h, 4, "compact height should be 2 content + 2 border: {h}");
+}
+
+/// Without managed members the legacy session-list rendering is preserved and
+/// the widget stays out of layout (has_data_for is false).
+#[test]
+fn swarm_widget_without_managed_agents_stays_hidden_from_layout() {
+    let data = InfoWidgetData {
+        swarm_info: Some(SwarmInfo {
+            session_count: 4,
+            session_names: vec!["alpha".to_string()],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert!(!data.has_data_for(WidgetKind::SwarmStatus));
+    assert_eq!(
+        calculate_widget_height(WidgetKind::SwarmStatus, &data, 34, 20),
+        0
+    );
+}
+
 #[test]
 fn swarm_widget_renders_member_roles_and_details() {
     let data = InfoWidgetData {
@@ -935,6 +1345,7 @@ fn swarm_widget_renders_member_roles_and_details() {
                     friendly_name: Some("coord".to_string()),
                     status: "running".to_string(),
                     detail: Some("orchestrating patch".to_string()),
+                    task_label: None,
                     role: Some("coordinator".to_string()),
                     is_headless: None,
                     live_attachments: None,
@@ -942,12 +1353,15 @@ fn swarm_widget_renders_member_roles_and_details() {
                     output_tail: None,
                     report_back_to_session_id: None,
                     todo_progress: None,
+                    todo_items: Vec::new(),
+                    runtime: crate::protocol::SwarmMemberRuntime::default(),
                 },
                 SwarmMemberStatus {
                     session_id: "tree-12345678".to_string(),
                     friendly_name: Some("trees".to_string()),
                     status: "ready".to_string(),
                     detail: Some("worktree synced".to_string()),
+                    task_label: None,
                     role: Some("worktree_manager".to_string()),
                     is_headless: None,
                     live_attachments: None,
@@ -955,6 +1369,8 @@ fn swarm_widget_renders_member_roles_and_details() {
                     output_tail: None,
                     report_back_to_session_id: None,
                     todo_progress: None,
+                    todo_items: Vec::new(),
+                    runtime: crate::protocol::SwarmMemberRuntime::default(),
                 },
             ],
             ..Default::default()
@@ -976,6 +1392,122 @@ fn swarm_widget_renders_member_roles_and_details() {
         text.contains("trees ready - worktree synced"),
         "got: {text}"
     );
+}
+
+#[test]
+fn swarm_widget_handles_empty_swarm_and_zero_area_without_panic() {
+    // No swarm info at all: renders nothing.
+    let data = InfoWidgetData::default();
+    assert!(super::render_swarm_widget(&data, Rect::new(0, 0, 40, 4)).is_empty());
+
+    // Empty swarm (no members, no names, no subagent status): only the stats line.
+    let data = InfoWidgetData {
+        swarm_info: Some(SwarmInfo::default()),
+        ..Default::default()
+    };
+    let lines = super::render_swarm_widget(&data, Rect::new(0, 0, 40, 4));
+    assert_eq!(lines.len(), 1, "expected only the stats line");
+    // session_count == 0 and client_count == None: stats line is just the bee icon.
+    let text = lines_text(&lines);
+    assert!(
+        !text.contains("0s"),
+        "zero sessions must not render: {text}"
+    );
+
+    // Zero-size rect must not panic or underflow.
+    let _ = super::render_swarm_widget(&data, Rect::new(0, 0, 0, 0));
+    let mut member_data = data.clone();
+    member_data.swarm_info.as_mut().unwrap().members = vec![SwarmMemberStatus {
+        session_id: "abc".to_string(),
+        friendly_name: None,
+        status: "running".to_string(),
+        detail: None,
+        task_label: None,
+        role: None,
+        is_headless: None,
+        live_attachments: None,
+        status_age_secs: None,
+        output_tail: None,
+        report_back_to_session_id: None,
+        todo_progress: None,
+        todo_items: Vec::new(),
+        runtime: crate::protocol::SwarmMemberRuntime::default(),
+    }];
+    let _ = super::render_swarm_widget(&member_data, Rect::new(0, 0, 0, 0));
+    let _ = super::render_swarm_widget(&member_data, Rect::new(0, 0, 3, 1));
+}
+
+#[test]
+fn swarm_widget_caps_member_rows_for_large_swarms() {
+    let members: Vec<SwarmMemberStatus> = (0..500)
+        .map(|i| SwarmMemberStatus {
+            session_id: format!("session-{i:04}"),
+            friendly_name: Some(format!("worker-{i}")),
+            status: "running".to_string(),
+            detail: Some("very long detail text that should be truncated".repeat(4)),
+            task_label: None,
+            role: None,
+            is_headless: None,
+            live_attachments: None,
+            status_age_secs: None,
+            output_tail: None,
+            report_back_to_session_id: None,
+            todo_progress: None,
+            todo_items: Vec::new(),
+            runtime: crate::protocol::SwarmMemberRuntime::default(),
+        })
+        .collect();
+    let data = InfoWidgetData {
+        swarm_info: Some(SwarmInfo {
+            session_count: 500,
+            client_count: Some(3),
+            members,
+            session_names: (0..500).map(|i| format!("worker-{i}")).collect(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let lines = super::render_swarm_widget(&data, Rect::new(0, 0, 30, 10));
+    // Stats line + at most 3 member rows regardless of swarm size.
+    assert_eq!(lines.len(), 4, "expected stats line + capped member rows");
+    let text = lines_text(&lines);
+    assert!(text.contains("500s"), "got: {text}");
+    assert!(text.contains("3c"), "got: {text}");
+}
+
+#[test]
+fn background_widget_handles_empty_and_large_task_lists() {
+    // No background info: renders nothing.
+    let data = InfoWidgetData::default();
+    assert!(super::render_background_widget(&data, Rect::new(0, 0, 40, 4)).is_empty());
+
+    // running_count == 0: summary is suppressed even if stale task names linger.
+    let info = BackgroundInfo {
+        running_count: 0,
+        running_tasks: vec!["stale".to_string()],
+        ..Default::default()
+    };
+    assert!(super::render_background_compact(&info).is_empty());
+
+    // Large task list: summary + 3 rows + overflow line, no panic at tiny width.
+    let info = BackgroundInfo {
+        running_count: 200,
+        running_tasks: (0..200).map(|i| format!("task-{i}")).collect(),
+        progress_detail: Some("42% · working".to_string()),
+        ..Default::default()
+    };
+    let data = InfoWidgetData {
+        background_info: Some(info.clone()),
+        ..Default::default()
+    };
+    let lines = super::render_background_widget(&data, Rect::new(0, 0, 40, 8));
+    assert_eq!(lines.len(), 5, "summary + 3 tasks + overflow");
+    let text = lines_text(&lines);
+    assert!(text.contains("200 running"), "got: {text}");
+    assert!(text.contains("+197 more"), "got: {text}");
+    // Zero-size rect must not panic (row width clamps to a minimum).
+    let _ = super::render_background_widget(&data, Rect::new(0, 0, 0, 0));
 }
 
 #[test]
@@ -1099,6 +1631,7 @@ fn placements_never_include_border_only_widgets() {
             ..Default::default()
         }),
         todos: vec![crate::todo::TodoItem {
+            active_form: None,
             group: None,
             content: "ship patch".to_string(),
             status: "in_progress".to_string(),
@@ -1108,6 +1641,7 @@ fn placements_never_include_border_only_widgets() {
             assigned_to: None,
             confidence: None,
             completion_confidence: None,
+            confidence_history: Vec::new(),
         }],
         queue_mode: Some(true),
         memory_info: Some(MemoryInfo {

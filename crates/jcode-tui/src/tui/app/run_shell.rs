@@ -9,6 +9,15 @@ use std::io::Write;
 const STATUS_SPINNER_FPS: f32 = 12.5;
 pub(super) const STATUS_SPINNER_ONLY_INTERVAL: Duration = Duration::from_millis(80);
 
+pub(super) fn redraw_timer(period: Duration) -> tokio::time::Interval {
+    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    // Redraw ticks represent visual liveness, not elapsed simulation steps. An
+    // immediate first tick or Burst catch-up after a slow frame only schedules
+    // redundant full renders and can lock the UI into a slow-frame loop.
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval
+}
+
 pub(super) fn status_spinner_interval() -> tokio::time::Interval {
     status_spinner_interval_after(STATUS_SPINNER_ONLY_INTERVAL)
 }
@@ -227,7 +236,11 @@ fn render_status_spinner_into_buffer_mut(buffer: &mut Buffer, area: Rect, symbol
         area.y,
         symbol,
         1,
-        Style::default().fg(jcode_tui_style::theme::ai_color()),
+        // The spinner cell is patched outside the full-frame draw, so apply
+        // light-theme adaptation here explicitly (no-op on dark themes).
+        Style::default().fg(jcode_tui_style::adapt_color_for_theme(
+            jcode_tui_style::theme::ai_color(),
+        )),
     );
 }
 
@@ -237,7 +250,7 @@ impl App {
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<RunResult> {
         let mut event_stream = EventStream::new();
         let mut redraw_period = crate::tui::redraw_interval(&self);
-        let mut redraw_interval = interval(redraw_period);
+        let mut redraw_interval = redraw_timer(redraw_period);
         let mut status_spinner_interval = status_spinner_interval();
         let mut status_spinner_renderer = StatusSpinnerRenderer::default();
         let mut needs_redraw = true;
@@ -254,7 +267,7 @@ impl App {
             let desired_redraw = crate::tui::redraw_interval(&self);
             if desired_redraw != redraw_period {
                 redraw_period = desired_redraw;
-                redraw_interval = interval(redraw_period);
+                redraw_interval = redraw_timer(redraw_period);
             }
 
             if needs_redraw {
@@ -342,19 +355,17 @@ impl App {
     }
 
     /// Run the TUI in remote mode, connecting to a server
-    pub async fn run_remote(mut self, mut terminal: DefaultTerminal) -> Result<RunResult> {
+    pub async fn run_remote(
+        mut self,
+        mut terminal: DefaultTerminal,
+        remote_working_dir: Option<String>,
+    ) -> Result<RunResult> {
         let mut event_stream = EventStream::new();
         let mut redraw_period = crate::tui::redraw_interval(&self);
-        let mut redraw_interval = interval(redraw_period);
+        let mut redraw_interval = redraw_timer(redraw_period);
         let mut status_spinner_interval = status_spinner_interval();
         let mut status_spinner_renderer = StatusSpinnerRenderer::default();
         let mut needs_redraw = true;
-        // While unfocused and idle, redraws are throttled to this interval so a
-        // backgrounded session does not repaint at full rate on shared-server bus
-        // chatter. `None` means "no throttled frame drawn yet since losing focus".
-        const UNFOCUSED_IDLE_REDRAW_MIN_INTERVAL: std::time::Duration =
-            std::time::Duration::from_millis(1000);
-        let mut last_unfocused_draw: Option<std::time::Instant> = None;
         let mut handterm_native_scroll =
             super::handterm_native_scroll::HandtermNativeScrollClient::connect_from_env();
         let mut remote_state = remote::RemoteRunState::default();
@@ -394,6 +405,7 @@ impl App {
                 &mut event_stream,
                 &mut remote_state,
                 session_to_resume.as_deref(),
+                remote_working_dir.as_deref(),
             )
             .await?
             {
@@ -430,36 +442,16 @@ impl App {
                 let desired_redraw = crate::tui::redraw_interval(&self);
                 if desired_redraw != redraw_period {
                     redraw_period = desired_redraw;
-                    redraw_interval = interval(redraw_period);
+                    redraw_interval = redraw_timer(redraw_period);
                 }
 
                 if needs_redraw {
-                    // Throttle idle full-frame renders while the terminal is
-                    // backgrounded (FocusLost). An unfocused, idle session has
-                    // nothing changing worth a 60fps repaint, so it should not
-                    // repaint at full rate just because other sessions on the
-                    // shared server broadcast bus updates -- that is what made a
-                    // swarm of background windows saturate the CPU. We keep full-
-                    // rate redraws while streaming/processing so visible-but-
-                    // unfocused windows in a tiling WM still show live progress,
-                    // and set_client_focused(true) forces a full repaint on refocus.
-                    let allow_redraw = self.client_focused()
-                        || self.unfocused_redraw_warranted()
-                        || last_unfocused_draw
-                            .map(|t| t.elapsed() >= UNFOCUSED_IDLE_REDRAW_MIN_INTERVAL)
-                            .unwrap_or(true);
-                    if allow_redraw {
-                        status_spinner_renderer.draw_full(&mut self, &mut terminal)?;
-                        reset_status_spinner_interval(&mut status_spinner_interval, &self);
-                        if let Some(native) = handterm_native_scroll.as_mut() {
-                            native.sync_from_app(&self);
-                        }
-                        last_unfocused_draw =
-                            (!self.client_focused()).then(std::time::Instant::now);
-                        needs_redraw = false;
+                    status_spinner_renderer.draw_full(&mut self, &mut terminal)?;
+                    reset_status_spinner_interval(&mut status_spinner_interval, &self);
+                    if let Some(native) = handterm_native_scroll.as_mut() {
+                        native.sync_from_app(&self);
                     }
-                    // When unfocused and throttled, leave needs_redraw set so the
-                    // pending update is coalesced into the next allowed frame.
+                    needs_redraw = false;
                 }
 
                 if self.should_quit {
@@ -648,6 +640,21 @@ impl App {
 mod tests {
     use super::*;
     use ratatui::style::Color;
+
+    #[tokio::test]
+    async fn redraw_timer_waits_one_period_and_skips_missed_ticks() {
+        let mut timer = redraw_timer(Duration::from_millis(250));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), timer.tick())
+                .await
+                .is_err(),
+            "the first redraw tick must not fire immediately"
+        );
+        assert_eq!(
+            timer.missed_tick_behavior(),
+            tokio::time::MissedTickBehavior::Skip
+        );
+    }
 
     fn assert_duration_close(actual: Duration, expected: Duration) {
         let actual_ms = actual.as_millis() as i128;

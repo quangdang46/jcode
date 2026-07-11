@@ -39,17 +39,17 @@ use super::comm_sync::{
 };
 use super::provider_control::{
     handle_cycle_model, handle_notify_auth_changed, handle_refresh_models,
-    handle_set_compaction_mode, handle_set_model, handle_set_permission_mode,
-    handle_set_premium_mode, handle_set_reasoning_effort, handle_set_route,
-    handle_set_service_tier, handle_set_transport, handle_switch_anthropic_account,
-    handle_switch_openai_account, try_available_models_updated_event,
+    handle_set_compaction_mode, handle_set_model, handle_set_premium_mode,
+    handle_set_reasoning_effort, handle_set_route, handle_set_service_tier, handle_set_transport,
+    handle_switch_anthropic_account, handle_switch_openai_account,
+    try_available_models_updated_event,
 };
 use super::{
     AwaitMembersRuntime, ClientConnectionInfo, ClientDebugState, FileTouchService,
     SessionControlHandle, SessionInterruptQueues, SharedContext, SwarmEvent, SwarmMember,
     SwarmMutationRuntime, VersionedPlan, format_structured_completion_report,
-    register_session_interrupt_queue, truncate_detail, update_member_status,
-    update_member_status_with_report,
+    register_session_interrupt_queue, send_swarm_plan_to_session, truncate_detail,
+    update_member_status, update_member_status_with_report, update_member_status_with_report_tldr,
 };
 use crate::agent::Agent;
 use crate::bus::{Bus, BusEvent};
@@ -61,9 +61,6 @@ use crate::transport::Stream;
 use anyhow::Result;
 use futures::FutureExt;
 use jcode_agent_runtime::{InterruptSignal, SoftInterruptSource, StreamError};
-use jcode_hooks::{
-    ClassifiedOutcome, DispatchConfig, HookContext, HookEvent, HookInputBuilder, HookRegistry,
-};
 use std::collections::{HashMap, HashSet};
 use std::sync::{
     Arc,
@@ -269,9 +266,20 @@ async fn refresh_session_control_handle(
             let fallback_stop_signal = shutdown_signals.read().await.get(session_id).cloned();
             let fallback_soft_interrupt_queue =
                 soft_interrupt_queues.read().await.get(session_id).cloned();
-            if let (Some(stop_signal), Some(soft_interrupt_queue)) =
-                (fallback_stop_signal, fallback_soft_interrupt_queue)
-            {
+            if let Some(soft_interrupt_queue) = fallback_soft_interrupt_queue {
+                // A missing shutdown-signal registration (e.g. a session created
+                // through the headless spawn path) must not force this connection
+                // to block on the busy agent mutex: cancels fired through the
+                // handle fan out to the running turn's own signal via the
+                // turn-cancel registry (issue #428), so a detached signal is a
+                // safe stand-in.
+                let stop_signal = fallback_stop_signal.unwrap_or_else(|| {
+                    crate::logging::warn(&format!(
+                        "refresh_session_control_handle: no registered shutdown signal for busy session {}; using detached signal (cancels reach the running turn via the turn cancel registry)",
+                        session_id
+                    ));
+                    InterruptSignal::new()
+                });
                 crate::logging::warn(&format!(
                     "refresh_session_control_handle: using lock-free cancel-only control handle for busy session {} after {}ms",
                     session_id,
@@ -418,7 +426,7 @@ pub(super) async fn handle_client(
 
     let client_start = std::time::Instant::now();
 
-    let provider = provider_template.fork();
+    let provider = provider_template.fork_for_new_session();
     let t0 = std::time::Instant::now();
     let registry = Registry::new(provider.clone()).await;
     let registry_ms = t0.elapsed().as_millis();
@@ -543,9 +551,13 @@ pub(super) async fn handle_client(
             let json = encode_event(&event);
             let mut w = writer_clone.lock().await;
             if let Err(error) = w.write_all(json.as_bytes()).await {
+                // A broken pipe here is routine (client reload/disconnect mid
+                // broadcast), so keep the line short: a full Debug dump of e.g.
+                // a SwarmStatus event prints every member and floods the log.
+                let event_desc = crate::logging::truncate_for_log(&format!("{:?}", event), 200);
                 crate::logging::warn(&format!(
-                    "event_forwarder write failed for connection {} while sending {:?}: {}",
-                    client_connection_id_for_events, event, error
+                    "event_forwarder write failed for connection {} while sending {}: {}",
+                    client_connection_id_for_events, event_desc, error
                 ));
                 break;
             }
@@ -699,10 +711,18 @@ pub(super) async fn handle_client(
                             if retry_after_secs.is_some() {
                                 crate::telemetry::record_error(crate::telemetry::ErrorCategory::RateLimited);
                             } else {
-                                let msg = e.to_string().to_lowercase();
-                                if msg.contains("timeout") {
+                                let msg = e.to_string();
+                                let lower = msg.to_lowercase();
+                                if lower.contains("timeout") {
                                     crate::telemetry::record_error(crate::telemetry::ErrorCategory::ProviderTimeout);
-                                } else if msg.contains("auth") || msg.contains("unauthorized") || msg.contains("forbidden") {
+                                } else if crate::provider::error_looks_like_credential_failure(&msg)
+                                    || lower.contains("403 forbidden")
+                                {
+                                    // Use the shared credential-failure classifier instead of a
+                                    // bare `contains("auth")`: that substring also matched
+                                    // unrelated errors (e.g. any message mentioning "author" or
+                                    // OAuth flow noise) and inflated the auth_failed telemetry
+                                    // counter.
                                     crate::telemetry::record_error(crate::telemetry::ErrorCategory::AuthFailed);
                                 }
                             }
@@ -788,17 +808,6 @@ pub(super) async fn handle_client(
                             let _ = client_event_tx.send(ServerEvent::SidePanelState {
                                 snapshot: update.snapshot,
                             });
-                        }
-                    }
-                    Ok(BusEvent::TodoOrchestratorToggle { session_id, enabled }) => {
-                        if session_id == client_session_id {
-                            let mut guard = agent.lock().await;
-                            guard.set_todo_orchestrator_enabled(enabled);
-                            crate::logging::info(&format!(
-                                "[orchestrator] toggled {} for session {}",
-                                if enabled { "ON" } else { "OFF" },
-                                session_id,
-                            ));
                         }
                     }
                     Ok(BusEvent::CompactionFinished) => {
@@ -1684,10 +1693,6 @@ pub(super) async fn handle_client(
                 handle_set_compaction_mode(id, mode, &agent, &client_event_tx).await;
             }
 
-            Request::SetPermissionMode { id, mode } => {
-                handle_set_permission_mode(id, mode, &client_event_tx).await;
-            }
-
             Request::RenameSession { id, title } => {
                 if reject_if_agent_busy_for_request(
                     id,
@@ -1954,6 +1959,7 @@ pub(super) async fn handle_client(
                 channel,
                 delivery,
                 wake,
+                tldr,
             } => {
                 handle_comm_message(
                     id,
@@ -1963,6 +1969,7 @@ pub(super) async fn handle_client(
                     channel,
                     delivery,
                     wake,
+                    tldr,
                     &client_event_tx,
                     &sessions,
                     &soft_interrupt_queues,
@@ -2198,6 +2205,8 @@ pub(super) async fn handle_client(
                 initial_message,
                 request_nonce,
                 spawn_mode,
+                model,
+                effort,
             } => {
                 let spawn_mode = match parse_swarm_spawn_mode(id, spawn_mode, &client_event_tx) {
                     Some(spawn_mode) => spawn_mode,
@@ -2210,6 +2219,8 @@ pub(super) async fn handle_client(
                     initial_message,
                     request_nonce,
                     spawn_mode,
+                    model,
+                    effort,
                     &client_event_tx,
                     &sessions,
                     &global_session_id,
@@ -2227,6 +2238,22 @@ pub(super) async fn handle_client(
                     &soft_interrupt_queues,
                     &swarm_mutation_runtime,
                     &client_connections,
+                )
+                .await;
+            }
+
+            Request::CommListModels {
+                id,
+                session_id: req_session_id,
+            } => {
+                super::comm_session::handle_comm_list_models(
+                    id,
+                    &req_session_id,
+                    &sessions,
+                    &provider_template,
+                    |event| {
+                        let _ = client_event_tx.send(event);
+                    },
                 )
                 .await;
             }
@@ -2327,6 +2354,7 @@ pub(super) async fn handle_client(
                 message,
                 validation,
                 follow_up,
+                tldr,
             } => {
                 let status = status.unwrap_or_else(|| "ready".to_string());
                 let report = format_structured_completion_report(
@@ -2335,11 +2363,12 @@ pub(super) async fn handle_client(
                     follow_up.as_deref(),
                 );
                 let detail = Some(truncate_detail(&message, 160));
-                update_member_status_with_report(
+                update_member_status_with_report_tldr(
                     &req_session_id,
                     &status,
                     detail,
                     Some(report),
+                    tldr,
                     &swarm_members,
                     &swarms_by_id,
                     Some(&event_history),
@@ -2443,6 +2472,8 @@ pub(super) async fn handle_client(
                 prefer_spawn,
                 spawn_if_needed,
                 message,
+                model,
+                effort,
             } => {
                 handle_comm_assign_next(
                     id,
@@ -2452,6 +2483,8 @@ pub(super) async fn handle_client(
                     prefer_spawn,
                     spawn_if_needed,
                     message,
+                    model,
+                    effort,
                     &client_event_tx,
                     &sessions,
                     &global_session_id,
@@ -2549,6 +2582,9 @@ pub(super) async fn handle_client(
                 session_ids: requested_ids,
                 mode,
                 timeout_secs,
+                background,
+                notify,
+                wake,
             } => {
                 handle_comm_await_members(
                     id,
@@ -2557,6 +2593,9 @@ pub(super) async fn handle_client(
                     requested_ids,
                     mode,
                     timeout_secs,
+                    background,
+                    notify,
+                    wake,
                     CommAwaitMembersContext {
                         client_event_tx: &client_event_tx,
                         swarm_members: &swarm_members,
@@ -2572,6 +2611,7 @@ pub(super) async fn handle_client(
             Request::ClientDebugCommand { id, .. } => {
                 handle_client_debug_command(id, &client_event_tx).await;
             }
+            Request::SetPermissionMode { .. } => {}
             Request::ClientDebugResponse { id, output } => {
                 handle_client_debug_response(id, output, &client_debug_response_tx);
             }
@@ -2778,63 +2818,7 @@ async fn cancel_processing_message(
             *state.task = Some(handle);
             return;
         }
-
-        // --- Stop hook (BLOCKING) ---
-        // Dispatch Stop hooks before cancelling. If any hook denies, abort the
-        // cancel and leave the task running.
-        {
-            let hook_config = jcode_hooks::load_hooks_config();
-            if !hook_config.is_empty() {
-                let registry = HookRegistry::from_config(hook_config.clone());
-                let cwd = std::env::current_dir()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let hook_ctx = HookContext::for_stop(
-                    session_control.session_id.clone(),
-                    cwd.clone(),
-                    Some("user_cancel".to_string()),
-                );
-                let handlers = registry.get_matching(&HookEvent::Stop, &hook_ctx);
-                if !handlers.is_empty() {
-                    let mut hook_input = HookInputBuilder::new()
-                        .session(&session_control.session_id, &cwd)
-                        .event("Stop")
-                        .build();
-                    hook_input.stop_type = Some("user_cancel".to_string());
-                    let dispatch_config = DispatchConfig::from_settings(&hook_config.settings);
-                    let stats = jcode_hooks::dispatch_hooks(
-                        &HookEvent::Stop,
-                        &hook_input,
-                        &handlers,
-                        &dispatch_config,
-                    )
-                    .await;
-                    if stats.any_denied() {
-                        let deny_reason = stats
-                            .results
-                            .iter()
-                            .find(|r| matches!(r.outcome, ClassifiedOutcome::Deny { .. }))
-                            .map(|r| match &r.outcome {
-                                ClassifiedOutcome::Deny { reason } => reason.clone(),
-                                _ => String::new(),
-                            })
-                            .unwrap_or_else(|| "blocked by hook".to_string());
-                        crate::logging::info(&format!(
-                            "SERVER_INTERRUPT_CANCEL_BLOCKED_BY_HOOK request_id={:?} session={} message_id={:?} reason={} elapsed_ms={}",
-                            request_id,
-                            session_label,
-                            *state.message_id,
-                            deny_reason,
-                            cancel_start.elapsed().as_millis()
-                        ));
-                        *state.task = Some(handle);
-                        return;
-                    }
-                }
-            }
-        }
-
-        session_control.request_cancel();
+        let cancel_epoch = session_control.request_cancel();
         crate::logging::info(&format!(
             "SERVER_INTERRUPT_CANCEL_SIGNALLED request_id={:?} session={} message_id={:?} wait_ms=500",
             request_id, session_label, *state.message_id
@@ -2874,7 +2858,10 @@ async fn cancel_processing_message(
                 }
             }
         }
-        session_control.reset_cancel();
+        // Only clear the cancel we fired: a newer cancel (repeated Esc, jade
+        // relay, another connection) must not be erased before its target
+        // observes it (issue #428).
+        session_control.reset_cancel_if_epoch(cancel_epoch);
         *state.task = None;
         *state.client_is_processing = false;
         if let Some(session_id) = state.session_id.take() {
@@ -2910,11 +2897,17 @@ async fn cancel_processing_message(
             *state.client_is_processing,
             *state.message_id
         ));
-        session_control.request_cancel();
+        let cancel_epoch = session_control.request_cancel();
         let reset_control = session_control.clone();
         tokio::spawn(async move {
+            // The running turn is not owned by this connection (post-reload
+            // recovery, server-initiated turn, or attach), so we cannot await
+            // it. Clear the flag later so the *next* turn is not aborted by a
+            // stale cancel, but only if no newer cancel fired in the meantime:
+            // an unconditional reset here used to erase rapid repeated Esc
+            // cancels before the busy turn observed them (issue #428).
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            reset_control.reset_cancel();
+            reset_control.reset_cancel_if_epoch(cancel_epoch);
         });
         *state.client_is_processing = false;
         let status_session_id = state
@@ -3056,7 +3049,6 @@ pub(super) async fn process_message_streaming_mpsc(
 ) -> Result<()> {
     let mut agent = agent.lock().await;
     let session_id = agent.session_id().to_string();
-    let cwd = agent.working_dir().unwrap_or_default().to_string();
     let result = agent
         .run_once_streaming_mpsc(content, images, system_reminder, event_tx)
         .await;
@@ -3066,51 +3058,13 @@ pub(super) async fn process_message_streaming_mpsc(
                 "turn_completed",
                 "message_turn_finished",
             )
-            .with_session_id(session_id.clone())
+            .with_session_id(session_id)
             .force_attribution(),
         );
-
-        // Dispatch SessionIdle hooks — turn completed, session is now idle
-        {
-            let registry = agent.hook_registry().clone();
-            let config = agent.dispatch_config().clone();
-            let hook_input = HookInputBuilder::new()
-                .session(&session_id, &cwd)
-                .event("SessionIdle")
-                .build();
-            let ctx = HookContext::for_session_idle(session_id, cwd);
-            let event = HookEvent::SessionIdle;
-            tokio::spawn(async move {
-                let handlers = registry.get_matching(&event, &ctx);
-                if !handlers.is_empty() {
-                    jcode_hooks::dispatch_hooks(&event, &hook_input, &handlers, &config).await;
-                }
-            });
-        }
-    } else {
-        // Dispatch SessionError hooks — turn failed with an error
-        let error_msg = result
-            .as_ref()
-            .err()
-            .map(crate::util::format_error_chain)
-            .unwrap_or_else(|| "unknown error".to_string());
-        {
-            let registry = agent.hook_registry().clone();
-            let config = agent.dispatch_config().clone();
-            let mut hook_input = HookInputBuilder::new()
-                .session(&session_id, &cwd)
-                .event("SessionError")
-                .build();
-            hook_input.error = Some(error_msg);
-            let ctx = HookContext::for_session_error(session_id, cwd);
-            let event = HookEvent::SessionError;
-            tokio::spawn(async move {
-                let handlers = registry.get_matching(&event, &ctx);
-                if !handlers.is_empty() {
-                    jcode_hooks::dispatch_hooks(&event, &hook_input, &handlers, &config).await;
-                }
-            });
-        }
+        crate::process_memory::release_retained_heap_debounced(
+            "server_turn_completed",
+            std::time::Duration::from_secs(30),
+        );
     }
     result
 }

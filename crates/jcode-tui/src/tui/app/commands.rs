@@ -35,7 +35,7 @@ const BTW_PAGE_ID: &str = "btw";
 pub(super) const REVIEW_PREFERRED_MODEL: &str = "gpt-5.5";
 const POKE_OFF_UI_HINT: &str = "/poke off to stop.";
 const TODO_CONFIDENCE_THRESHOLD: u8 = 90;
-const TODO_CONFIDENCE_SUMMARY_PREFIX: &str = "All todos are done. Todo confidence summary:";
+const TODO_CONFIDENCE_SUMMARY_PREFIX: &str = crate::todo::TODO_CONFIDENCE_SUMMARY_PREFIX;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct TodoConfidenceSummary {
@@ -72,10 +72,7 @@ pub(super) fn parse_poke_command(trimmed: &str) -> Option<Result<PokeCommand, St
 }
 
 pub(super) fn is_poke_message(message: &str) -> bool {
-    (message.starts_with("You have ")
-        && message.contains(" incomplete todo")
-        && message.ends_with("update the todo tool."))
-        || message.starts_with(TODO_CONFIDENCE_SUMMARY_PREFIX)
+    crate::todo::is_auto_poke_message(message)
 }
 
 pub(super) fn is_todo_confidence_summary_message(message: &str) -> bool {
@@ -731,6 +728,7 @@ fn launch_manual_subagent(app: &mut App, spec: ManualSubagentSpec) {
             tool_call_id: tool_call_for_task.id.clone(),
             tool_name: tool_call_for_task.name.clone(),
             status: ToolStatus::Running,
+            intent: tool_call_for_task.intent.clone(),
             title: None,
         }));
 
@@ -773,6 +771,7 @@ fn launch_manual_subagent(app: &mut App, spec: ManualSubagentSpec) {
             tool_call_id: tool_call_for_task.id.clone(),
             tool_name: tool_call_for_task.name.clone(),
             status,
+            intent: tool_call_for_task.intent.clone(),
             title: title.clone(),
         }));
 
@@ -1723,6 +1722,11 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
         return true;
     }
 
+    if trimmed == "/active" {
+        app.open_active_sessions_picker();
+        return true;
+    }
+
     if let Some(command) = parse_plan_command(trimmed) {
         handle_plan_command_local(app, command);
         return true;
@@ -1979,6 +1983,14 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
         app.replace_provider_messages(provider_messages);
 
         app.clear_display_messages();
+        // Drop any streaming mermaid preview tied to the transcript being
+        // replaced (defensive: submit_input's commit already clears it on the
+        // slash-command path, but direct callers must not leak the slot).
+        // ACTIVE_DIAGRAMS deliberately survives: undo RESTORES messages whose
+        // diagrams are already registered, and the body-cache prefix reuse in
+        // ui_prepare.rs means re-rendered-identical messages do not re-run the
+        // mermaid path (and so would never re-register if we cleared here).
+        app.clear_streaming_render_state();
         for rendered in crate::session::render_messages(&app.session) {
             app.push_display_message(DisplayMessage {
                 role: rendered.role,
@@ -2045,6 +2057,16 @@ pub(super) fn handle_session_command(app: &mut App, trimmed: &str) -> bool {
                 app.session.updated_at = chrono::Utc::now();
 
                 app.clear_display_messages();
+                // Same defensive preview clear as /rewind undo above.
+                // ACTIVE_DIAGRAMS survives here too: messages BEFORE the
+                // rewind point are retained, and body-cache prefix reuse
+                // (ui_prepare.rs build_body_from_base) skips re-rendering
+                // them, so clearing the registry would orphan the pinned
+                // pane / margin widget for diagrams that are still in the
+                // transcript. Diagrams from rewound-away messages leak until
+                // eviction (ACTIVE_DIAGRAMS_MAX) - a pinned, known tradeoff
+                // (tests/swarm_plan_graph_inline.rs).
+                app.clear_streaming_render_state();
                 for rendered in crate::session::render_messages(&app.session) {
                     app.push_display_message(DisplayMessage {
                         role: rendered.role,
@@ -2695,11 +2717,7 @@ pub(super) fn incomplete_poke_todos(app: &App) -> Vec<crate::todo::TodoItem> {
 }
 
 pub(super) fn build_poke_message(incomplete: &[crate::todo::TodoItem]) -> String {
-    format!(
-        "You have {} incomplete todo{}. Continue working, or update the todo tool.",
-        incomplete.len(),
-        if incomplete.len() == 1 { "" } else { "s" },
-    )
+    crate::todo::build_auto_poke_message(incomplete.len())
 }
 
 fn todo_confidence_weight(priority: &str) -> u32 {
@@ -3041,6 +3059,103 @@ fn parse_agents_target(raw: &str) -> Option<crate::tui::AgentModelTarget> {
     }
 }
 
+fn file_has_nonblank_content(path: &std::path::Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|content| !content.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn ensure_swarm_prompt_edit_path(
+    working_dir: Option<&str>,
+    jcode_dir: &std::path::Path,
+) -> std::io::Result<PathBuf> {
+    let project_dir = match working_dir {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_dir()?,
+    };
+    let project_path = project_dir.join(".jcode").join("swarm-prompt.md");
+    if file_has_nonblank_content(&project_path) {
+        return Ok(project_path);
+    }
+
+    let global_path = jcode_dir.join("swarm-prompt.md");
+    if file_has_nonblank_content(&global_path) {
+        return Ok(global_path);
+    }
+
+    std::fs::create_dir_all(jcode_dir)?;
+    let contents = format!("{}\n", crate::prompt::DEFAULT_SWARM_PROMPT.trim());
+    std::fs::write(&global_path, contents)?;
+    Ok(global_path)
+}
+
+pub(super) fn handle_swarm_prompt_command(app: &mut App, trimmed: &str) -> bool {
+    if trimmed != "/swarm-prompt"
+        && trimmed != "/swarm-prompt edit"
+        && trimmed != "/swarm-prompt open"
+    {
+        if trimmed.starts_with("/swarm-prompt ") {
+            app.push_display_message(DisplayMessage::error("Usage: /swarm-prompt".to_string()));
+            return true;
+        }
+        return false;
+    }
+
+    let jcode_dir = match crate::storage::jcode_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            app.push_display_message(DisplayMessage::error(format!(
+                "Failed to locate the Jcode config directory: {}",
+                error
+            )));
+            return true;
+        }
+    };
+    let path = match ensure_swarm_prompt_edit_path(app.session.working_dir.as_deref(), &jcode_dir) {
+        Ok(path) => path,
+        Err(error) => {
+            app.push_display_message(DisplayMessage::error(format!(
+                "Failed to prepare the swarm prompt file: {}",
+                error
+            )));
+            return true;
+        }
+    };
+
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "nano".to_string());
+    let mut parts = editor.split_whitespace();
+    let Some(bin) = parts.next() else {
+        app.push_display_message(DisplayMessage::error(
+            "$VISUAL/$EDITOR is empty; cannot open the swarm prompt.".to_string(),
+        ));
+        return true;
+    };
+    let extra: Vec<&str> = parts.collect();
+    match std::process::Command::new(bin)
+        .args(&extra)
+        .arg(&path)
+        .spawn()
+    {
+        Ok(_) => {
+            app.push_display_message(DisplayMessage::system(format!(
+                "Opening the active swarm routing prompt in {}:\n{}\n\nChanges apply after restarting or reloading Jcode because running agent tool registries cache the prompt.",
+                editor,
+                path.display()
+            )));
+            app.set_status_notice("Opened swarm prompt");
+        }
+        Err(error) => app.push_display_message(DisplayMessage::error(format!(
+            "Failed to launch editor '{}' for {}: {}",
+            editor,
+            path.display(),
+            error
+        ))),
+    }
+    true
+}
+
 pub(super) fn handle_agents_command(app: &mut App, trimmed: &str) -> bool {
     if !trimmed.starts_with("/agents") {
         return false;
@@ -3175,6 +3290,10 @@ pub(super) fn handle_config_command(app: &mut App, trimmed: &str) -> bool {
     }
 
     if handle_show_agentgrep_output_command(app, trimmed) {
+        return true;
+    }
+
+    if handle_swarm_prompt_command(app, trimmed) {
         return true;
     }
 

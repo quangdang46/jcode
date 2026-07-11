@@ -82,6 +82,7 @@ fn test_remote_auto_poke_followup_preserves_visible_timer_and_stays_hidden() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Continue working".to_string(),
@@ -91,6 +92,7 @@ fn test_remote_auto_poke_followup_preserves_visible_timer_and_stays_hidden() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -134,6 +136,7 @@ fn test_remote_auto_poke_completion_above_threshold_only_updates_ui() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Finished work".to_string(),
@@ -143,6 +146,7 @@ fn test_remote_auto_poke_completion_above_threshold_only_updates_ui() {
                 assigned_to: None,
                 confidence: Some(95),
                 completion_confidence: Some(95),
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -157,7 +161,7 @@ fn test_remote_auto_poke_completion_above_threshold_only_updates_ui() {
         assert!(app.hidden_queued_system_messages.is_empty());
         assert!(app.display_messages().iter().any(|msg| {
             msg.content
-                .contains("Todos complete. Auto-poke finished. Cumulative confidence: 95%.")
+                .contains("Todos complete. Completion confidence: 95%.")
         }));
     });
 }
@@ -172,6 +176,7 @@ fn test_remote_auto_poke_completion_below_threshold_tells_model_to_keep_working(
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Needs validation".to_string(),
@@ -181,6 +186,7 @@ fn test_remote_auto_poke_completion_below_threshold_tells_model_to_keep_working(
                 assigned_to: None,
                 confidence: Some(80),
                 completion_confidence: Some(80),
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -193,10 +199,14 @@ fn test_remote_auto_poke_completion_below_threshold_tells_model_to_keep_working(
         assert!(!app.auto_poke_incomplete_todos);
         assert!(app.pending_queued_dispatch);
         assert_eq!(app.hidden_queued_system_messages.len(), 1);
-        assert!(app.hidden_queued_system_messages[0].contains("Keep working"));
+        // Below-threshold completions queue the needs-validation guidance.
+        // Reference the shared prompt constant so this test cannot drift when
+        // the guidance wording changes.
+        assert!(app.hidden_queued_system_messages[0]
+            .contains(crate::prompt::TODO_CONFIDENCE_NEEDS_VALIDATION_PROMPT.trim()));
         assert!(app.display_messages().iter().any(|msg| {
             msg.content
-                .contains("Todos complete. Auto-poke finished. Cumulative confidence: 80%.")
+                .contains("Todos complete. Completion confidence: 80%.")
         }));
     });
 }
@@ -212,6 +222,7 @@ fn test_remote_poke_status_and_off_update_state() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Continue working".to_string(),
@@ -221,6 +232,7 @@ fn test_remote_poke_status_and_off_update_state() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");

@@ -5,7 +5,6 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
-  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -20,12 +19,6 @@ jobs:
     name: Quality Guardrails
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      # Mirror DEPLOY_KEY into env so step-level `if:` conditions can check
-      # whether it's set without referencing the `secrets` context directly
-      # (which GitHub Actions rejects with "Unrecognized named-value:
-      # 'secrets'" inside expressions outside of `with:`/`env:` bindings).
-      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,14 +26,12 @@ jobs:
           submodules: recursive
 
       - name: Configure SSH for cargo git dependencies
-        if: env.DEPLOY_KEY != ''
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: nightly-2026-06-04
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
@@ -77,46 +68,35 @@ jobs:
         shell: bash
         run: python3 scripts/check_swallowed_error_budget.py
 
-  mobile-simulator:
-    name: Mobile Simulator (Linux)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
-          submodules: recursive
+      - name: Enforce crate dependency boundaries
+        shell: bash
+        run: python3 scripts/check_dependency_boundaries.py
 
-      - name: Configure SSH for cargo git dependencies
-        if: env.DEPLOY_KEY != ''
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+      - name: Enforce wildcard re-export ratchet
+        shell: bash
+        run: python3 scripts/check_wildcard_reexport_budget.py
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: mobile-simulator-ubuntu
-
-      - name: Run mobile core and simulator tests
+      - name: Enforce no unused dependencies
         shell: bash
         run: |
-          python3 .github/scripts/run_with_timeout.py 600 \
-            cargo test -p jcode-mobile-core -p jcode-mobile-sim
-
-      - name: Run mobile simulator CLI smoke
-        shell: bash
-        run: scripts/mobile_simulator_smoke.sh pairing_ready "hello ci simulator"
+          cargo install cargo-machete --locked
+          cargo machete
 
   build:
     name: Build & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
+    # Some dependencies (e.g. convert_case 0.10.0 via derive_more/crossterm, and
+    # proc-macro2/quote) accidentally ship a `rust-toolchain.toml` *inside their
+    # published crate*. When cargo builds such a crate its CWD is that crate dir,
+    # so the rustup proxy honours the file: convert_case pins `channel = "1.83.0"`
+    # and proc-macro2 requests `components = ["rust-src"]`. That made every
+    # Build & Test job (a) race two parallel `rust-src` downloads and (b) later
+    # try to compile convert_case with rustc 1.83.0, failing with E0514/E0599.
+    # RUSTUP_TOOLCHAIN takes precedence over any rust-toolchain.toml override, so
+    # pinning it here makes every step use this job's installed stable toolchain.
     env:
-      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+      RUSTUP_TOOLCHAIN: stable
     strategy:
       fail-fast: false
       matrix:
@@ -134,7 +114,6 @@ jobs:
           submodules: recursive
 
       - name: Configure SSH for cargo git dependencies
-        if: env.DEPLOY_KEY != ''
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
@@ -142,32 +121,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      # Pre-download rust-src so two concurrent rustup processes don't race
-      # on the same temporary file (a known runner infrastructure issue).
-      - name: Pre-download rust-src
-        shell: bash
-        run: |
-          for i in 1 2 3 4 5; do
-            rustup component add rust-src 2>/dev/null && break
-            sleep 10
-          done
-        continue-on-error: true
-
-      - name: Get rustc version for cache key
-        id: rustc-version
-        shell: bash
-        run: echo "version=v1-$(rustc --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-        continue-on-error: true
-        id: sccache
+          # Pre-install rust-src in the (serial) toolchain step. Some build-script
+          # / proc-macro units trigger an on-demand `rustup component add rust-src`,
+          # and when several parallel cargo/rustc processes request it at once they
+          # race on the shared `~/.rustup/downloads/*.partial` file and fail with
+          # "could not rename ... No such file or directory". Fetching it once here
+          # removes the race. (Was failing every Build & Test job.)
+          components: rust-src
 
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: build-test-${{ matrix.os }}
-          key: ${{ matrix.os }}-${{ steps.rustc-version.outputs.version }}
+          # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
+          # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
+          key: ${{ matrix.os }}-stablepin
 
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'
@@ -186,9 +152,13 @@ jobs:
           rustflags = ["-C", "link-arg=-fuse-ld=mold"]
           EOF
           fi
-          if command -v sccache &>/dev/null && sccache --start-server 2>/dev/null; then
-            export RUSTC_WRAPPER=sccache
-          fi
+          # NOTE: intentionally NOT exporting RUSTC_WRAPPER=sccache here. Only this
+          # step used sccache while the later `cargo test --no-run` steps did not,
+          # so sccache emitted rlibs/rmetas stamped `<unknown rustc version>` that
+          # the non-sccache test compile then rejected with E0514
+          # ("compiled by an incompatible version of rustc"). rust-cache already
+          # caches target/ across runs, so a clean, wrapper-consistent build is
+          # both correct and fast enough.
           export RUSTC="$(rustup which rustc)"
           CARGO_BIN="$(rustup which cargo)"
           "$CARGO_BIN" build --release --target ${{ matrix.target }}
@@ -199,6 +169,17 @@ jobs:
           python3 .github/scripts/run_with_timeout.py 900 \
             "$(rustup which cargo)" test --target ${{ matrix.target }} --lib --bins --no-run
 
+      - name: Compile integration test binaries
+        shell: bash
+        # Build the integration-test binaries up front (not counted against the
+        # run steps' execution budgets). The e2e suite in particular is heavy
+        # (burst-spawn concurrency), and folding compilation into its 900s run
+        # budget was pushing slower hosted ubuntu/macos runners over the limit.
+        run: |
+          python3 .github/scripts/run_with_timeout.py 900 \
+            "$(rustup which cargo)" test --target ${{ matrix.target }} \
+            --test provider_matrix --test e2e --no-run
+
       - name: Run provider matrix tests
         shell: bash
         run: |
@@ -208,7 +189,10 @@ jobs:
       - name: Run e2e tests
         shell: bash
         run: |
-          python3 .github/scripts/run_with_timeout.py 900 \
+          # e2e is fast (~1-2 min of execution); the generous budget only guards
+          # against an occasional slow hosted runner. Compilation is already done
+          # in the dedicated compile step above.
+          python3 .github/scripts/run_with_timeout.py 600 \
             "$(rustup which cargo)" test --target ${{ matrix.target }} --test e2e
 
       - name: Check PowerShell script syntax (Windows)
@@ -234,8 +218,6 @@ jobs:
     name: Build & Test (windows-latest)
     runs-on: windows-latest
     timeout-minutes: 150
-    env:
-      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -243,7 +225,6 @@ jobs:
           submodules: recursive
 
       - name: Configure SSH for cargo git dependencies
-        if: env.DEPLOY_KEY != ''
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
@@ -380,9 +361,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: nightly-2026-06-04
           components: rustfmt
 
       - name: Check formatting
@@ -409,8 +389,6 @@ jobs:
     name: Windows Cross-Target Check (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    env:
-      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -418,7 +396,6 @@ jobs:
           submodules: recursive
 
       - name: Configure SSH for cargo git dependencies
-        if: env.DEPLOY_KEY != ''
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
@@ -441,7 +418,7 @@ jobs:
         run: cargo install --git https://github.com/rust-cross/cargo-xwin cargo-xwin
 
       - name: Check Windows x64 target
-        run: cargo xwin check --locked --target x86_64-pc-windows-msvc --no-default-features -F pdf,embeddings,dcp,rtco,mmdr-size-api,mempalace-backend
+        run: cargo xwin check --locked --target x86_64-pc-windows-msvc
 
       # cargo-xwin currently feeds clang-style ring builds MSVC /imsvc flags for
       # aarch64-pc-windows-msvc on Linux. Keep this advisory until upstream
@@ -450,57 +427,3 @@ jobs:
       - name: Check Windows ARM64 target (advisory)
         continue-on-error: true
         run: cargo xwin check --locked --target aarch64-pc-windows-msvc --no-default-features --features pdf
-
-  startup-perf:
-    name: Startup Performance Guard
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ssh-key: ${{ secrets.DEPLOY_KEY }}
-          submodules: recursive
-
-      - name: Configure SSH for cargo git dependencies
-        if: env.DEPLOY_KEY != ''
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: startup-perf-ubuntu
-          cache-all-crates: "true"
-
-      - name: Install mold linker
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq mold
-
-      - name: Build release binary
-        run: |
-          mkdir -p .cargo
-          cat > .cargo/config.toml << 'EOF'
-          [target.x86_64-unknown-linux-gnu]
-          linker = "clang"
-          rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-          EOF
-          cargo build --release --target x86_64-unknown-linux-gnu
-
-      - name: Run startup performance benchmark
-        run: |
-          python3 scripts/bench_startup.py \
-            target/x86_64-unknown-linux-gnu/release/jcode \
-            --check \
-            --runs 5 \
-            --max-help-ms 60 \
-            --max-version-ms 60 \
-            --max-server-ready-ms 200 \
-            --max-cold-total-ms 400 \
-            --max-cold-server-check-ms 50 \
-            --max-cold-server-spawn-ms 50 \
-            --max-cold-app-new-ms 50

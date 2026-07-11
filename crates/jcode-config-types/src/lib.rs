@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 pub mod keybindings;
 pub use keybindings::{
@@ -7,6 +6,15 @@ pub use keybindings::{
     KeybindingPlatform, KeybindingProvenance, PlatformDefault, default_binding, default_binding_or,
     keybinding_default, keybinding_defaults_report, validate_keybinding_defaults,
 };
+
+/// Status line configuration (fork-specific)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct StatusLineConfig {
+    pub enabled: bool,
+    pub segments: Vec<String>,
+    pub command: Option<String>,
+}
 
 /// Compaction mode
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -466,6 +474,12 @@ pub struct AgentsConfig {
     /// Lower values keep more of the transcript visible; set near the minimum
     /// to effectively collapse the gallery to a thin strip.
     pub swarm_gallery_max_pct: Option<u8>,
+    /// Layout of the inline swarm strip above the status line:
+    /// `"vertical"` (default) lists one agent per row (session icon + status
+    /// glyph + task), capped to a few lines; `"horizontal"` packs all agents
+    /// as chips on a single row.
+    #[serde(default)]
+    pub swarm_strip_layout: SwarmStripLayout,
     /// Optional default model override for the memory sidecar.
     pub memory_model: Option<String>,
     /// Whether memory should use the sidecar for relevance/extraction.
@@ -522,6 +536,20 @@ pub struct AgentsConfig {
     /// `0` disables the bound (wait indefinitely). Default 600 (10 min).
     #[serde(default = "default_subagent_timeout_secs")]
     pub subagent_timeout_secs: u64,
+    /// Maximum number of swarm worker agents `run_plan` keeps running *at once*
+    /// in a **deep**-mode task graph. This bounds parallelism, not the total
+    /// number of agents spawned over the run (that is `MAX_SWARM_MEMBERS`). Deep
+    /// mode is meant to fan out wide, so the default is high (32); the real
+    /// ceiling is still the per-swarm member cap. Light mode uses a small fixed
+    /// fan-out instead. `0` means "no extra cap": run_plan dispatches the entire
+    /// ready set every loop, bounded only by the member cap.
+    /// Env override: `JCODE_SWARM_MAX_CONCURRENT_AGENTS`.
+    #[serde(default = "default_swarm_max_concurrent_agents")]
+    pub swarm_max_concurrent_agents: usize,
+}
+
+fn default_swarm_max_concurrent_agents() -> usize {
+    32
 }
 
 fn default_subagent_timeout_secs() -> u64 {
@@ -554,6 +582,7 @@ impl Default for AgentsConfig {
             swarm_model: None,
             swarm_spawn_mode: SwarmSpawnMode::default(),
             swarm_gallery_max_pct: None,
+            swarm_strip_layout: SwarmStripLayout::default(),
             memory_model: None,
             memory_sidecar_enabled: default_memory_sidecar_enabled(),
             memory_rerank_cadence: default_memory_rerank_cadence(),
@@ -564,6 +593,7 @@ impl Default for AgentsConfig {
             memory_embedding_base_url: None,
             memory_embedding_dim: None,
             subagent_timeout_secs: default_subagent_timeout_secs(),
+            swarm_max_concurrent_agents: default_swarm_max_concurrent_agents(),
         }
     }
 }
@@ -572,13 +602,13 @@ impl Default for AgentsConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SwarmSpawnMode {
-    /// Open a visible/headed terminal window. This preserves historical behavior.
-    #[default]
+    /// Open a visible/headed terminal window. This was the historical default.
     Visible,
     /// Create the worker in-process without opening a terminal window.
     Headless,
     /// Like headless (no terminal window), but the coordinator renders a live
     /// inline gallery viewport of each worker's streaming output.
+    #[default]
     Inline,
     /// Try visible first and fall back to headless if a window cannot be opened.
     Auto,
@@ -602,6 +632,36 @@ impl SwarmSpawnMode {
             Self::Headless => "headless",
             Self::Inline => "inline",
             Self::Auto => "auto",
+        }
+    }
+}
+
+/// Layout of the inline swarm strip shown above the status line.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SwarmStripLayout {
+    /// One agent per row: session icon + status glyph + task label, capped to
+    /// a few lines with a `+N more` overflow marker.
+    #[default]
+    Vertical,
+    /// All agents packed as chips on a single row (the historical layout).
+    Horizontal,
+}
+
+impl SwarmStripLayout {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "vertical" | "list" => Some(Self::Vertical),
+            "horizontal" | "chips" | "strip" => Some(Self::Horizontal),
+            _ => None,
+        }
+    }
+
+    /// Canonical lowercase string for this layout (matches config/env values).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vertical => "vertical",
+            Self::Horizontal => "horizontal",
         }
     }
 }
@@ -718,6 +778,35 @@ pub struct AutoReviewConfig {
     pub model: Option<String>,
 }
 
+/// Sponsored discovery configuration.
+///
+/// Sponsored discovery makes third-party developer tools discoverable to the
+/// agent via a `discover_tools` tool backed by a hosted manifest. Sponsors buy
+/// placement (discoverability), never recommendations. Each session's first
+/// use of `discover_tools` is disclosed in the UI with a
+/// `(sponsored discovery)` tag; using a discovered tool afterwards carries no
+/// extra tag. See <https://solosystems.dev/sponsored-discovery>.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SponsorsConfig {
+    /// Enable sponsored discovery. Enabled by default; set to false to opt
+    /// out. When false, no discovery categories are added to the prompt, the
+    /// `discover_tools` tool is not registered, and jcode never contacts the
+    /// discovery endpoint.
+    pub enabled: bool,
+    /// Base URL of the discovery endpoint.
+    pub endpoint: String,
+}
+
+impl Default for SponsorsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: "https://api.solosystems.dev/v1/discovery".to_string(),
+        }
+    }
+}
+
 /// Automatic end-of-turn execution judging configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -783,9 +872,13 @@ pub struct KeybindingsConfig {
     pub diff_mode_cycle: String,
     /// Toggle the info widget (default: "alt+i")
     pub info_widget_toggle: String,
+    /// Show/dismiss the session todo list as an inline card in the chat
+    /// transcript (default: "alt+x")
+    pub todo_card_toggle: String,
     /// Focus/unfocus the inline swarm panel for keyboard navigation (default:
-    /// "alt+w"). Active only when `agents.swarm_spawn_mode = "inline"` and the
-    /// session manages swarm agents.
+    /// "alt+n"; press again to cycle agents, alt+↑/↓ select, alt+o pop out,
+    /// esc exits). Active only when `agents.swarm_spawn_mode = "inline"` and
+    /// the session manages swarm agents.
     pub swarm_panel_focus: String,
     /// Spawn a fresh jcode session in a new terminal window (default: unbound).
     /// Example: "alt+enter".
@@ -833,7 +926,8 @@ impl Default for KeybindingsConfig {
             typing_scroll_lock_toggle: get("typing_scroll_lock_toggle", "alt+s"),
             diff_mode_cycle: get("diff_mode_cycle", "alt+g"),
             info_widget_toggle: get("info_widget_toggle", "alt+i"),
-            swarm_panel_focus: get("swarm_panel_focus", "alt+w"),
+            todo_card_toggle: get("todo_card_toggle", "alt+x"),
+            swarm_panel_focus: get("swarm_panel_focus", "alt+n"),
             new_terminal: get("new_terminal", ""),
             open_resume: get(
                 "open_resume",
@@ -868,6 +962,10 @@ impl Default for NativeScrollbarConfig {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Display/UI configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -894,7 +992,8 @@ pub struct DisplayConfig {
     #[serde(default)]
     reasoning_display: Option<ReasoningDisplayMode>,
     /// How to display mermaid diagrams (none/margin/pinned, default: none).
-    /// Mermaid rendering is temporarily disabled for users unless JCODE_ENABLE_MERMAID=1.
+    /// `none` still renders diagrams inline in the transcript via the inline
+    /// image pipeline; `margin`/`pinned` add dedicated widget placements.
     pub diagram_mode: DiagramDisplayMode,
     /// Markdown block spacing style (compact/document, default: compact)
     pub markdown_spacing: MarkdownSpacingMode,
@@ -927,6 +1026,22 @@ pub struct DisplayConfig {
     pub show_agentgrep_output: bool,
     /// Native terminal scrollbar configuration for scrollable panes
     pub native_scrollbars: NativeScrollbarConfig,
+    /// Surface occasional "learn this keybinding" nudges when the user keeps
+    /// performing an action the slow way (slash command) instead of using its
+    /// configured shortcut (default: true). Set false to disable all such hints.
+    #[serde(default = "default_true")]
+    pub keybinding_hints: bool,
+    /// Color theme: "auto" (detect terminal background), "dark", or "light".
+    /// Auto queries the terminal's background color (OSC 11) at startup and
+    /// adapts jcode's palette for light backgrounds. Default: auto.
+    #[serde(default)]
+    pub theme: String,
+    /// Opt-in active sessions manager: pressing Left arrow on an empty input
+    /// opens a picker scoped to live (open) sessions, showing which are still
+    /// working and which are ready for input (default: false). The `/active`
+    /// command works regardless of this setting.
+    #[serde(default)]
+    pub active_sessions_manager: bool,
 }
 
 impl Default for DisplayConfig {
@@ -956,6 +1071,9 @@ impl Default for DisplayConfig {
             copy_badge_alt_label: String::new(),
             show_agentgrep_output: false,
             native_scrollbars: NativeScrollbarConfig::default(),
+            keybinding_hints: true,
+            theme: String::new(),
+            active_sessions_manager: false,
         }
     }
 }
@@ -1004,6 +1122,8 @@ pub struct FeatureConfig {
     pub memory: bool,
     /// Enable swarm coordination features (default: true)
     pub swarm: bool,
+    /// Enable Mermaid rendering and Mermaid-specific model guidance (default: true)
+    pub mermaid: bool,
     /// Inject timestamps into user messages and tool results sent to the model (default: true)
     pub message_timestamps: bool,
     /// Persist auto-recalled memory injections into normal session history instead of sending
@@ -1025,6 +1145,7 @@ impl Default for FeatureConfig {
         Self {
             memory: true,
             swarm: true,
+            mermaid: true,
             message_timestamps: true,
             persist_memory_injections: false,
             kv_cache_miss_notices: true,
@@ -1103,44 +1224,6 @@ impl Default for WebSearchConfig {
     }
 }
 
-/// Error classification and retry settings.
-///
-/// Controls how jcode classifies provider errors (retryable vs non-retryable
-/// vs STOP) and how it backs off / fail-overs after a failure.
-/// All fields have sensible defaults; most users never need to touch these.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ErrorClassificationConfig {
-    /// Maximum retry attempts across the fallback chain. 0 = never retry.
-    /// Default: 3.
-    pub max_retry_attempts: u32,
-    /// Base delay in milliseconds for exponential backoff.
-    /// The actual delay is `max_retry_attempts * attempt` (capped).
-    /// Default: 2000 (i.e. 2s → 4s → 6s for attempts 1, 2, 3).
-    pub retry_base_delay_ms: u32,
-    /// Maximum delay in milliseconds for any single backoff.
-    /// Default: 60_000 (60 seconds).
-    pub retry_max_delay_ms: u32,
-    /// Seconds to cooldown a provider after a retryable failure before trying
-    /// it again. Default: 60.
-    pub fallback_cooldown_secs: u32,
-    /// Override set of HTTP status codes to treat as retryable, in addition to
-    /// the built-in set (429, 5xx, 529). Default: `None` (use built-in set).
-    pub retry_on_status: Option<Vec<u16>>,
-}
-
-impl Default for ErrorClassificationConfig {
-    fn default() -> Self {
-        Self {
-            max_retry_attempts: 3,
-            retry_base_delay_ms: 2000,
-            retry_max_delay_ms: 60_000,
-            fallback_cooldown_secs: 60,
-            retry_on_status: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProviderConfig {
@@ -1170,15 +1253,17 @@ pub struct ProviderConfig {
     /// Copilot premium request mode: "normal", "one", or "zero"
     /// "zero" means all requests are free (no premium requests consumed)
     pub copilot_premium: Option<String>,
+    /// When set (non-empty), /model only lists routes from these providers.
+    /// Entries match provider labels ("openai", "anthropic", "copilot",
+    /// "openrouter", ...), api methods ("claude-oauth",
+    /// "openai-compatible:myprofile", ...), or openai-compatible profile ids
+    /// ("myprofile"). The active model's routes always stay visible.
+    pub model_picker_providers: Option<Vec<String>>,
     /// Max seconds to wait for streaming data before timing out a request with
     /// no data received. Raise this for slow reasoning models (e.g. DeepSeek)
     /// that think silently for minutes before emitting tokens. Default: 180.
     /// Overridable per-launch via `JCODE_STREAM_IDLE_TIMEOUT_SECS`.
     pub stream_idle_timeout_secs: u64,
-    /// Error classification and retry configuration.
-    /// Default: sensible values for most providers.
-    #[serde(default)]
-    pub error_classification: ErrorClassificationConfig,
 }
 
 impl Default for ProviderConfig {
@@ -1196,8 +1281,8 @@ impl Default for ProviderConfig {
             cross_provider_failover: CrossProviderFailoverMode::Countdown,
             same_provider_account_failover: true,
             copilot_premium: None,
+            model_picker_providers: None,
             stream_idle_timeout_secs: 180,
-            error_classification: ErrorClassificationConfig::default(),
         }
     }
 }
@@ -1432,240 +1517,6 @@ impl Default for PowerConfig {
         }
     }
 }
-// ── Execution Policy Config ────────────────────────────────────────────
-
-/// Configuration for command-level policy evaluation and tool-level
-/// allow/deny/ask rules (Claude Code-compatible format).
-///
-/// # Example (TOML)
-///
-/// ```toml
-/// [execution-policy]
-/// # Claude Code-style allow/deny/ask with ToolName(pattern) syntax.
-/// allow = ["Bash(ls *)", "Bash(git status)", "Bash(cat *)"]
-/// deny  = ["Bash(rm -rf *)", "WebSearch", "WebFetch"]
-/// ask   = ["Bash"]
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub struct ExecutionPolicyConfig {
-    /// Enable command-level policy evaluation (default: true).
-    #[serde(default = "default_policy_enabled")]
-    pub enabled: bool,
-    /// Claude Code-style allow list — bare tool names or ToolName(pattern).
-    /// Matched tools are auto-allowed without prompting.
-    #[serde(default)]
-    pub allow: Vec<String>,
-    /// Claude Code-style deny list — bare tool names or ToolName(pattern).
-    /// Matched tools/commands are denied outright.
-    #[serde(default)]
-    pub deny: Vec<String>,
-    /// Claude Code-style ask list — bare tool names or ToolName(pattern).
-    /// Matched tools/commands always trigger a permission prompt.
-    #[serde(default)]
-    pub ask: Vec<String>,
-    /// Custom policy rules (full-structured format, parsed from `[[execution-policy.rules]]`).
-    /// Merged with auto-generated rules from allow/deny/ask.
-    #[serde(default)]
-    pub rules: Vec<PolicyRuleDef>,
-    /// Protected patterns (always prompt regardless of mode).
-    #[serde(default)]
-    pub protected_patterns: Vec<String>,
-    /// Circuit breaker thresholds.
-    #[serde(default)]
-    pub circuit_breaker: CircuitBreakerConfig,
-}
-
-fn default_policy_enabled() -> bool {
-    true
-}
-
-impl Default for ExecutionPolicyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            allow: Vec::new(),
-            deny: Vec::new(),
-            ask: Vec::new(),
-            rules: Vec::new(),
-            protected_patterns: Vec::new(),
-            circuit_breaker: CircuitBreakerConfig::default(),
-        }
-    }
-}
-
-/// Status line display configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub struct StatusLineConfig {
-    /// Whether the status line is enabled (default true).
-    #[serde(default = "default_status_line_enabled")]
-    pub enabled: bool,
-    /// Ordered list of segment names to display.
-    /// Valid values: mode, model, provider, context, tokens, git, dir, cost, session, cache.
-    /// Empty = default order.
-    #[serde(default)]
-    pub segments: Vec<String>,
-    /// Custom shell command for Layer 3 (Claude Code style).
-    /// Receives JSON via stdin. Output is rendered as status line.
-    pub command: Option<String>,
-}
-
-fn default_status_line_enabled() -> bool {
-    true
-}
-
-impl Default for StatusLineConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            segments: Vec::new(),
-            command: None,
-        }
-    }
-}
-
-/// Configuration for the forked agent system.
-///
-/// When `enabled = false` (the default), no forks are created regardless of
-/// sub-feature settings. This is a master switch for all background agent
-/// features.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ForkedAgentConfig {
-    /// Master switch — when false, all fork features are disabled.
-    pub enabled: bool,
-    /// Memory extraction sub-config.
-    pub memory_extraction: MemoryExtractionConfig,
-    /// Auto-dream sub-config.
-    pub auto_dream: AutoDreamConfig,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub struct CircuitBreakerConfig {
-    #[serde(default = "default_max_consecutive")]
-    pub max_consecutive_denials: u32,
-    #[serde(default = "default_max_total")]
-    pub max_total_denials: u32,
-}
-
-fn default_max_consecutive() -> u32 {
-    3
-}
-
-fn default_max_total() -> u32 {
-    20
-}
-
-impl Default for CircuitBreakerConfig {
-    fn default() -> Self {
-        Self {
-            max_consecutive_denials: 3,
-            max_total_denials: 20,
-        }
-    }
-}
-
-/// Memory extraction configuration for forked agents.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct MemoryExtractionConfig {
-    /// Enable automatic memory extraction.
-    pub enabled: bool,
-    /// Memory directory path (relative to working dir).
-    pub memory_dir: PathBuf,
-    /// Max turns for the extraction agent.
-    pub max_turns: u32,
-    /// Max output tokens per turn.
-    pub max_output_tokens: u32,
-    /// Minimum number of new (unprocessed) messages before triggering extraction.
-    pub min_new_messages: usize,
-    /// The extraction prompt template variant.
-    pub prompt_variant: ExtractionPromptVariant,
-}
-
-impl Default for MemoryExtractionConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            memory_dir: PathBuf::from(".jcode/memory"),
-            max_turns: 3,
-            max_output_tokens: 4096,
-            min_new_messages: 5,
-            prompt_variant: ExtractionPromptVariant::Auto,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum PolicyRuleAction {
-    /// Always allow commands matching this pattern.
-    Allow,
-    /// Always deny commands matching this pattern.
-    Deny,
-    /// Always prompt for commands matching this pattern.
-    Prompt,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub struct PolicyRuleDef {
-    /// Unique rule identifier (for audit logging).
-    pub id: String,
-    /// Human-readable description.
-    pub description: String,
-    /// Regex pattern to match against the command string.
-    pub pattern: String,
-    /// What to do when this rule matches.
-    pub action: PolicyRuleAction,
-    /// Optional: tool name to scope the rule to (e.g., "bash", "write").
-    /// None means applies to all tools.
-    #[serde(default)]
-    pub tool: Option<String>,
-    /// Optional: suggested alternatives when action is Deny.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub alternatives: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ExtractionPromptVariant {
-    Auto,
-    Combined,
-}
-
-/// Auto-dream configuration for forked agents.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AutoDreamConfig {
-    /// Enable auto-dream.
-    pub enabled: bool,
-    /// Run dream every N turns.
-    pub turn_interval: usize,
-    /// Max turns for the dream agent.
-    pub max_turns: u32,
-    /// Max output tokens per turn.
-    pub max_output_tokens: u32,
-    /// Directories where the dream agent is allowed to write.
-    pub allowed_dirs: Vec<PathBuf>,
-    /// Dream output directory.
-    pub dream_dir: PathBuf,
-}
-
-impl Default for AutoDreamConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            turn_interval: 10,
-            max_turns: 2,
-            max_output_tokens: 2048,
-            allowed_dirs: vec![PathBuf::from(".jcode/dreams")],
-            dream_dir: PathBuf::from(".jcode/dreams"),
-        }
-    }
-}
 
 /// A single global launch hotkey: a chord plus the directory it opens jcode in.
 ///
@@ -1711,4 +1562,122 @@ pub struct LaunchHotkeysConfig {
     /// Set true once auto-import has populated `entries`, so we only bake the
     /// per-repo mapping a single time and never clobber later user edits.
     pub imported: bool,
+}
+
+// ── Execution Policy Config ────────────────────────────────────────────
+
+/// Configuration for command-level policy evaluation and tool-level
+/// allow/deny/ask rules (Claude Code-compatible format).
+///
+/// # Example (TOML)
+///
+/// ```toml
+/// [execution-policy]
+/// # Claude Code-style allow/deny/ask with ToolName(pattern) syntax.
+/// allow = ["Bash(ls *)", "Bash(git status)", "Bash(cat *)"]
+/// deny  = ["Bash(rm -rf *)", "WebSearch", "WebFetch"]
+/// ask   = ["Bash"]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub struct ExecutionPolicyConfig {
+    /// Enable command-level policy evaluation (default: true).
+    #[serde(default = "default_policy_enabled")]
+    pub enabled: bool,
+    /// Claude Code-style allow list — bare tool names or ToolName(pattern).
+    /// Matched tools are auto-allowed without prompting.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Claude Code-style deny list — bare tool names or ToolName(pattern).
+    /// Matched tools/commands are denied outright.
+    #[serde(default)]
+    pub deny: Vec<String>,
+    /// Claude Code-style ask list — bare tool names or ToolName(pattern).
+    /// Matched tools/commands always trigger a permission prompt.
+    #[serde(default)]
+    pub ask: Vec<String>,
+    /// Custom policy rules (programmatic evaluation).
+    #[serde(default)]
+    pub rules: Vec<PolicyRuleDef>,
+    /// Protected patterns (always prompt regardless of mode).
+    #[serde(default)]
+    pub protected_patterns: Vec<String>,
+    /// Circuit breaker thresholds.
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
+}
+
+fn default_policy_enabled() -> bool {
+    true
+}
+
+impl Default for ExecutionPolicyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            allow: Vec::new(),
+            deny: Vec::new(),
+            ask: Vec::new(),
+            rules: Vec::new(),
+            protected_patterns: Vec::new(),
+            circuit_breaker: CircuitBreakerConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub struct CircuitBreakerConfig {
+    #[serde(default = "default_max_consecutive")]
+    pub max_consecutive_denials: u32,
+    #[serde(default = "default_max_total")]
+    pub max_total_denials: u32,
+}
+
+fn default_max_consecutive() -> u32 {
+    3
+}
+
+fn default_max_total() -> u32 {
+    20
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            max_consecutive_denials: 3,
+            max_total_denials: 20,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PolicyRuleAction {
+    /// Always allow commands matching this pattern.
+    Allow,
+    /// Always deny commands matching this pattern.
+    Deny,
+    /// Always prompt for commands matching this pattern.
+    Prompt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub struct PolicyRuleDef {
+    /// Unique rule identifier (for audit logging).
+    pub id: String,
+    /// Human-readable description.
+    pub description: String,
+    /// Regex pattern to match against the command string.
+    pub pattern: String,
+    /// What to do when this rule matches.
+    pub action: PolicyRuleAction,
+    /// Optional: tool name to scope the rule to (e.g., "bash", "write").
+    /// None means applies to all tools.
+    #[serde(default)]
+    pub tool: Option<String>,
+    /// Suggested safer alternatives when this rule denies a command.
+    #[serde(default)]
+    pub alternatives: Vec<String>,
 }

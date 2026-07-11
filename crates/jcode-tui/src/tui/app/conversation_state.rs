@@ -381,6 +381,15 @@ impl App {
         self.provider_session_id = None;
         self.session.provider_session_id = None;
         self.context_warning_shown = false;
+        // The sidebar/status context figure is derived from the last
+        // provider-reported stream usage, which described the *pre-compaction*
+        // message list. Mark it stale so the display falls back to the local
+        // estimate over the new (summary + recent) active messages until the
+        // next provider usage report arrives (issue #441). The raw counters
+        // are kept intact for turn footers and cost accounting.
+        self.streaming.streaming_context_stale = true;
+        self.streaming.streaming_usage_call_reset_pending = true;
+        self.bump_context_revision();
         if let Err(err) = self.session.save() {
             crate::logging::warn(&format!(
                 "Failed to persist provider session reset after compaction for session {}: {}",
@@ -766,6 +775,14 @@ impl App {
 
         self.clear_provider_messages();
         self.clear_display_messages();
+        // Ctrl+R is reachable mid-stream (turn.rs key handling); drop the
+        // in-flight streaming render state (including the ephemeral mermaid
+        // preview slot) so it cannot leak into the recovered session's
+        // transcript. ACTIVE_DIAGRAMS deliberately survives: recovery keeps
+        // every text block, so registered diagrams still back retained
+        // messages, and body-cache prefix reuse (ui_prepare.rs) would skip
+        // re-registering them if we cleared the registry here.
+        self.clear_streaming_render_state();
         self.queued_messages.clear();
         self.pasted_contents.clear();
         self.pending_images.clear();

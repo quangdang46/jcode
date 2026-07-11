@@ -13,6 +13,12 @@ impl Agent {
         // Mark this session as actively streaming for presence UIs (e.g. the
         // macOS menu bar indicator). Cleared automatically on every exit path.
         let _streaming_guard = crate::session::StreamingGuard::new(self.session.id.clone());
+        // Register this turn's cancel signal so session-level cancels reach
+        // this in-flight turn even through stale control handles (issue #428).
+        let _turn_cancel_guard = crate::turn_cancel_registry::register_active_turn(
+            &self.session.id,
+            self.graceful_shutdown.clone(),
+        );
         let mut final_text = String::new();
         let trace = trace_enabled();
         let mut context_limit_retries = 0u32;
@@ -796,6 +802,24 @@ impl Agent {
                 )? {
                     continue;
                 }
+                // Surface silent guardrail/refusal stops instead of returning
+                // an empty final answer with no explanation.
+                if let Some(notice) = Self::provider_guardrail_notice(
+                    stop_reason.as_deref(),
+                    visible_text_is_empty,
+                    !reasoning_content.trim().is_empty(),
+                ) {
+                    logging::warn(&format!(
+                        "PROVIDER_GUARDRAIL: turn ended with no visible output (stop_reason={:?})",
+                        stop_reason
+                    ));
+                    if print_output {
+                        println!("\n[provider guardrail] {}", notice);
+                    }
+                    if text_content.trim().is_empty() {
+                        text_content = format!("[provider guardrail] {}", notice);
+                    }
+                }
                 logging::info("Turn complete - no tool calls, returning");
                 if print_output {
                     println!();
@@ -857,6 +881,7 @@ impl Agent {
                         tool_call_id: tc.id.clone(),
                         tool_name: tc.name.clone(),
                         status: ToolStatus::Error,
+                        intent: tc.intent.clone(),
                         title: None,
                     }));
                     if print_output {
@@ -883,6 +908,7 @@ impl Agent {
                         tool_call_id: tc.id.clone(),
                         tool_name: tc.name.clone(),
                         status: ToolStatus::Error,
+                        intent: None,
                         title: None,
                     }));
                     if print_output {
@@ -940,6 +966,7 @@ impl Agent {
                             } else {
                                 ToolStatus::Completed
                             },
+                            intent: tc.intent.clone(),
                             title: None,
                         }));
 
@@ -983,6 +1010,7 @@ impl Agent {
                     tool_call_id: tc.id.clone(),
                     tool_name: tc.name.clone(),
                     status: ToolStatus::Running,
+                    intent: tc.intent.clone(),
                     title: None,
                 }));
 
@@ -1056,6 +1084,7 @@ impl Agent {
                             tool_call_id: tc.id.clone(),
                             tool_name: tc.name.clone(),
                             status: ToolStatus::Completed,
+                            intent: tc.intent.clone(),
                             title: output.title.clone(),
                         }));
 
@@ -1090,6 +1119,7 @@ impl Agent {
                             tool_call_id: tc.id.clone(),
                             tool_name: tc.name.clone(),
                             status: ToolStatus::Error,
+                            intent: tc.intent.clone(),
                             title: None,
                         }));
 

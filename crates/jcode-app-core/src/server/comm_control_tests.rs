@@ -70,6 +70,9 @@ fn member(session_id: &str, swarm_id: &str, status: &str) -> SwarmMember {
         is_headless: false,
         output_tail: None,
         todo_progress: None,
+        todo_items: Vec::new(),
+        runtime: crate::protocol::SwarmMemberRuntime::default(),
+        task_label: None,
     }
 }
 
@@ -142,8 +145,10 @@ async fn test_agent() -> Arc<Mutex<Agent>> {
 
 include!("comm_control_tests/assign_task.rs");
 include!("comm_control_tests/assign_blocked.rs");
+include!("comm_control_tests/assign_double.rs");
 include!("comm_control_tests/assign_ready_agent.rs");
 include!("comm_control_tests/assign_less_loaded.rs");
+include!("comm_control_tests/assign_busy_skip.rs");
 include!("comm_control_tests/task_control.rs");
 include!("comm_control_tests/assign_next_dependency.rs");
 include!("comm_control_tests/assign_next_metadata.rs");
@@ -152,5 +157,10 @@ include!("comm_control_tests/await_disconnect.rs");
 include!("comm_control_tests/await_any.rs");
 include!("comm_control_tests/await_reload_deadline.rs");
 include!("comm_control_tests/await_reload_final.rs");
+include!("comm_control_tests/await_lagged.rs");
+include!("comm_control_tests/await_resume_expired.rs");
+include!("comm_control_tests/await_background_expired.rs");
+include!("comm_control_tests/await_upgrade_background.rs");
 include!("comm_control_tests/dag_e2e.rs");
 include!("comm_control_tests/auto_worker_filter.rs");
+include!("comm_control_tests/client_attached_dispatch.rs");

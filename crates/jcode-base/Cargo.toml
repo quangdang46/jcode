@@ -126,7 +126,6 @@ flate2 = "1"
 tempfile = "3"
 ffs-engine = { workspace = true }
 ffs-search = { workspace = true }
-casr = { git = "https://github.com/quangdang46/cross_agent_session_resumer", package = "cross_agent_session_resumer", rev = "bac44dd20a9ccab2ba49e5821d2d5c0b7603f978" }
 qrcode = { version = "0.14.1", default-features = false }
 
 [features]
@@ -150,6 +149,8 @@ jemalloc-prof = [
     "tikv-jemalloc-ctl/profiling",
 ]
 embeddings = ["dep:jcode-embedding"]
+# AWS SDK stack (bedrock provider)
+bedrock = []
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
@@ -162,5 +163,8 @@ global-hotkey = "0.7"
 # Cargo and do not affect the library build.
 [dev-dependencies]
 jcode-app-core = { path = "../jcode-app-core", default-features = false }
+# Test-only: provider/tests registers the real OpenRouter runtime factory.
+# Dev-dependency cycles are permitted and do not affect the library build.
+jcode-provider-openrouter-runtime = { path = "../jcode-provider-openrouter-runtime" }
 criterion = { version = "0.5", features = ["html_reports"] }
 

@@ -32,7 +32,7 @@ SERVER COMMANDS (server: prefix or no prefix):
   agent:info               - Get comprehensive agent internal state
   agent:memory             - Get process + session memory breakdown
   allocator                - Get allocator info and jemalloc stats, if available
-  allocator:purge          - Flush/purge jemalloc arenas to test retained-memory behavior
+  allocator:purge          - Release retained heap (jemalloc arena purge / glibc malloc_trim)
   allocator:decay:<ms>     - Set jemalloc dirty/muzzy decay for all arenas to <ms>
   allocator:profile:on     - Enable jemalloc sampling at runtime (jemalloc-prof builds)
   allocator:profile:off    - Disable jemalloc sampling at runtime (jemalloc-prof builds)
@@ -117,7 +117,8 @@ CLIENT COMMANDS (client: prefix):
   client:layout            - Get latest layout JSON
   client:margins           - Get layout margins JSON
   client:widgets           - Get info widget summary/placements
-  client:render-stats      - Get render timing + order JSON
+  client:render-stats      - Get render timing + order + draw-call attribution JSON
+  client:draw-stats [n]    - Get per-draw attribution history (render_ms, changed cells)
   client:render-order      - Get render order list
   client:anomalies         - Get latest visual debug anomalies
   client:theme             - Get palette snapshot
@@ -137,6 +138,8 @@ CLIENT COMMANDS (client: prefix):
   client:markdown:memory   - Markdown highlight cache memory estimate
   client:memory            - Aggregate client memory profile
   client:memory-history    - Recent client process memory samples
+  client:allocator         - Get the target TUI client's allocator stats
+  client:allocator:purge   - Release the target TUI client's retained heap
   client:flicker-frames [n] - Recent frame-stability / flicker records
   client:slow-frames [n]  - Recent slow-frame records
   client:overlay:on/off    - Toggle overlay boxes
@@ -196,6 +199,7 @@ PLANS (server-scoped plan items):
   swarm:plans              - List all swarm plans with item counts
   swarm:plan:<swarm_id>    - Get plan items for specific swarm
   swarm:plan_version:<id>  - Show current plan version for a swarm
+  swarm:clear_plan:<id>    - Admin: delete a swarm's plan (memory + persisted state)
 
 PLAN PROPOSALS (pending approval):
   swarm:proposals          - List all pending proposals across swarms

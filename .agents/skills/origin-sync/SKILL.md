@@ -340,7 +340,9 @@ git show origin/master:<file> > <file>  # get our version
 # Then manually merge in any upstream additions that don't conflict
 ```
 
-**Common files with silent overwrite risk** (checked 2026-06):
+**Common files with silent overwrite risk** (checked 2026-06; freeze lesson 2026-07):
+- `crates/jcode-tui/src/tui/app/turn.rs` — **NO `biased;` before `event_stream`** (freeze on alt-tab; Lesson 2)
+- `crates/jcode-tui/src/tui/app/local.rs`, `run_shell.rs` — event-loop keep-ours (Lesson 1)
 - `crates/jcode-tui/src/tui/app/state_ui_input_helpers.rs` — slash commands, FFS rename, `$`/`@` autocomplete
 - `crates/jcode-tui/src/tui/app/state_ui.rs` — `/permissions`, `/skills` report
 - `crates/jcode-tui/src/tui/ui_overlays.rs` — help entries
@@ -447,6 +449,7 @@ After push, verify:
 - [ ] `cargo check` passes
 - [ ] Local builds work (`cargo build`)
 - [ ] Category F check done: all locally-modified files that upstream touched were audited for silent overwrite
+- [ ] **Lesson 2**: `rg -n '^\s*biased\s*;' crates/jcode-tui/src/tui/app/turn.rs` is empty (no freeze-on-alt-tab regression; ignore comments)
 - [ ] `ffs`/`$`/`@`/`/permissions` features still working
 - [ ] `Cargo.toml` has our feature flags (`mempalace-backend`, `dcp`, `rtco`)
 - [ ] Extracted features still functional (session resume, file picker, DCG mode)
@@ -600,3 +603,203 @@ grep -rn 'MemoryEntry {' --include='*.rs' | grep -v 'fn\|pub struct'
 **Key insight**: An upstream hunk that differs from ours is NOT automatically wrong. Read it. If it fixes a bug we also have, the fix belongs in our code regardless of who wrote it.
 
 **Example**: Upstream fixes `openrouter.rs` to handle a null-pointer crash. Our file conflicts because we also modified the same function. Using `--ours` keeps our code crash-free, but drops upstream's fix for the OTHER crash path that we also have. The correct action: keep our logic, apply upstream's null-check manually.
+
+### Lesson 3: Server model persist dropped by upstream merge (Category H)
+
+**Recorded**: 2026-07-11. **Symptom**: `/model` / model picker switch works in-session, but **restart loses the model** (always back to provider default).
+
+**Root cause**: Fork fixes `1b71a6cd7` / `f84b9e823` / `a20aca1bf` wrote `Config::set_default_model` inside server `apply_set_model` / `apply_set_route` (`provider_control.rs`). Remote/daemon switches go through the **server** protocol, so client-only persist never runs.
+
+Merge **`27731574a`** (`sync-final-merge` ← upstream) auto-merged `provider_control.rs` and **deleted** the `[SERVER-SAVE]` / `[ROUTE-SAVE]` blocks (upstream never had them). No conflict markers — pure Category H silent drop of a fork bugfix.
+
+**Detection**:
+```bash
+rg -n 'SERVER-SAVE|ROUTE-SAVE|set_default_model' crates/jcode-app-core/src/server/provider_control.rs
+# expect: set_default_model calls after successful set_model / set_route_selection
+```
+
+**Resolution**: Restore both persist blocks with provider_key (see HEAD `provider_control.rs`). On every sync that touches that file, re-check the SAVE logs still exist.
+
+**Related keep paths** (still present — do not drop):
+- Client `/model`: `model_context.rs` → `Config::set_default_model` + `[SAVE]` log
+- Picker local apply: `inline_interactive.rs` → `Config::set_default_model` + `[PICKER-SAVE]`
+- Ctrl+D default: `inline_interactive.rs` → `set_default_model`
+- Restart restore: `Agent::new` + `tui_lifecycle` read `config.provider.default_model`
+
+### Lesson 2: `biased;` in TUI `select!` freezes the screen (alt-tab / unfocus)
+
+**Recorded**: 2026-07 (sync-nov-commits). **Severity**: user-visible freeze.
+
+**Bug**: In `crates/jcode-tui/src/tui/app/turn.rs`, a `tokio::select!` over the live turn loop had:
+
+```rust
+tokio::select! {
+    biased;
+    // ready tool/API futures first …
+    event = event_stream.next() => { /* keys, focus, resize */ }
+}
+```
+
+With `biased;`, branches are polled in order. When a tool future or stream is continuously ready (or re-ready every poll), `event_stream.next()` is **starved**. Result: TUI stops handling keyboard / focus / redraw during long turns — classic freeze on **alt-tab** or unfocus/refocus while a turn is running.
+
+**Fix (fork)**: **Remove `biased;`** from TUI event-loop `select!`s that also wait on `event_stream`. Fair polling lets input/focus land.
+
+**Upstream still has `biased;`** in `turn.rs` (as of v0.41). Future merges that touch `turn.rs` will try to reintroduce it.
+
+**Resolution on every sync**:
+1. Treat `crates/jcode-tui/src/tui/app/turn.rs` as **Lesson 1 + Lesson 2** keep-ours for the event loop.
+2. After merge, run:
+   ```bash
+   # Match the statement only (comments may mention biased intentionally)
+   rg -n '^\s*biased\s*;' crates/jcode-tui/src/tui/app/turn.rs
+   # expect: no matches
+   ```
+3. If a conflict or auto-merge brings `biased;` back before `event_stream.next()`, **delete it again**. Do not "accept upstream" on that hunk.
+4. Optional: also prefer redraw/timer branches ahead of pure stream arms if freezes return (see commit `6862310fa` history: redraw tick ordering).
+
+**Not the same as every `biased;` in the repo** — server/client bus prioritization and tool Alt+B selects may keep `biased;` when they intentionally prioritize one non-UI arm. Only the **TUI event_stream loop** is the freeze bug.
+
+---
+
+## Sync Log
+
+### 2026-07-05 — v0.35.0..v0.36.0 upstream sync (commit 5a2437c7c)
+**Branch**: `sync-final-merge` → PR #478
+**Upstream commits**: 164 (v0.35.0..v0.36.0). **Files merged**: 261 (+30,369 / -15,264).
+
+**Status**: ✅ Build clean. `cargo check -p jcode-tui` = 0 errors.
+
+| Category | What |
+|----------|------|
+| ⚡ Swarm | PTY debug, turn cancel registry, per-spawn model/effort, salvage stranded, double-assignment reject, TLDR collapse, run_plan fixes, agent sorting |
+| 🖥️ Server | Corrupt journal recovery, history scoping, power inhibition |
+| 🏎️ Performance | Memory profiling, glibc MMAP, heap release |
+| 🧪 CI | Wildcard re-export, security preflight, memory probe |
+| 📝 Mermaid | Layout-tier cache, aspect ratio, resize probes |
+| 🐛 Bugfixes | Copy badge, auto-poke, History dedup, /login guide |
+
+**Kept OURS** (Lesson 1 — status bar/event loop):
+- `crates/jcode-tui/src/tui/ui_input.rs`, `ui.rs`, `mod.rs`
+- `crates/jcode-tui/src/tui/app/turn.rs`, `local.rs`, `run_shell.rs`, `state_ui.rs`
+
+**Kept OURS** (Category A — extracted modules):
+- `crates/jcode-base/src/import.rs`, `casr_adapter.rs`
+- `crates/jcode-app-core/src/dcg_bridge.rs`, `hashline_edit.rs`
+- `crates/jcode-app-core/src/tool/mod.rs` (ffs replacement)
+
+**Kept OURS** (fork-specific crates — user maintains):
+- `jcode-hooks/`, `jcode-plugin-core/`, `jcode-plugin-runtime/`
+- `jcode-best-of-n/`, `jcode-llm-core/`, `jcode-keywords/`
+- `jcode-provider-service/`, `evals/`, `examples/`
+- `.beads/`, `.jcode/agents/`
+
+**Category G fixes applied**:
+1. `SetPermissionMode` — added variant to `jcode-protocol/src/wire.rs`
+2. `is_auto_poke_message` — added to `todo.rs`
+3. `DcpCompressTool` / `BestOfNTool` — replaced with `InvalidTool` stubs
+4. `task_label` field — added `task_label: None` to all `SwarmMemberStatus` initializers
+5. `tldr` field — added `..` patterns to `NotificationType::Message` matches
+6. `poll_todo_pipeline` — added stub returning `Ok(())`
+7. `same_instance` — added to `InterruptSignal`
+8. `set_temperature` — added to Provider trait (default `Ok(())`)
+9. `has_credentials` — added free function wrapper in openrouter.rs
+10. `fetch_catalog_snapshot` / `persist_catalog` — made `pub` in antigravity.rs
+11. `MERMAID_PENDING_PLACEHOLDER_TEXT` — added constant + helper function
+
+### 2026-07-11 — v0.40.0..v0.41.0 upstream sync (commits 7dbc480ae + 82ea601a9 + 0399554e1)
+
+**Branch**: `master` (via `sync-nov-commits` merge).
+**Upstream range**: v0.40.0..v0.41.0 (~39 commits). **~107 files** in the merge (+4k lines).
+
+**Status**: ✅ Binary builds. `cargo check -p jcode` / `jcode-tui` / `jcode-base --tests` / `jcode-tui --tests` clean. Installed local `current` channel as `v0.32.1408-dev (0399554e1)`.
+
+| Category | What |
+|----------|------|
+| 🔀 Merge | Conflicts: Category A keep-ours (casr/dcg/dcp/hashline/ffs adapters), Category B local extensions |
+| 🏗️ Category G | App fields/methods (auth catalog refresh, todo goals, spinner cadence, pinned diffs API, signature cache, session title) |
+| 🐛 Fork bugfix | **`biased;` freeze** in `turn.rs` — MUST NOT reintroduce (see Lesson 2 below) |
+| 🐛 Keyword highlight | Short-alias match extend to token boundary; skip subsumed highlights |
+| 🔧 CASR | Removed inline `casr_adapter`; CursorSession path; `import_cursor_session` restored for tests |
+| 🖥️ Remote auth | `AvailableModelsUpdated` → `finish_auth_catalog_refresh()` + force redraw |
+| 📝 Prompt | `PromptCapabilities` / `MERMAID_PROMPT` module gating |
+
+**Category G (v0.41) fixes applied**:
+1. `auth_catalog_refresh_pending` init + `finish_auth_catalog_refresh`
+2. `gather_todos_and_goals_for_session` + `InfoWidgetData.todo_goals` / `todos_are_swarm_plan`
+3. `load_session_title` / `derive_session_title`
+4. `STRIP_SPINNER_FRAME_MS` / `STRIP_SPINNER_FPS`
+5. `collect_pinned_diffs_cached` (not the old multi-arg content probe)
+6. `side_pane_images_signature` cache shape (invalidate-on-mutation, not version tuple)
+7. `client_focused` + set/unfocused redraw helpers
+8. Test compile: TodoItem `active_form`, openrouter-runtime dev-dep, prepare helpers, copy-badge helpers
+
+**Post-merge MUST-check (freeze)**:
+```bash
+# Must print nothing for turn.rs event-loop select! (statement only)
+rg -n '^\s*biased\s*;' crates/jcode-tui/src/tui/app/turn.rs && echo "FAIL: biased reintroduced" || echo "OK: no biased in turn.rs"
+```
+
+**Note on other `biased;` (OK to keep)**: intentional priority selects that do **not** starve `event_stream`:
+- `crates/jcode-tui/src/tui/backend.rs` — cancellation-safety test
+- `crates/jcode-app-core/src/agent/turn_streaming_mpsc.rs` — tool completion vs Alt+B
+- `crates/jcode-app-core/src/server/client_lifecycle.rs` — client I/O over bus noise
+
+### 2026-07-11 — v0.41.0..v0.42.0 upstream sync (merge upstream/master → master)
+
+**Branch**: `master`.
+**Upstream range**: post-v0.41 tip → v0.42.0 + follow-ups (~34 commits, tip `329c1ebf0`).
+**Files**: ~122 changed in merge (+7k / -1.5k).
+
+**Status**: ✅ `cargo check -p jcode` clean. Lesson 2 (`biased;` absent in `turn.rs`). Lesson 3 (`SERVER-SAVE` / `ROUTE-SAVE` + `PICKER-SAVE` + `apply_config_default_model`) preserved. Fork version stays **0.32.0** (do not take upstream package version).
+
+| Category | What |
+|----------|------|
+| ✨ Feature | **LaTeX / terminal math** (`jcode-render-core` math, markdown render path) |
+| ✨ Feature | **Typo-resistant fuzzy** (`jcode-fuzzy` crate; TUI picker / slash commands) |
+| ✨ Feature | **Swarm agent cards** under spawn calls; strip `icon`/`task`; dock `managed_members` |
+| 🖥️ Server | Swarm persistence, lock races, lifecycle ownership, reload recovery, Retry-After |
+| 🏎️ Memory | Retained-heap watchdog (`release_retained_heap_if_excessive`, idle TUI trim) |
+| 📝 Skills | Upstream trailing-prompt after skill; **fork keeps `$` namespace** + `SkillInvocation` |
+| 🐛 Fork protect | Lesson 2 no-`biased;`; Lesson 3 model persist blocks; agent route-aware default_model |
+
+**Kept OURS** (Category A / B / H):
+- Extracted deps + adapters (casr/ffs/dcg/hashline/mempalace/dcp/rtco/beads)
+- `skill.rs` `$` + trailing prompt (not `/skill`)
+- `turn.rs` event loop without `biased;`
+- `provider_control.rs` SERVER/ROUTE-SAVE
+- Cargo workspace version 0.32.0 + `jcode-fuzzy` member
+
+**Category G / bad-merge repairs**:
+1. `GalleryMember.icon` / `.task` + `disp_w` / `CHIP_TASK_*` in `swarm_gallery.rs`
+2. `members_to_gallery` + `member_icon` / `age_marker` in info-widget adapter
+3. Restored `ui_prepare.rs` from HEAD (duplicate-fn concat), re-applied upstream swarm-card inject + cache signature
+4. `SwarmInfo` fields: `managed_members`, `selected`, `focused`, `plan_progress`, `spinner_frame`
+5. `process_memory.rs` take upstream retention-trim APIs
+6. Deduped `apply_inline_interactive_filter` onto `jcode_fuzzy::fuzzy_score_tokens`
+7. Skill invocation tests updated for `SkillInvocation` + trailing prompt
+
+**Post-merge MUST-check**:
+```bash
+rg -n '^\s*biased\s*;' crates/jcode-tui/src/tui/app/turn.rs && echo FAIL || echo OK
+rg -n 'SERVER-SAVE|ROUTE-SAVE' crates/jcode-app-core/src/server/provider_control.rs
+rg -n 'parse_invocation|SkillInvocation' crates/jcode-base/src/skill.rs | head
+cargo check -p jcode
+```
+
+### 2026-07-11 — v0.42.0..v0.43.0 upstream sync (2 commits)
+
+**Branch**: `master`.
+**Upstream commits**:
+- `a07bd3d96` feat(markdown): support common LaTeX containers
+- `649276753` release: v0.43.0
+
+**Status**: ✅ `cargo check -p jcode` clean. Lesson 2/3 OK. Fork package version remains **0.32.0**.
+
+| Category | What |
+|----------|------|
+| ✨ Feature | `normalize_latex_math` — `\(...\)`, `\[...\]`, display envs, fenced math/latex/tex/katex |
+| ✨ Feature | Broader math env delimiters (`gather`, `multline`, `eqnarray`, …) |
+| 📝 Release | changelog `v0.43.0.json` + index entry (accepted) |
+| 🏗️ Category D | Cargo.toml version conflict → **keep 0.32.0** (not 0.43.0) |
+
+**No extracted-domain / Lesson 2–3 files touched** by the 2 commits. Auto-merge for render/markdown paths (Category C).

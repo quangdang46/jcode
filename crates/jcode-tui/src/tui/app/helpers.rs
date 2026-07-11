@@ -19,10 +19,17 @@ static AMBIENT_INFO_CACHE: Mutex<Option<AmbientInfoCacheEntry>> = Mutex::new(Non
 type GitInfoCacheEntry = (std::time::Instant, Option<GitInfo>, bool);
 static GIT_INFO_CACHE: Mutex<Option<GitInfoCacheEntry>> = Mutex::new(None);
 
-/// Stale-while-revalidate cache for per-session todos. Module-level so the app
-/// can force a refresh the moment it persists a todo write locally, instead of
-/// showing the previous list until the TTL lapses.
-type TodosCache = std::collections::HashMap<String, (std::time::Instant, Vec<TodoItem>, bool)>;
+/// Stale-while-revalidate cache for per-session todos plus their goal-level
+/// assessments (hill-climbability etc.). Module-level so the app can force a
+/// refresh the moment it persists a todo write locally, instead of showing
+/// the previous list until the TTL lapses.
+type TodosCacheEntry = (
+    std::time::Instant,
+    Vec<TodoItem>,
+    Vec<crate::todo::TodoGoal>,
+    bool,
+);
+type TodosCache = std::collections::HashMap<String, TodosCacheEntry>;
 static TODOS_CACHE: std::sync::LazyLock<Mutex<TodosCache>> =
     std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
@@ -50,7 +57,7 @@ pub(crate) fn invalidate_git_info_cache() {
 /// reflects the new list immediately rather than after the 1s TTL.
 pub(crate) fn invalidate_todos_cache(session_id: &str) {
     if let Ok(mut cache) = TODOS_CACHE.lock()
-        && let Some((ts, _todos, refreshing)) = cache.get_mut(session_id)
+        && let Some((ts, _todos, _goals, refreshing)) = cache.get_mut(session_id)
     {
         *ts = std::time::Instant::now() - Duration::from_secs(3600);
         *refreshing = false;
@@ -97,7 +104,7 @@ pub(crate) fn todos_cache_entry_age_for_tests(session_id: &str) -> Option<(u64, 
     let cache = TODOS_CACHE.lock().ok()?;
     cache
         .get(session_id)
-        .map(|(ts, _todos, refreshing)| (ts.elapsed().as_secs(), *refreshing))
+        .map(|(ts, _todos, _goals, refreshing)| (ts.elapsed().as_secs(), *refreshing))
 }
 
 /// Test-only: clear the entire todos cache so tests start from a known state.
@@ -399,8 +406,8 @@ fn copy_to_clipboard_osc52(text: &str) -> bool {
 
 pub(super) fn effort_display_label(effort: &str) -> &str {
     match effort {
-        "swarm" => "Swarm (light fan-out)",
-        "swarm-deep" => "Swarm Deep (Max + task graph)",
+        "swarm" => "Swarm (light fan-out) [Beta]",
+        "swarm-deep" => "Swarm Deep (Max + task graph) [Beta]",
         "max" => "Max",
         "xhigh" => "xHigh (Max)",
         "high" => "High",
@@ -745,19 +752,11 @@ pub(super) fn build_resume_command(
             );
             (exe, args, title)
         }
-        ResumeTarget::ForeignSession {
-            provider_slug,
-            session_id,
-            ..
-        } => {
+        ResumeTarget::CursorSession { session_id, .. } => {
             let exe = launch_client_executable();
-            let imported_id =
-                crate::casr_adapter::imported_session_id_for_provider(provider_slug, session_id);
+            let imported_id = crate::import::imported_cursor_session_id(session_id);
             let args = resume_invocation_args(&imported_id, socket);
-            let title = format!(
-                "💾 {provider_slug} {}",
-                &session_id[..session_id.len().min(8)]
-            );
+            let title = format!("💾 Cursor {}", &session_id[..session_id.len().min(8)]);
             (exe, args, title)
         }
     }
@@ -1099,30 +1098,42 @@ pub(super) fn gather_git_info() -> Option<GitInfo> {
     None
 }
 
-pub(super) fn gather_todos_for_session(session_id: Option<&str>) -> Vec<TodoItem> {
+/// Fetch a session's todos plus its goal-level assessments through the same
+/// stale-while-revalidate cache, so the info widget can render goal metadata
+/// (hill-climbability and objectives) without extra disk reads per frame.
+pub(super) fn gather_todos_and_goals_for_session(
+    session_id: Option<&str>,
+) -> (Vec<TodoItem>, Vec<crate::todo::TodoGoal>) {
     use std::time::Instant;
 
     const TTL: Duration = Duration::from_secs(1);
 
     let Some(session_id) = session_id else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
 
+    fn fetch(session_id: &str) -> (Vec<TodoItem>, Vec<crate::todo::TodoGoal>) {
+        (
+            crate::todo::load_todos(session_id).unwrap_or_default(),
+            crate::todo::load_goals(session_id).unwrap_or_default(),
+        )
+    }
+
     if let Ok(mut cache) = TODOS_CACHE.lock() {
-        if let Some((ts, todos, refreshing)) = cache.get_mut(session_id) {
+        if let Some((ts, todos, goals, refreshing)) = cache.get_mut(session_id) {
             if ts.elapsed() < TTL {
-                return todos.clone();
+                return (todos.clone(), goals.clone());
             }
             if *refreshing {
-                return todos.clone();
+                return (todos.clone(), goals.clone());
             }
-            let stale = todos.clone();
+            let stale = (todos.clone(), goals.clone());
             *refreshing = true;
             let session_id = session_id.to_string();
             std::thread::spawn(move || {
-                let todos = crate::todo::load_todos(&session_id).unwrap_or_default();
+                let (todos, goals) = fetch(&session_id);
                 if let Ok(mut cache) = TODOS_CACHE.lock() {
-                    cache.insert(session_id, (Instant::now(), todos, false));
+                    cache.insert(session_id, (Instant::now(), todos, goals, false));
                 }
             });
             return stale;
@@ -1134,17 +1145,18 @@ pub(super) fn gather_todos_for_session(session_id: Option<&str>) -> Vec<TodoItem
             (
                 Instant::now() - TTL - Duration::from_secs(1),
                 Vec::new(),
+                Vec::new(),
                 true,
             ),
         );
         std::thread::spawn(move || {
-            let todos = crate::todo::load_todos(&session_id).unwrap_or_default();
+            let (todos, goals) = fetch(&session_id);
             if let Ok(mut cache) = TODOS_CACHE.lock() {
-                cache.insert(session_id, (Instant::now(), todos, false));
+                cache.insert(session_id, (Instant::now(), todos, goals, false));
             }
         });
     }
-    Vec::new()
+    (Vec::new(), Vec::new())
 }
 
 pub(super) fn gather_memory_info(memory_enabled: bool) -> Option<MemoryInfo> {

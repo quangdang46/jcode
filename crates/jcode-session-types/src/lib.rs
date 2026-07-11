@@ -27,9 +27,9 @@ pub enum ResumeTarget {
         session_id: String,
         session_path: String,
     },
-    ForeignSession {
-        provider_slug: String,
+    CursorSession {
         session_id: String,
+        session_path: String,
     },
 }
 
@@ -41,7 +41,7 @@ impl ResumeTarget {
             Self::CodexSession { session_id, .. } => session_id,
             Self::PiSession { session_path } => session_path,
             Self::OpenCodeSession { session_id, .. } => session_id,
-            Self::ForeignSession { session_id, .. } => session_id,
+            Self::CursorSession { session_id, .. } => session_id,
         }
     }
 }
@@ -52,6 +52,9 @@ pub struct RenderedMessage {
     pub content: String,
     pub tool_calls: Vec<String>,
     pub tool_data: Option<ToolCall>,
+    /// Index of the stored session message this rendered message came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

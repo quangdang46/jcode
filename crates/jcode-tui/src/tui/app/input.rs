@@ -755,9 +755,41 @@ pub(super) fn insert_input_text(app: &mut App, text: &str) {
         let _ = app.at_picker.ensure(app.session.working_dir.as_deref());
     }
 
+    let at_end = app.cursor_pos == app.input.len();
+
+    // A habitual space typed after an auto-inserted picker separator would
+    // only add noise. Swallow it so command + space + filter still produces
+    // a single separator.
+    if text == " " && at_end && matches!(app.input.trim_start(), "/login " | "/model " | "/models ")
+    {
+        return;
+    }
+
     app.remember_input_undo_state();
+
+    // After a picker command is fully typed (or completed without a trailing
+    // space), the next printable character starts its filter. Insert the
+    // separator instead of extending the command token and closing the picker.
+    if at_end
+        && matches!(app.input.trim_start(), "/login" | "/model" | "/models")
+        && !text.starts_with(char::is_whitespace)
+    {
+        app.input.push(' ');
+        app.cursor_pos = app.input.len();
+    }
+
     app.input.insert_str(app.cursor_pos, text);
     app.cursor_pos += text.len();
+
+    // Typing the final command character immediately arms picker filtering.
+    // Without this, users can keep typing the command token or press Enter
+    // without realizing the visible picker is ready to filter.
+    if app.cursor_pos == app.input.len()
+        && matches!(app.input.trim_start(), "/login" | "/model" | "/models")
+    {
+        app.input.push(' ');
+        app.cursor_pos = app.input.len();
+    }
     app.reset_tab_completion();
     app.sync_model_picker_preview_from_input();
 }
@@ -1142,7 +1174,7 @@ impl App {
             let confidence_label =
                 super::commands::format_todo_completion_confidence(confidence_summary);
             self.push_display_message(DisplayMessage::system(format!(
-                "✅ Todos complete. Auto-poke finished. Cumulative confidence: {}.",
+                "✅ Todos complete. Completion confidence: {}.",
                 confidence_label
             )));
             if confidence_summary.needs_more_work {
@@ -1699,6 +1731,10 @@ pub(super) fn handle_pre_control_shortcuts(
         app.set_status_notice(status);
         return true;
     }
+    if app.toggle_keys.todo_card.matches(code, modifiers) {
+        app.toggle_todo_card();
+        return true;
+    }
     if app.dictation_key_matches(code, modifiers) {
         app.handle_dictation_trigger();
         return true;
@@ -2194,6 +2230,10 @@ pub(super) fn handle_basic_key(app: &mut App, code: KeyCode) -> bool {
         KeyCode::Left => {
             if app.cursor_pos > 0 {
                 app.cursor_pos = crate::tui::core::prev_char_boundary(&app.input, app.cursor_pos);
+            } else {
+                // Opt-in: Left on an empty input opens the active sessions
+                // manager (no-op unless display.active_sessions_manager).
+                app.maybe_open_active_sessions_on_left();
             }
             true
         }
@@ -3292,7 +3332,7 @@ impl App {
         }
 
         let raw_input = std::mem::take(&mut self.input);
-        let input = self.expand_paste_placeholders(&raw_input);
+        let mut input = self.expand_paste_placeholders(&raw_input);
         if let Some(notice) = input_exceeds_submit_limit(&input) {
             self.input = raw_input;
             self.cursor_pos = self.input.len();
@@ -3384,8 +3424,10 @@ impl App {
         }
 
         // Check for skill invocation
-        if let Some(skill_name) = SkillRegistry::parse_invocation(&input) {
-            let mut skill = self.current_skills_snapshot().get(skill_name).cloned();
+        if let Some(invocation) = SkillRegistry::parse_invocation(&input) {
+            let skill_name = invocation.name.to_string();
+            let trailing_prompt = invocation.prompt.map(str::to_string);
+            let mut skill = self.current_skills_snapshot().get(&skill_name).cloned();
 
             // Remote/minimal TUI clients may start with an empty skill snapshot, and
             // daemon-side `skill_manage reload_all` can update a different process.
@@ -3399,7 +3441,7 @@ impl App {
                     .as_deref()
                     .map(std::path::Path::new);
                 if let Ok(reloaded) = SkillRegistry::load_for_working_dir(working_dir) {
-                    skill = reloaded.get(skill_name).cloned();
+                    skill = reloaded.get(&skill_name).cloned();
                     self.skills = std::sync::Arc::new(reloaded.clone());
                     if let Ok(mut shared) = self.registry.skills().try_write() {
                         *shared = reloaded;
@@ -3409,7 +3451,7 @@ impl App {
             }
 
             if let Some(skill) = skill {
-                self.active_skill = Some(skill_name.to_string());
+                self.active_skill = Some(skill_name.clone());
                 self.push_display_message(DisplayMessage {
                     role: "system".to_string(),
                     content: format!("Activated skill: {} - {}", skill.name, skill.description),
@@ -3418,17 +3460,39 @@ impl App {
                     title: None,
                     tool_data: None,
                 });
+                if let Some(prompt) = trailing_prompt {
+                    input = prompt;
+                } else {
+                    return;
+                }
             } else {
+                // Distinguish an endorsed-but-not-installed skill from a
+                // typo: the skill list advertises endorsed skills, so a bare
+                // "Unknown skill" for them reads like a bug (issue #445).
+                let endorsed_hint = crate::skill::endorsed_skills()
+                    .iter()
+                    .find(|endorsed| endorsed.name == skill_name)
+                    .map(|endorsed| match endorsed.install {
+                        Some(install) => format!(
+                            "Skill /{} is endorsed but not installed. Install it with `{}`, then run /skills or skill_manage reload_all.",
+                            skill_name, install
+                        ),
+                        None => format!(
+                            "Skill /{} is endorsed but not installed (source: {}). Install it into ~/.jcode/skills/{}/SKILL.md.",
+                            skill_name, endorsed.source, skill_name
+                        ),
+                    });
                 self.push_display_message(DisplayMessage {
                     role: "error".to_string(),
-                    content: format!("Unknown skill: /{}", skill_name),
+                    content: endorsed_hint
+                        .unwrap_or_else(|| format!("Unknown skill: /{}", skill_name)),
                     tool_calls: vec![],
                     duration_secs: None,
                     title: None,
                     tool_data: None,
                 });
+                return;
             }
-            return;
         }
 
         // Leaving the preview should happen as soon as the user acts on it.

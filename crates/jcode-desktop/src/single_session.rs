@@ -728,6 +728,10 @@ pub(crate) enum SingleSessionToolVisualState {
 }
 
 impl SingleSessionToolVisualState {
+    /// Human-readable state name. The visual chip that rendered this label was
+    /// removed (it drew as an empty ghost pill), but the label stays for
+    /// debugging and future textual chrome.
+    #[allow(dead_code)]
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Preparing => "preparing",
@@ -6384,7 +6388,7 @@ fn stdin_response_styled_lines(state: &StdinResponseState) -> Vec<SingleSessionS
         ),
         blank_styled_line(),
         styled_line(
-            "Enter send · Ctrl+Enter send · Shift+Enter newline · Ctrl+V paste · Ctrl+U clear · Esc cancel",
+            "Enter\u{a0}send · Ctrl+Enter\u{a0}send · Shift+Enter\u{a0}newline · Ctrl+V\u{a0}paste · Ctrl+U\u{a0}clear · Esc\u{a0}cancel",
             SingleSessionLineStyle::Overlay,
         ),
     ]
@@ -9323,7 +9327,7 @@ fn complete_slash_command(
         [only] => *only,
         _ => longest_common_prefix(&matches)?,
     };
-    if completion.len() <= prefix.len() {
+    if completion.eq_ignore_ascii_case(prefix) {
         return None;
     }
     let mut completed = completion.to_string();
@@ -9340,7 +9344,7 @@ fn fuzzy_slash_completion(needle: &str, completions: &[&'static str]) -> Option<
         })
         .collect::<Vec<_>>();
     matches.sort_by(|a, b| {
-        a.0.cmp(&b.0)
+        b.0.cmp(&a.0)
             .then_with(|| a.1.cmp(&b.1))
             .then_with(|| a.2.cmp(b.2))
     });

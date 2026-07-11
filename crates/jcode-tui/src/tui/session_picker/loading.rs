@@ -385,7 +385,8 @@ fn transcript_paths_for_session(session: &SessionInfo) -> Vec<PathBuf> {
         ResumeTarget::ClaudeCodeSession { session_path, .. }
         | ResumeTarget::CodexSession { session_path, .. }
         | ResumeTarget::PiSession { session_path }
-        | ResumeTarget::OpenCodeSession { session_path, .. } => {
+        | ResumeTarget::OpenCodeSession { session_path, .. }
+        | ResumeTarget::CursorSession { session_path, .. } => {
             vec![PathBuf::from(session_path)]
         }
     }
@@ -573,6 +574,9 @@ fn classify_session_source(
     }
     if provider_key.contains("codex") || model.contains("codex") || model.contains("openai-codex") {
         return SessionSource::Codex;
+    }
+    if provider_key == "cursor" {
+        return SessionSource::Cursor;
     }
 
     SessionSource::Jcode
@@ -1627,6 +1631,9 @@ fn parse_jcode_session_info(
 
     let title = session
         .custom_title
+        .or_else(|| {
+            crate::todo::load_session_title(stem).map(|title| truncate_title_text(&title, 72))
+        })
         .or(session.title)
         .unwrap_or_else(|| short_name.clone());
     let search_index = build_search_index_from_summary(
@@ -1717,6 +1724,7 @@ pub fn load_sessions() -> Result<Vec<SessionInfo>> {
         let codex_handle = scope.spawn(|| load_external_codex_sessions(scan_limit));
         let pi_handle = scope.spawn(|| load_external_pi_sessions(scan_limit));
         let opencode_handle = scope.spawn(|| load_external_opencode_sessions(scan_limit));
+        let cursor_handle = scope.spawn(|| load_external_cursor_sessions(scan_limit));
 
         // Phase 1: walk the recency-ordered candidates in parallel windows until
         // we have collected `scan_limit` non-empty sessions. `boundary` marks the
@@ -1728,6 +1736,14 @@ pub fn load_sessions() -> Result<Vec<SessionInfo>> {
         // crosses `scan_limit`) can over-parse, so wasted work is bounded to a
         // single window's worth of candidates while still parallelizing widely.
         let mut sessions: Vec<SessionInfo> = Vec::new();
+        // Debug/canary sessions are hidden in the default picker view. Do not let a
+        // burst of self-dev or swarm workers consume the entire recency budget and
+        // crowd out ordinary sessions. Keep a separate bounded debug budget so the
+        // test-session toggle still has useful recent entries without making the
+        // default list appear to jump from a handful of Jcode rows straight to old
+        // external transcripts.
+        let mut visible_session_count = 0usize;
+        let mut debug_session_count = 0usize;
         let mut boundary = candidates.len();
         let window = scan_limit.max(1);
         let mut start = 0;
@@ -1739,8 +1755,16 @@ pub fn load_sessions() -> Result<Vec<SessionInfo>> {
             });
             for (offset, parsed_session) in parsed.into_iter().enumerate() {
                 if let Some(info) = parsed_session {
-                    sessions.push(info);
-                    if sessions.len() >= scan_limit {
+                    if info.is_debug {
+                        if debug_session_count < scan_limit {
+                            debug_session_count += 1;
+                            sessions.push(info);
+                        }
+                    } else {
+                        visible_session_count += 1;
+                        sessions.push(info);
+                    }
+                    if visible_session_count >= scan_limit {
                         boundary = start + offset + 1;
                         break 'fill;
                     }
@@ -1772,6 +1796,7 @@ pub fn load_sessions() -> Result<Vec<SessionInfo>> {
         external.extend(codex_handle.join().unwrap_or_default());
         external.extend(pi_handle.join().unwrap_or_default());
         external.extend(opencode_handle.join().unwrap_or_default());
+        external.extend(cursor_handle.join().unwrap_or_default());
         (sessions, external)
     });
     sessions.extend(external_sessions);
@@ -1950,6 +1975,7 @@ pub(crate) fn latest_external_cli_session_secs(
         ExternalCli::ClaudeCode => (".claude/projects", "jsonl"),
         ExternalCli::Pi => (".pi/agent/sessions", "jsonl"),
         ExternalCli::OpenCode => (".local/share/opencode/storage/session", "json"),
+        ExternalCli::Cursor => (".cursor/projects", "jsonl"),
     };
     let root = crate::storage::user_home_path(rel_root).ok()?;
     if !root.exists() {
@@ -2666,6 +2692,181 @@ fn load_opencode_session_info(path: &Path) -> Result<Option<SessionInfo>> {
     }))
 }
 
+fn load_external_cursor_sessions(scan_limit: usize) -> Vec<SessionInfo> {
+    let Ok(root) = crate::storage::user_home_path(".cursor/projects") else {
+        return Vec::new();
+    };
+    if !root.exists() {
+        return Vec::new();
+    }
+
+    let paths = collect_recent_files_recursive(&root, "jsonl", scan_limit);
+    parallel_map(paths, |path| load_cursor_session_stub(&path).ok().flatten())
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+pub(super) fn load_cursor_preview_from_path(path: &Path) -> Option<Vec<PreviewMessage>> {
+    // Only parse the tail of the transcript like the other external CLIs: the
+    // preview shows the last ~20 messages, so reparsing large transcripts on
+    // every selection change would make picker navigation lag.
+    let (text, truncated) = read_file_tail_text(path, EXTERNAL_PREVIEW_TAIL_BYTES)?;
+    let mut preview = Vec::new();
+    let skip = usize::from(truncated);
+    for line in text.lines().skip(skip) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        let role = match value
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+        {
+            "user" | "human" => "user",
+            "assistant" | "model" => "assistant",
+            _ => continue,
+        };
+        let content = value
+            .get("message")
+            .and_then(|message| message.get("content"))
+            .or_else(|| value.get("content"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let text = crate::import::extract_external_text_from_json_value(&content, false);
+        push_preview_message(&mut preview, role, text);
+    }
+    if preview.is_empty() {
+        None
+    } else {
+        Some(preview)
+    }
+}
+
+fn load_cursor_session_stub(path: &Path) -> Result<Option<SessionInfo>> {
+    // Cursor nests subagent runs under `agent-transcripts/<parent>/subagents/`.
+    // Those are not independently resumable, so skip them in the resume list.
+    if crate::import::is_cursor_subagent_transcript(path) {
+        return Ok(None);
+    }
+    // Cursor transcripts have no header line: the session id is the file stem
+    // (a UUID) and metadata is enriched from the path / file mtime.
+    let session_id = crate::import::cursor_session_id_from_path(path);
+    if session_id.is_empty() {
+        return Ok(None);
+    }
+
+    // A transcript counts as resumable only if it has at least one visible
+    // user/assistant message; otherwise skip it (mirrors the other CLIs).
+    let mut first_user_text: Option<String> = None;
+    let mut has_message = false;
+    let file = File::open(path)?;
+    for line in BufReader::new(file).lines().map_while(|line| line.ok()) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        let role = match value
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+        {
+            "user" | "human" => "user",
+            "assistant" | "model" => "assistant",
+            _ => continue,
+        };
+        let content = value
+            .get("message")
+            .and_then(|message| message.get("content"))
+            .or_else(|| value.get("content"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let text = crate::import::extract_external_text_from_json_value(&content, false);
+        if text.trim().is_empty() {
+            continue;
+        }
+        has_message = true;
+        if first_user_text.is_none() && role == "user" {
+            first_user_text = Some(text);
+        }
+    }
+    if !has_message {
+        return Ok(None);
+    }
+
+    let last_message_time = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .map(chrono::DateTime::<chrono::Utc>::from)
+        .unwrap_or_else(|_| chrono::Utc::now());
+    let created_at = last_message_time;
+    let working_dir = crate::import::cursor_cwd_from_transcript_path(path);
+    let short_name = working_dir
+        .as_deref()
+        .and_then(|dir| Path::new(dir).file_name())
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| format!("cursor {}", jcode_core::util::truncate_str(&session_id, 8)));
+    let title = first_user_text
+        .as_deref()
+        .map(|text| truncate_title_text(text, 72))
+        .unwrap_or_else(|| {
+            format!(
+                "Cursor session {}",
+                jcode_core::util::truncate_str(&session_id, 8)
+            )
+        });
+    let search_index = build_search_index(
+        &format!("cursor:{session_id}"),
+        &short_name,
+        &title,
+        working_dir.as_deref(),
+        None,
+        &[],
+    );
+
+    Ok(Some(SessionInfo {
+        id: format!("cursor:{session_id}"),
+        parent_id: None,
+        short_name,
+        icon: "▮".to_string(),
+        title,
+        message_count: 0,
+        user_message_count: 0,
+        assistant_message_count: 0,
+        created_at,
+        last_message_time,
+        last_active_at: Some(last_message_time),
+        working_dir,
+        model: None,
+        provider_key: Some("cursor".to_string()),
+        is_canary: false,
+        is_debug: false,
+        saved: false,
+        save_label: None,
+        status: SessionStatus::Closed,
+        needs_catchup: false,
+        estimated_tokens: 0,
+        first_user_prompt: first_user_text,
+        messages_preview: Vec::new(),
+        search_index,
+        server_name: None,
+        server_icon: None,
+        source: SessionSource::Cursor,
+        resume_target: ResumeTarget::CursorSession {
+            session_id,
+            session_path: path.to_string_lossy().to_string(),
+        },
+        external_path: Some(path.to_string_lossy().to_string()),
+    }))
+}
+
 pub fn load_servers() -> Vec<ServerInfo> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         tokio::task::block_in_place(|| {
@@ -2757,6 +2958,7 @@ pub(crate) fn load_external_cli_sessions_grouped(
         ExternalCli::ClaudeCode => load_external_claude_code_sessions(scan_limit),
         ExternalCli::Pi => load_external_pi_sessions(scan_limit),
         ExternalCli::OpenCode => load_external_opencode_sessions(scan_limit),
+        ExternalCli::Cursor => load_external_cursor_sessions(scan_limit),
     };
     (Vec::new(), sessions)
 }
@@ -2780,6 +2982,7 @@ pub(crate) fn load_external_cli_sessions_grouped_multi(
     let mut seen_claude = false;
     let mut seen_pi = false;
     let mut seen_opencode = false;
+    let mut seen_cursor = false;
     for cli in clis {
         match cli {
             ExternalCli::Codex if !seen_codex => {
@@ -2797,6 +3000,10 @@ pub(crate) fn load_external_cli_sessions_grouped_multi(
             ExternalCli::OpenCode if !seen_opencode => {
                 seen_opencode = true;
                 sessions.extend(load_external_opencode_sessions(scan_limit));
+            }
+            ExternalCli::Cursor if !seen_cursor => {
+                seen_cursor = true;
+                sessions.extend(load_external_cursor_sessions(scan_limit));
             }
             _ => {}
         }

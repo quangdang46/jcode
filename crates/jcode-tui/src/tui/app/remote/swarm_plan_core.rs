@@ -75,10 +75,16 @@ mod tests {
                 blocked_ids: vec!["task-4".to_string()],
                 active_ids: Vec::new(),
                 completed_ids: vec!["task-1".to_string()],
+                failed_ids: Vec::new(),
+                failed_reasons: Default::default(),
                 cycle_ids: Vec::new(),
                 unresolved_dependency_ids: Vec::new(),
                 next_ready_ids: vec!["task-2".to_string()],
                 newly_ready_ids: vec!["task-3".to_string()],
+                low_confidence_ids: Vec::new(),
+                mode: "light".to_string(),
+                seeded_count: 2,
+                grown_count: 0,
             }),
         };
 

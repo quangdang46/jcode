@@ -569,7 +569,7 @@ async fn new_agent_registers_active_pid_and_clear_swaps_it() {
 }
 
 #[tokio::test]
-async fn default_disabled_tools_are_not_exposed_or_executable() {
+async fn gmail_is_exposed_by_default_and_can_be_explicitly_disabled() {
     let _guard = crate::storage::lock_test_env();
     let prev_home = std::env::var_os("JCODE_HOME");
     let prev_tools = std::env::var_os("JCODE_TOOLS");
@@ -590,23 +590,45 @@ async fn default_disabled_tools_are_not_exposed_or_executable() {
     let mut agent = Agent::new(provider, registry);
     let definitions = agent.tool_definitions().await;
     let tool_names = agent.tool_names().await;
+    let tool_name = "gmail";
 
-    for tool_name in ["gmail", "lsp"] {
-        assert!(
-            !definitions
-                .iter()
-                .any(|definition| definition.name == tool_name),
-            "default-disabled {tool_name} tool must not be sent in model-visible tool definitions"
-        );
-        assert!(
-            !tool_names.iter().any(|name| name == tool_name),
-            "default-disabled {tool_name} tool must not be listed as model-visible"
-        );
-        let err = agent.validate_tool_allowed(tool_name).expect_err(&format!(
-            "default-disabled {tool_name} tool must not be executable"
-        ));
-        assert!(err.to_string().contains("disabled"));
-    }
+    assert!(
+        definitions
+            .iter()
+            .any(|definition| definition.name == tool_name),
+        "{tool_name} must be sent in model-visible tool definitions by default"
+    );
+    assert!(
+        tool_names.iter().any(|name| name == tool_name),
+        "{tool_name} must be listed as model-visible by default"
+    );
+    agent
+        .validate_tool_allowed(tool_name)
+        .expect("gmail must be executable by default");
+
+    crate::env::set_var("JCODE_DISABLED_TOOLS", tool_name);
+    crate::config::Config::invalidate_cache();
+
+    let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
+    let registry = Registry::new(provider.clone()).await;
+    let mut agent = Agent::new(provider, registry);
+    let definitions = agent.tool_definitions().await;
+    let tool_names = agent.tool_names().await;
+
+    assert!(
+        !definitions
+            .iter()
+            .any(|definition| definition.name == tool_name),
+        "explicitly disabled {tool_name} must not be sent in model-visible tool definitions"
+    );
+    assert!(
+        !tool_names.iter().any(|name| name == tool_name),
+        "explicitly disabled {tool_name} must not be listed as model-visible"
+    );
+    let err = agent
+        .validate_tool_allowed(tool_name)
+        .expect_err("explicitly disabled gmail must not be executable");
+    assert!(err.to_string().contains("disabled"));
 
     if let Some(previous) = prev_home {
         crate::env::set_var("JCODE_HOME", previous);
@@ -1160,4 +1182,55 @@ async fn tool_snapshot_is_stable_without_new_mcp_tools() {
         !second_names.iter().any(|n| n == "not_an_mcp_tool"),
         "non-MCP tool registered after lock must not leak into the snapshot"
     );
+}
+
+#[test]
+fn guardrail_stop_reason_detection() {
+    assert!(Agent::is_guardrail_stop_reason(Some("refusal")));
+    assert!(Agent::is_guardrail_stop_reason(Some("REFUSAL")));
+    assert!(Agent::is_guardrail_stop_reason(Some(" content_filter ")));
+    assert!(Agent::is_guardrail_stop_reason(Some("safety")));
+    assert!(Agent::is_guardrail_stop_reason(Some("model_guardrail")));
+    assert!(Agent::is_guardrail_stop_reason(Some("policy_violation_x")));
+    assert!(!Agent::is_guardrail_stop_reason(Some("end_turn")));
+    assert!(!Agent::is_guardrail_stop_reason(Some("max_tokens")));
+    assert!(!Agent::is_guardrail_stop_reason(Some("tool_use")));
+    assert!(!Agent::is_guardrail_stop_reason(Some("stop")));
+    assert!(!Agent::is_guardrail_stop_reason(None));
+}
+
+#[test]
+fn guardrail_notice_for_refusal_stop() {
+    let notice = Agent::provider_guardrail_notice(Some("refusal"), true, true)
+        .expect("refusal with empty text must produce a notice");
+    assert!(
+        notice.contains("refusal"),
+        "notice should name the stop reason: {notice}"
+    );
+    assert!(notice.to_lowercase().contains("guardrail"));
+
+    // Guardrail stop with visible text still surfaces (partial output then refusal).
+    assert!(Agent::provider_guardrail_notice(Some("refusal"), false, false).is_some());
+}
+
+#[test]
+fn guardrail_notice_for_silent_empty_turn() {
+    // end_turn with zero visible output and reasoning-only content: surface it.
+    let notice = Agent::provider_guardrail_notice(Some("end_turn"), true, true)
+        .expect("empty visible output must produce a notice");
+    assert!(notice.contains("internal reasoning"), "{notice}");
+    assert!(notice.contains("end_turn"), "{notice}");
+
+    // Unknown stop reason, empty output, no reasoning.
+    let notice = Agent::provider_guardrail_notice(None, true, false)
+        .expect("empty visible output must produce a notice");
+    assert!(notice.contains("unknown"), "{notice}");
+    assert!(!notice.contains("internal reasoning"), "{notice}");
+}
+
+#[test]
+fn guardrail_notice_absent_for_normal_turns() {
+    // Normal turn with visible text: no notice.
+    assert!(Agent::provider_guardrail_notice(Some("end_turn"), false, false).is_none());
+    assert!(Agent::provider_guardrail_notice(None, false, true).is_none());
 }

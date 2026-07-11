@@ -30,6 +30,7 @@ fn member(session_id: &str, status: &str) -> SwarmMember {
         swarm_enabled: false,
         status: status.to_string(),
         detail: None,
+        task_label: None,
         friendly_name: None,
         report_back_to_session_id: None,
         latest_completion_report: None,
@@ -39,6 +40,8 @@ fn member(session_id: &str, status: &str) -> SwarmMember {
         is_headless: false,
         output_tail: None,
         todo_progress: None,
+        todo_items: Vec::new(),
+        runtime: crate::protocol::SwarmMemberRuntime::default(),
     }
 }
 

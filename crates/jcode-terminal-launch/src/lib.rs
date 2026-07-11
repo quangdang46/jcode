@@ -97,10 +97,20 @@ pub const CLIENT_TERMINAL_ENV_VARS: &[&str] = &[
     "TMUX",
     "TMUX_PANE",
     "STY",
+    // herdr terminal multiplexer (https://herdr.dev), see issue #405
+    "HERDR_ENV",
+    "HERDR_SOCKET_PATH",
+    "HERDR_PANE_ID",
+    "HERDR_TAB_ID",
+    "HERDR_WORKSPACE_ID",
+    "HERDR_BIN_PATH",
+    "HERDR_SESSION",
+    "HERDR_AGENT",
     // Terminal emulators
     "TERM",
     "TERM_PROGRAM",
     "TERM_PROGRAM_VERSION",
+    "COLORTERM",
     "KITTY_PID",
     "KITTY_WINDOW_ID",
     "KITTY_LISTEN_ON",
@@ -823,7 +833,7 @@ mod tests {
         assert!(applescript.contains("tell application \"Terminal\""));
         assert!(applescript.contains("do script"));
         // The shell's single quotes survive; AppleScript only escapes \\ and ".
-        assert!(applescript.contains("exec \\\"") == false);
+        assert!(!applescript.contains("exec \\\""));
         assert!(applescript.contains("'/usr/local/bin/jcode'"));
     }
 

@@ -143,7 +143,7 @@ pub(crate) use pinned_ui::{
     reset_side_panel_debug_stats, side_panel_debug_json, side_panel_debug_stats,
 };
 use pinned_ui::{
-    collect_pinned_content_cached, draw_pinned_content_cached, draw_side_panel_markdown,
+    collect_pinned_diffs_cached, draw_pinned_content_cached, draw_side_panel_markdown,
 };
 #[cfg(test)]
 use transitions::extract_line_text;
@@ -155,7 +155,8 @@ use viewport::draw_messages;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use viewport::{
-    copy_badge_reserved_width, expand_badge_reserved_width, reserve_copy_badge_margins,
+    copy_badge_reserved_width, expand_badge_reserved_width, pick_copy_badge_line,
+    reserve_copy_badge_margins, truncate_line_for_copy_badge,
     truncate_line_in_place_to_width as truncate_copy_badge_line_to_width,
 };
 /// Last known max scroll value from the renderer. Updated each frame.
@@ -866,6 +867,9 @@ struct BodyCacheKey {
     /// is toggled between collapsed/expanded, busting the body cache so the
     /// new rendering takes effect.
     expanded_messages_version: u64,
+    /// Live swarm-member data renders beneath the tool call that spawned each
+    /// member, so status/todo/tool-intent updates must invalidate the body.
+    swarm_members_signature: u64,
 }
 
 #[derive(Clone)]
@@ -941,6 +945,8 @@ impl BodyCacheState {
                     && entry.key.inline_images_visible == key.inline_images_visible
                     && entry.key.images_signature == key.images_signature
                     && entry.key.expanded_images_version == key.expanded_images_version
+                    && entry.key.expanded_messages_version == key.expanded_messages_version
+                    && entry.key.swarm_members_signature == key.swarm_members_signature
             })
             .max_by_key(|entry| entry.msg_count)
             .map(|entry| (entry.prepared.clone(), entry.msg_count));
@@ -960,6 +966,8 @@ impl BodyCacheState {
                     && entry.key.inline_images_visible == key.inline_images_visible
                     && entry.key.images_signature == key.images_signature
                     && entry.key.expanded_images_version == key.expanded_images_version
+                    && entry.key.expanded_messages_version == key.expanded_messages_version
+                    && entry.key.swarm_members_signature == key.swarm_members_signature
             })
             .max_by_key(|entry| entry.msg_count)
             .map(|entry| (entry.prepared.clone(), entry.msg_count));
@@ -998,6 +1006,8 @@ impl BodyCacheState {
                     && entry.key.inline_images_visible == key.inline_images_visible
                     && entry.key.images_signature == key.images_signature
                     && entry.key.expanded_images_version == key.expanded_images_version
+                    && entry.key.expanded_messages_version == key.expanded_messages_version
+                    && entry.key.swarm_members_signature == key.swarm_members_signature
             })
             .max_by_key(|(_, entry)| entry.msg_count)
             .map(|(idx, entry)| (false, idx, entry.msg_count));
@@ -1018,6 +1028,8 @@ impl BodyCacheState {
                     && entry.key.inline_images_visible == key.inline_images_visible
                     && entry.key.images_signature == key.images_signature
                     && entry.key.expanded_images_version == key.expanded_images_version
+                    && entry.key.expanded_messages_version == key.expanded_messages_version
+                    && entry.key.swarm_members_signature == key.swarm_members_signature
             })
             .max_by_key(|(_, entry)| entry.msg_count)
             .map(|(idx, entry)| (true, idx, entry.msg_count));
@@ -1112,6 +1124,8 @@ struct FullPrepCacheKey {
     /// Per-image expand-level version; anchored image geometry is embedded in
     /// the prepared frame, so a level change must invalidate it.
     expanded_images_version: u64,
+    /// Signature of live swarm member cards embedded beneath spawn tool calls.
+    swarm_members_signature: u64,
 }
 
 #[derive(Clone)]
@@ -1648,6 +1662,7 @@ impl CopyViewportSnapshot {
 struct CopyViewportSnapshots {
     chat: Option<CopyViewportSnapshot>,
     side: Option<CopyViewportSnapshot>,
+    input: Option<CopyViewportSnapshot>,
 }
 
 #[cfg(not(test))]
@@ -1660,6 +1675,8 @@ mod display_width;
 mod draw_recovery;
 #[path = "ui/profile.rs"]
 mod profile;
+#[path = "ui/selection_highlight.rs"]
+pub(crate) mod selection_highlight;
 #[path = "ui/url.rs"]
 mod url_regex_support;
 use self::copy_selection::{
@@ -1681,6 +1698,7 @@ fn copy_snapshot_slot_mut(
     match pane {
         crate::tui::CopySelectionPane::Chat => &mut snapshots.chat,
         crate::tui::CopySelectionPane::SidePane => &mut snapshots.side,
+        crate::tui::CopySelectionPane::Input => &mut snapshots.input,
     }
 }
 
@@ -1692,6 +1710,7 @@ fn copy_snapshot_for_pane(pane: crate::tui::CopySelectionPane) -> Option<CopyVie
             match pane {
                 crate::tui::CopySelectionPane::Chat => snapshots.chat,
                 crate::tui::CopySelectionPane::SidePane => snapshots.side,
+                crate::tui::CopySelectionPane::Input => snapshots.input,
             }
         })
     }
@@ -1701,6 +1720,7 @@ fn copy_snapshot_for_pane(pane: crate::tui::CopySelectionPane) -> Option<CopyVie
         match pane {
             crate::tui::CopySelectionPane::Chat => snapshots.chat,
             crate::tui::CopySelectionPane::SidePane => snapshots.side,
+            crate::tui::CopySelectionPane::Input => snapshots.input,
         }
     }
 }
@@ -2236,6 +2256,32 @@ pub(crate) fn copy_pane_first_visible_point(
     })
 }
 
+// ---- Input pane copy-selection stubs (populated by ui_input) ----
+
+/// Stub: returns the number of wrapped lines in the input pane.
+pub fn input_pane_line_count() -> Option<usize> {
+    None
+}
+
+/// Stub: returns the wrapped-line text for a given absolute line index in the input pane.
+pub fn input_pane_line_text(_line: usize) -> Option<String> {
+    None
+}
+
+/// Stub: records a copy snapshot of the input pane for mouse-drag selection.
+/// Populated by `ui_input::draw_input`.
+#[expect(clippy::too_many_arguments)]
+pub fn record_input_copy_snapshot(
+    _wrapped_plain: Vec<String>,
+    _raw_plain: Vec<String>,
+    _line_map: Vec<WrappedLineMap>,
+    _scroll_start: usize,
+    _scroll_end: usize,
+    _area: ratatui::prelude::Rect,
+    _left_margins: &[u16],
+) {
+}
+
 pub(crate) fn copy_selection_text(range: crate::tui::CopySelectionRange) -> Option<String> {
     if range.start.pane != range.end.pane {
         return None;
@@ -2461,6 +2507,15 @@ pub(crate) fn collapsed_summary_turn_for_line_from_screen(
     collapsed_summary_turn_for_line(point.abs_line)
 }
 
+/// Stub: swarm expand/collapse badge hit-testing from a screen coordinate.
+/// Returns the transcript message index that was clicked, or `None` when no
+/// badge was at that position. Currently always returns `None` — the swarm
+/// badge is rendered but click-to-toggle is not yet wired through the
+/// copy-selection snapshot machinery.
+pub(crate) fn swarm_expand_target_from_screen(_column: u16, _row: u16) -> Option<usize> {
+    None
+}
+
 pub fn draw(frame: &mut Frame, app: &dyn TuiState) {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::tui::markdown::with_deferred_mermaid_render_context(|| draw_inner(frame, app))
@@ -2468,6 +2523,10 @@ pub fn draw(frame: &mut Frame, app: &dyn TuiState) {
         Ok(()) => {}
         Err(payload) => render_recovered_panic_frame(frame, &payload),
     }
+    // Adapt the finished frame for light terminal backgrounds (no-op on dark).
+    // Doing this at the buffer level covers every widget and overlay without
+    // touching individual color call sites.
+    jcode_tui_style::adapt_buffer_for_theme(frame.buffer_mut());
 }
 
 fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
@@ -2605,13 +2664,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     // Images now render inline in the transcript, so the side panel only handles
     // pinned file diffs. `pin_images` no longer feeds the side-panel surface.
     let has_pinned_content = if collect_diffs {
-        collect_pinned_content_cached(
-            app.display_messages(),
-            &app.side_pane_images(),
-            collect_diffs,
-            false,
-            app.display_messages_version(),
-        )
+        collect_pinned_diffs_cached(app.display_messages(), app.display_messages_version())
     } else {
         false
     };
@@ -2768,13 +2821,23 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
 
     // Inline swarm strip: when `swarm_spawn_mode = inline` and this session
     // manages agents, render a compact strip (agent chips + keybinding hints)
-    // directly above the status line instead of a big gallery band.
-    let swarm_strip_lines: Vec<Line<'static>> = if app.inline_swarm_gallery_active() {
+    // directly above the status line instead of a big gallery band — unless the
+    // SwarmStatus dock already shows those agents (stand-down avoids flicker
+    // from frame-by-frame dock visibility).
+    let swarm_strip_lines: Vec<Line<'static>> = if app.inline_swarm_gallery_active()
+        && (app.swarm_panel_focused() || !super::info_widget::swarm_strip_stands_down_for_dock())
+    {
         let members = app.inline_swarm_members();
         if chat_area.width >= 24 {
             let focus_key = crate::tui::keybind::swarm_panel_focus_key_label();
-            // ~8 fps spinner from the wall-clock animation timer.
-            let spinner_frame = (app.animation_elapsed() * 8.0) as usize;
+            // Use the same smooth cadence as the primary status spinner.
+            let spinner_frame = (app.animation_elapsed()
+                * jcode_tui_render::swarm_gallery::STRIP_SPINNER_FPS)
+                as usize;
+            // Focused budget: chips + hints + a ~14-line detail viewport, but
+            // never more than a third of the chat column so the transcript
+            // stays usable on short terminals.
+            let focused_budget = ((chat_area.height as usize) / 3).clamp(3, 16);
             super::info_widget::swarm_gallery::render_swarm_strip_lines(
                 &members,
                 app.swarm_panel_selected(),
@@ -2782,6 +2845,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
                 &focus_key,
                 spinner_frame,
                 chat_area.width as usize,
+                focused_budget,
             )
         } else {
             Vec::new()
@@ -2862,15 +2926,18 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     // Elastic overscroll status line revealed when the user scrolls past the
     // bottom of the transcript. Rendered directly below the input line.
     let overscroll_height: u16 = if app.chat_overscroll_active() { 1 } else { 0 };
-    let fixed_height = 1
+    let fixed_height = 1            // status bar
         + queued_height
         + swarm_strip_height
         + notification_height
         + inline_block_height
         + inline_ui_gap_height
+        + 1                          // top separator (───)
         + input_height
+        + 1                          // bottom separator (───) + History
+        + running_items_height
         + overscroll_height
-        + donut_height; // status + queued + swarm strip + notification + inline UI + gap + input + overscroll + donut
+        + donut_height;
     let available_height = chat_area.height;
     let overflows = |prepared: &PreparedChatFrame| {
         (prepared.total_wrapped_lines().max(1) as u16) + fixed_height > available_height
@@ -2940,9 +3007,9 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     // Use packed layout when content fits, scrolling layout otherwise
     let use_packed = content_height + fixed_height <= available_height;
 
-    // Three-level layout: top (messages + queued + swarm) grows to fill,
-    // middle (status bar) always 1 row — never capped,
-    // bottom (input + dialogs) capped at 50% of chat area height (CC pattern).
+    // Three-level layout (dev redesign): top (messages + queued + swarm) grows,
+    // middle status bar always 1 row, bottom (input + dialogs) capped at 50%.
+    // Keep running-items height from master in the bottom chrome budget.
     let top_mid_bot = Layout::default()
         .direction(Direction::Vertical)
         .constraints(vec![
@@ -2971,12 +3038,13 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let bottom_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(vec![
-            Constraint::Length(notification_height),  // 0 Notification line
+            Constraint::Length(notification_height),  // 0 Notification / history sep area
             Constraint::Length(inline_block_height),  // 1 Inline UI
             Constraint::Length(inline_ui_gap_height), // 2 Inline UI/input spacing
             Constraint::Length(input_height),         // 3 Input
-            Constraint::Length(overscroll_height),    // 4 Overscroll status line
-            Constraint::Length(donut_height),         // 5 Donut animation
+            Constraint::Length(running_items_height), // 4 Running items (quickbar)
+            Constraint::Length(overscroll_height),    // 5 Overscroll status line
+            Constraint::Length(donut_height),         // 6 Donut animation
         ])
         .split(top_mid_bot[2]);
     record_status_area(status_area);
@@ -3197,7 +3265,8 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         draw_inline_ui(frame, app, bottom_chunks[1]);
     }
     // Top separator line above input (with history counter, like Claude Code)
-    if bottom_chunks[0].height > 0 {
+    // Only when notification slot is free so we do not overwrite notifications.
+    if notification_height == 0 && bottom_chunks[0].height > 0 {
         let sep_w = bottom_chunks[0].width as usize;
         if sep_w > 12 {
             let (nav_pos, nav_total) = app.prompt_history_info().unwrap_or((0, 0));
@@ -3242,11 +3311,15 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         }
     }
 
+    // Running items list (quickbar) under input (master feature, dev layout).
+    if running_items_height > 0 {
+        crate::tui::ui_running_items::draw_running_items(frame, app, bottom_chunks[4]);
+    }
     if overscroll_height > 0 {
-        input_ui::draw_overscroll_status(frame, app, bottom_chunks[4]);
+        input_ui::draw_overscroll_status(frame, app, bottom_chunks[5]);
     }
     if donut_height > 0 {
-        animations::draw_idle_animation(frame, app, bottom_chunks[5]);
+        animations::draw_idle_animation(frame, app, bottom_chunks[6]);
     }
 
     // Draw info widget overlays (skip during idle animation - they look out of place)

@@ -78,6 +78,10 @@ CREATE TABLE IF NOT EXISTS events (
     end_reason TEXT,
     auth_provider TEXT,
     auth_method TEXT,
+    -- Failure reason label for onboarding_step step='auth_failed' events
+    -- (classify_auth_failure_message labels, e.g. callback_timeout,
+    -- validation_failed, oauth_rate_limited). Added in migration 0015.
+    auth_failure_reason TEXT,
     from_version TEXT,
     event_id TEXT,
     session_id TEXT,
@@ -102,6 +106,12 @@ CREATE TABLE IF NOT EXISTS events (
     error_tool_error INTEGER DEFAULT 0,
     error_mcp_error INTEGER DEFAULT 0,
     error_rate_limited INTEGER DEFAULT 0,
+    -- Token subscription plan fields (migration 0016). These two are the only
+    -- subscription columns on events because the table is near D1's
+    -- 100-column cap (96 in production before 0016); web-only fields live in
+    -- web_details below.
+    account_id TEXT,
+    tier TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -114,6 +124,52 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_id ON events(event_id);
 CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_step ON events(step);
 CREATE INDEX IF NOT EXISTS idx_events_feedback_rating ON events(feedback_rating);
+CREATE INDEX IF NOT EXISTS idx_events_account_id ON events(account_id);
+CREATE INDEX IF NOT EXISTS idx_events_event_tier_created ON events(event, tier, created_at);
+
+-- Website beacon detail rows (web_pageview / web_cta_click), keyed by
+-- event_id like session_details / turn_details. Added in migration 0016.
+CREATE TABLE IF NOT EXISTS web_details (
+    event_id TEXT PRIMARY KEY,
+    path TEXT,
+    referrer TEXT,
+    visitor_id TEXT,
+    utm_source TEXT,
+    utm_medium TEXT,
+    utm_campaign TEXT,
+    cta TEXT,
+    FOREIGN KEY (event_id) REFERENCES events(event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_details_visitor_id ON web_details(visitor_id);
+CREATE INDEX IF NOT EXISTS idx_web_details_path ON web_details(path);
+CREATE INDEX IF NOT EXISTS idx_web_details_cta ON web_details(cta);
+
+-- Privacy-safe sponsored-discovery attempt details. Free-text query and reason
+-- content are never sent by the client and therefore cannot be stored here.
+CREATE TABLE IF NOT EXISTS discovery_details (
+    event_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    category TEXT,
+    selected_tool TEXT,
+    outcome TEXT NOT NULL,
+    failure_reason TEXT,
+    http_status INTEGER,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    response_bytes INTEGER,
+    result_count INTEGER,
+    query_present INTEGER NOT NULL DEFAULT 0,
+    reason_present INTEGER NOT NULL DEFAULT 0,
+    custom_endpoint INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (event_id) REFERENCES events(event_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_discovery_request_id ON discovery_details(request_id);
+CREATE INDEX IF NOT EXISTS idx_discovery_phase_outcome ON discovery_details(phase, outcome);
+CREATE INDEX IF NOT EXISTS idx_discovery_category_outcome ON discovery_details(category, outcome);
+CREATE INDEX IF NOT EXISTS idx_discovery_selected_tool ON discovery_details(selected_tool);
+CREATE INDEX IF NOT EXISTS idx_discovery_failure_reason ON discovery_details(failure_reason);
 
 CREATE TABLE IF NOT EXISTS session_details (
     event_id TEXT PRIMARY KEY,

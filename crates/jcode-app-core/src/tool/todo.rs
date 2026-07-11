@@ -1,13 +1,13 @@
 use super::{Tool, ToolContext, ToolOutput};
 use crate::bus::{Bus, BusEvent, TodoEvent};
-use crate::todo::{TodoItem, load_todos, save_todos};
+use crate::todo::{
+    LOW_HILL_CLIMBABILITY, TodoGoal, TodoItem, load_goals, load_todos, save_goals, save_todos,
+};
 use anyhow::Result;
 use async_trait::async_trait;
-use jcode_hooks::{
-    DispatchConfig, HookContext, HookEvent, HookInputBuilder, HookRegistry, load_hooks_config,
-};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
 pub struct TodoTool;
 
@@ -17,9 +17,113 @@ impl TodoTool {
     }
 }
 
+/// Fold each incoming todo's confidence into its tool-maintained history.
+///
+/// The model reports `confidence` (and `completion_confidence` at completion)
+/// as scalar fields; this keeps an append-only trail of every distinct value a
+/// todo has carried so downstream consumers (auto-poke spike checks, analysis)
+/// can distinguish a stepped, evidence-driven rise (75 -> 85 -> 95 -> 100)
+/// from a bulk end-of-task stamp (75 -> 100). Model-supplied
+/// `confidence_history` is ignored: the tool owns this field.
+fn merge_confidence_history(previous: &[TodoItem], incoming: &mut [TodoItem]) {
+    let prior: HashMap<&str, &TodoItem> = previous
+        .iter()
+        .map(|todo| (todo.id.as_str(), todo))
+        .collect();
+    for todo in incoming.iter_mut() {
+        let mut history = prior
+            .get(todo.id.as_str())
+            .map(|prev| prev.confidence_history.clone())
+            .unwrap_or_default();
+        for value in [todo.confidence, todo.completion_confidence]
+            .into_iter()
+            .flatten()
+        {
+            if history.last() != Some(&value) {
+                history.push(value);
+            }
+        }
+        todo.confidence_history = history;
+    }
+}
+
 #[derive(Deserialize)]
 struct TodoInput {
     todos: Option<Vec<TodoItem>>,
+    goals: Option<Vec<TodoGoal>>,
+}
+
+/// Normalize a goal's group label: trimmed, with empty/whitespace collapsed
+/// to `None` (the implicit goal of an ungrouped list).
+fn goal_group_key(group: Option<&str>) -> Option<String> {
+    group
+        .map(str::trim)
+        .filter(|group| !group.is_empty())
+        .map(str::to_string)
+}
+
+/// Merge incoming goal assessments with the stored ones.
+///
+/// Incoming goals win per group key; stored goals for groups the write does
+/// not mention are retained (a todo update should not silently discard goal
+/// assessments).
+fn merge_goals(stored: &[TodoGoal], incoming: Option<Vec<TodoGoal>>) -> Vec<TodoGoal> {
+    let Some(incoming) = incoming else {
+        return stored.to_vec();
+    };
+    let mut merged: Vec<TodoGoal> = Vec::new();
+    for mut goal in incoming {
+        goal.group = goal_group_key(goal.group.as_deref());
+        if let Some(slot) = merged
+            .iter_mut()
+            .find(|existing| existing.group == goal.group)
+        {
+            *slot = goal;
+        } else {
+            merged.push(goal);
+        }
+    }
+    for prev in stored {
+        let key = goal_group_key(prev.group.as_deref());
+        if !merged.iter().any(|goal| goal.group == key) {
+            merged.push(prev.clone());
+        }
+    }
+    merged
+}
+
+/// Reframe nudges for goals that score low on hill-climbability.
+///
+/// A low score means there is no credible metric to iterate against, so the
+/// objective must be reframed into something measurable. The nudge is
+/// intentionally returned on every applicable todo write until the goal reaches
+/// the threshold or its work closes.
+fn take_reframe_nudges(goals: &[TodoGoal], todos: &[TodoItem]) -> Vec<String> {
+    let mut nudges = Vec::new();
+    for goal in goals {
+        let Some(score) = goal.hill_climbability else {
+            continue;
+        };
+        if score >= LOW_HILL_CLIMBABILITY {
+            continue;
+        }
+        let group_open = todos.iter().any(|todo| {
+            goal_group_key(todo.group.as_deref()) == goal.group
+                && todo.status != "completed"
+                && todo.status != "cancelled"
+        });
+        if !group_open {
+            continue;
+        }
+        let label = goal.group.as_deref().unwrap_or("the current goal");
+        nudges.push(format!(
+            "Goal '{}' has low hill-climbability ({}). Reframe it into a quantifiable, \
+             verifiable objective (set the goal's `objective`, e.g. a metric plus target, and \
+             build a harness that measures it).",
+            label, score
+        ));
+    }
+    nudges
 }
 
 /// Leniently normalize raw todo-tool arguments before strict deserialization.
@@ -34,36 +138,38 @@ fn normalize_todo_input(mut input: Value) -> Value {
     let Some(obj) = input.as_object_mut() else {
         return input;
     };
-    let Some(todos) = obj.get_mut("todos") else {
-        return input;
-    };
+    for key in ["todos", "goals"] {
+        let Some(entries) = obj.get_mut(key) else {
+            continue;
+        };
 
-    // Whole array sent as a stringified JSON blob.
-    if let Value::String(raw) = todos {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            *todos = Value::Null;
-        } else if let Ok(parsed @ (Value::Array(_) | Value::Null)) =
-            serde_json::from_str::<Value>(trimmed)
-        {
-            *todos = parsed;
-        }
-    }
-
-    if let Value::Array(items) = todos {
-        for item in items.iter_mut() {
-            // Individual item sent as a stringified JSON object.
-            if let Value::String(raw) = item
-                && let Ok(parsed @ Value::Object(_)) = serde_json::from_str::<Value>(raw.trim())
+        // Whole array sent as a stringified JSON blob.
+        if let Value::String(raw) = entries {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                *entries = Value::Null;
+            } else if let Ok(parsed @ (Value::Array(_) | Value::Null)) =
+                serde_json::from_str::<Value>(trimmed)
             {
-                *item = parsed;
+                *entries = parsed;
             }
-            let Some(fields) = item.as_object_mut() else {
-                continue;
-            };
-            for key in ["confidence", "completion_confidence"] {
-                if let Some(value) = fields.get_mut(key) {
-                    coerce_value_to_integer(value);
+        }
+
+        if let Value::Array(items) = entries {
+            for item in items.iter_mut() {
+                // Individual item sent as a stringified JSON object.
+                if let Value::String(raw) = item
+                    && let Ok(parsed @ Value::Object(_)) = serde_json::from_str::<Value>(raw.trim())
+                {
+                    *item = parsed;
+                }
+                let Some(fields) = item.as_object_mut() else {
+                    continue;
+                };
+                for key in ["confidence", "completion_confidence", "hill_climbability"] {
+                    if let Some(value) = fields.get_mut(key) {
+                        coerce_value_to_integer(value);
+                    }
                 }
             }
         }
@@ -104,7 +210,7 @@ impl Tool for TodoTool {
     }
 
     fn description(&self) -> &str {
-        "Read or update the todo list. Include confidence for each item and completion_confidence when marking an item completed."
+        "Read or update the todo list. Include confidence for each item, update it as evidence accumulates while working, and include completion_confidence when marking an item completed. Rate each goal's hill_climbability via the goals param: how measurable and iterable progress toward it is."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -143,13 +249,37 @@ impl Tool for TodoTool {
                                 "type": "integer",
                                 "minimum": 0,
                                 "maximum": 100,
-                                "description": "Forward-looking confidence, 0-100, that this todo can be completed correctly. Set when creating or substantially revising a todo."
+                                "description": "Current confidence, 0-100, that this todo can be completed correctly. Set when creating the todo, and update it as evidence accumulates while working (each validation or test that passes justifies a step up). Confidence should rise in evidence-backed steps, not jump to 100 at the end."
                             },
                             "completion_confidence": {
                                 "type": "integer",
                                 "minimum": 0,
                                 "maximum": 100,
                                 "description": "Confidence, 0-100, that this todo is correctly completed. Set when marking the todo completed; omit until then."
+                            }
+                        }
+                    }
+                },
+                "goals": {
+                    "type": "array",
+                    "description": "Goal-level assessments, one per todo group (use group: null for an ungrouped flat list, which is one implicit goal). Rate how hill-climbable each goal is and state its measurable objective when one exists. Stored goals for groups not mentioned in a write are retained.",
+                    "items": {
+                        "type": "object",
+                        "required": ["hill_climbability"],
+                        "properties": {
+                            "group": {
+                                "type": "string",
+                                "description": "Group label this goal describes. Omit or null for the ungrouped list."
+                            },
+                            "hill_climbability": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 100,
+                                "description": "How hill-climbable this goal is, 0-100: can progress be measured against a quantifiable, verifiable objective and iterated on? Scores below 90 trigger recurring reframe guidance on every applicable todo write. High scores should have a clear metric and stated objective (e.g. p50 grep latency under 50ms, all targeted tests pass)."
+                            },
+                            "objective": {
+                                "type": "string",
+                                "description": "The measurable objective progress climbs toward, e.g. 'p50 grep latency under 50ms on the repo corpus'. State one whenever it exists; a high hill_climbability without an objective is not credible."
                             }
                         }
                     }
@@ -160,112 +290,58 @@ impl Tool for TodoTool {
 
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
         let params: TodoInput = serde_json::from_value(normalize_todo_input(input))?;
-        let operation = if params.todos.is_some() {
+        let operation = if params.todos.is_some() || params.goals.is_some() {
             "write"
         } else {
             "read"
         };
-        match params.todos {
-            Some(todos) => {
-                let existing = load_todos(&ctx.session_id).unwrap_or_default();
-                let existing_ids: std::collections::HashSet<&str> =
-                    existing.iter().map(|t| t.id.as_str()).collect();
-                let completed_ids: std::collections::HashSet<&str> = existing
-                    .iter()
-                    .filter(|t| t.status == "completed")
-                    .map(|t| t.id.as_str())
-                    .collect();
+        let result = if params.todos.is_some() || params.goals.is_some() {
+            // Goals-only writes keep the stored todo list.
+            let previous = load_todos(&ctx.session_id).unwrap_or_default();
+            let mut todos = params.todos.unwrap_or_else(|| previous.clone());
+            merge_confidence_history(&previous, &mut todos);
+            save_todos(&ctx.session_id, &todos).and_then(|_| {
+                let stored_goals = load_goals(&ctx.session_id).unwrap_or_default();
+                let goals = merge_goals(&stored_goals, params.goals);
+                let nudges = take_reframe_nudges(&goals, &todos);
+                save_goals(&ctx.session_id, &goals)?;
 
-                // save_todos now broadcasts BusEvent::TodoUpdated internally;
-                // returns true if a verification nudge should be appended to
-                // the tool result (model just closed 3+ tasks w/o verification).
-                let nudge = save_todos(&ctx.session_id, &todos)?;
-
-                // Fire TaskCreated / TaskCompleted hooks (fire-and-forget, observational)
-                let session_id = ctx.session_id.clone();
-                let cwd = ctx
-                    .working_dir
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let new_todos: Vec<TodoItem> = todos
-                    .iter()
-                    .filter(|t| !existing_ids.contains(t.id.as_str()))
-                    .cloned()
-                    .collect();
-                let newly_completed: Vec<TodoItem> = todos
-                    .iter()
-                    .filter(|t| t.status == "completed" && !completed_ids.contains(t.id.as_str()))
-                    .cloned()
-                    .collect();
-                tokio::spawn(async move {
-                    let hook_config = load_hooks_config();
-                    let hook_registry = HookRegistry::from_config(hook_config.clone());
-                    let dispatch_config = DispatchConfig::from_settings(&hook_config.settings);
-
-                    for todo in &new_todos {
-                        let mut hook_ctx = HookContext::new(&session_id, "", &cwd, "TaskCreated");
-                        hook_ctx.task_id = Some(todo.id.clone());
-                        let handlers =
-                            hook_registry.get_matching(&HookEvent::TaskCreated, &hook_ctx);
-                        if !handlers.is_empty() {
-                            let hook_input = HookInputBuilder::new()
-                                .session(&session_id, &cwd)
-                                .event("TaskCreated")
-                                .build();
-                            let _ = jcode_hooks::dispatch_hooks(
-                                &HookEvent::TaskCreated,
-                                &hook_input,
-                                &handlers,
-                                &dispatch_config,
-                            )
-                            .await;
-                        }
-                    }
-
-                    for todo in &newly_completed {
-                        let mut hook_ctx = HookContext::new(&session_id, "", &cwd, "TaskCompleted");
-                        hook_ctx.task_id = Some(todo.id.clone());
-                        let handlers =
-                            hook_registry.get_matching(&HookEvent::TaskCompleted, &hook_ctx);
-                        if !handlers.is_empty() {
-                            let hook_input = HookInputBuilder::new()
-                                .session(&session_id, &cwd)
-                                .event("TaskCompleted")
-                                .build();
-                            let _ = jcode_hooks::dispatch_hooks(
-                                &HookEvent::TaskCompleted,
-                                &hook_input,
-                                &handlers,
-                                &dispatch_config,
-                            )
-                            .await;
-                        }
-                    }
-                });
+                Bus::global().publish(BusEvent::TodoUpdated(TodoEvent {
+                    session_id: ctx.session_id.clone(),
+                    todos: todos.clone(),
+                    at: chrono::Utc::now(),
+                }));
 
                 let remaining = todos.iter().filter(|t| t.status != "completed").count();
-                let mut output = serde_json::to_string_pretty(&todos)?;
-                if nudge {
-                    output.push_str(
-                        "
-
-NOTE: You just closed 3+ tasks and none was a                          verification step. Before writing your final summary,                          run a verification pass on the changes (e.g. build,                          tests, or a sub-agent verifier).",
-                    );
+                let mut text = serde_json::to_string_pretty(&todos)?;
+                if !goals.is_empty() {
+                    text.push_str("\n\nGoals:\n");
+                    text.push_str(&serde_json::to_string_pretty(&goals)?);
                 }
-                Ok(ToolOutput::new(output)
+                for nudge in &nudges {
+                    text.push_str("\n\n");
+                    text.push_str(nudge);
+                }
+                Ok(ToolOutput::new(text)
                     .with_title(format!("{} todos", remaining))
-                    .with_metadata(json!({"todos": todos})))
-            }
-            None => {
+                    .with_metadata(json!({"todos": todos, "goals": goals})))
+            })
+        } else {
+            (|| {
                 let todos = load_todos(&ctx.session_id)?;
+                let goals = load_goals(&ctx.session_id).unwrap_or_default();
                 let remaining = todos.iter().filter(|t| t.status != "completed").count();
-                Ok(ToolOutput::new(serde_json::to_string_pretty(&todos)?)
+                let mut text = serde_json::to_string_pretty(&todos)?;
+                if !goals.is_empty() {
+                    text.push_str("\n\nGoals:\n");
+                    text.push_str(&serde_json::to_string_pretty(&goals)?);
+                }
+                Ok(ToolOutput::new(text)
                     .with_title(format!("{} todos", remaining))
-                    .with_metadata(json!({"todos": todos})))
-            }
-        }
-        .map_err(|err| {
+                    .with_metadata(json!({"todos": todos, "goals": goals})))
+            })()
+        };
+        result.map_err(|err| {
             crate::logging::warn(&format!(
                 "[tool:todo] operation failed operation={} session_id={} error={}",
                 operation, ctx.session_id, err
@@ -291,9 +367,10 @@ mod tests {
             .get("properties")
             .and_then(|v| v.as_object())
             .expect("todo schema should have properties");
-        assert_eq!(props.len(), 2);
+        assert_eq!(props.len(), 3);
         assert!(props.contains_key("intent"));
         assert!(props.contains_key("todos"));
+        assert!(props.contains_key("goals"));
 
         let item = props["todos"]
             .get("items")
@@ -310,6 +387,17 @@ mod tests {
             .expect("todo item should advertise properties");
         assert!(item_props.contains_key("confidence"));
         assert!(item_props.contains_key("completion_confidence"));
+        assert!(!item_props.contains_key("hill_climbability"));
+
+        let goal_props = props["goals"]
+            .get("items")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.as_object())
+            .expect("goals should describe item objects");
+        assert!(goal_props.contains_key("group"));
+        assert!(goal_props.contains_key("hill_climbability"));
+        assert!(goal_props.contains_key("objective"));
+        assert_eq!(goal_props.len(), 3);
     }
 
     fn parse(input: Value) -> Result<TodoInput, serde_json::Error> {
@@ -375,7 +463,129 @@ mod tests {
     }
 
     #[test]
+    fn accepts_goals_including_string_coercion() {
+        let input = json!({
+            "goals": [
+                {"group": "optimize grep", "hill_climbability": "95", "objective": "p50 under 50ms"},
+                {"hill_climbability": 20}
+            ]
+        });
+        let parsed = parse(input).expect("goals should parse");
+        let goals = parsed.goals.expect("goals present");
+        assert_eq!(goals[0].hill_climbability, Some(95));
+        assert_eq!(goals[0].objective.as_deref(), Some("p50 under 50ms"));
+        assert_eq!(goals[1].group, None);
+    }
+
+    fn goal(group: Option<&str>, score: u8) -> TodoGoal {
+        TodoGoal {
+            group: group.map(str::to_string),
+            hill_climbability: Some(score),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_goals_retains_unmentioned_goals() {
+        let stored = vec![goal(Some("a"), 20), goal(Some("b"), 90)];
+        // Rewrite goal 'a', leave 'b' alone.
+        let merged = merge_goals(&stored, Some(vec![goal(Some(" a "), 30)]));
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].group.as_deref(), Some("a"));
+        assert_eq!(merged[0].hill_climbability, Some(30));
+        assert_eq!(merged[1].group.as_deref(), Some("b"));
+        // No incoming goals: stored goals unchanged.
+        assert_eq!(merge_goals(&stored, None).len(), 2);
+    }
+
+    fn open_todo(group: Option<&str>) -> TodoItem {
+        TodoItem {
+            id: "t1".to_string(),
+            content: "work".to_string(),
+            status: "in_progress".to_string(),
+            priority: "high".to_string(),
+            group: group.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn reframe_nudge_recurs_for_every_low_open_goal_write() {
+        let todos = vec![open_todo(Some("design"))];
+        let goals = vec![goal(Some("design"), 89), goal(Some("perf"), 90)];
+        let nudges = take_reframe_nudges(&goals, &todos);
+        assert_eq!(nudges.len(), 1);
+        assert!(nudges[0].contains("design"));
+        assert!(!nudges[0].contains("open-ended"));
+        assert!(!nudges[0].contains("checkpoints"));
+        // A subsequent write receives the same guidance until the score reaches 90.
+        assert_eq!(take_reframe_nudges(&goals, &todos).len(), 1);
+    }
+
+    #[test]
+    fn reframe_nudge_skips_closed_goals() {
+        // Low goal whose todos are all completed: nothing to reframe.
+        let mut done = open_todo(Some("legacy"));
+        done.status = "completed".to_string();
+        let goals = vec![goal(Some("legacy"), 10)];
+        assert!(take_reframe_nudges(&goals, &[done]).is_empty());
+    }
+
+    #[test]
+    fn reframe_nudge_covers_ungrouped_implicit_goal() {
+        let todos = vec![open_todo(None)];
+        let goals = vec![goal(None, 15)];
+        let nudges = take_reframe_nudges(&goals, &todos);
+        assert_eq!(nudges.len(), 1);
+        assert!(nudges[0].contains("the current goal"));
+    }
+
+    #[test]
     fn garbage_string_still_errors() {
         assert!(parse(json!({"todos": "not json at all"})).is_err());
+    }
+
+    fn history_todo(id: &str, confidence: Option<u8>, history: Vec<u8>) -> TodoItem {
+        TodoItem {
+            id: id.to_string(),
+            content: format!("todo {id}"),
+            status: "in_progress".to_string(),
+            priority: "high".to_string(),
+            confidence,
+            confidence_history: history,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn confidence_history_appends_changes_and_skips_repeats() {
+        let previous = vec![history_todo("1", Some(75), vec![75])];
+        // Same confidence again: no new entry.
+        let mut incoming = vec![history_todo("1", Some(75), Vec::new())];
+        merge_confidence_history(&previous, &mut incoming);
+        assert_eq!(incoming[0].confidence_history, vec![75]);
+        // Raised confidence: appended.
+        let mut incoming = vec![history_todo("1", Some(90), Vec::new())];
+        merge_confidence_history(&previous, &mut incoming);
+        assert_eq!(incoming[0].confidence_history, vec![75, 90]);
+    }
+
+    #[test]
+    fn confidence_history_records_completion_confidence() {
+        let previous = vec![history_todo("1", Some(75), vec![75])];
+        let mut done = history_todo("1", Some(100), Vec::new());
+        done.status = "completed".to_string();
+        done.completion_confidence = Some(100);
+        let mut incoming = vec![done];
+        merge_confidence_history(&previous, &mut incoming);
+        // 75 (planning) -> 100 (final bulk stamp): the spike stays visible.
+        assert_eq!(incoming[0].confidence_history, vec![75, 100]);
+    }
+
+    #[test]
+    fn confidence_history_ignores_model_supplied_history_for_new_todos() {
+        let mut incoming = vec![history_todo("9", Some(80), vec![1, 2, 3])];
+        merge_confidence_history(&[], &mut incoming);
+        assert_eq!(incoming[0].confidence_history, vec![80]);
     }
 }

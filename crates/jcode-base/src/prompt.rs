@@ -6,6 +6,65 @@ use std::process::Command;
 /// Default system prompt for jcode (embedded at compile time)
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("prompt/system_prompt.md");
 
+/// Prompt guidance for the optional Mermaid rendering capability.
+pub const MERMAID_PROMPT: &str = "# Mermaid diagrams\n\nMermaid diagrams will be rendered inline by the harness. You can start a diagram with a fenced `mermaid` code block, and it will automatically be rendered.";
+
+/// Harness capabilities that conditionally contribute prompt modules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PromptCapabilities {
+    pub mermaid: bool,
+}
+
+impl Default for PromptCapabilities {
+    fn default() -> Self {
+        Self { mermaid: true }
+    }
+}
+
+impl PromptCapabilities {
+    fn current() -> Self {
+        Self {
+            mermaid: crate::config::config().features.mermaid,
+        }
+    }
+}
+
+fn base_system_prompt_parts(capabilities: PromptCapabilities) -> Vec<String> {
+    let mut parts = vec![DEFAULT_SYSTEM_PROMPT.to_string()];
+    if capabilities.mermaid {
+        parts.push(MERMAID_PROMPT.to_string());
+    }
+    parts
+}
+
+/// Built-in default swarm prompt: model-routing guidance for spawned swarm
+/// agents (which model/effort to pick per task kind). Users can override it by
+/// creating `~/.jcode/swarm-prompt.md` (global) or `./.jcode/swarm-prompt.md`
+/// (project). See [`load_swarm_prompt`].
+pub const DEFAULT_SWARM_PROMPT: &str = include_str!("prompt/swarm_prompt.md");
+
+/// Load the swarm prompt used to steer swarm model routing. Precedence:
+/// project `./.jcode/swarm-prompt.md`, then global `~/.jcode/swarm-prompt.md`,
+/// then the built-in [`DEFAULT_SWARM_PROMPT`].
+pub fn load_swarm_prompt(working_dir: Option<&Path>) -> String {
+    let project_dir = working_dir.unwrap_or(Path::new("."));
+    let candidates = [
+        Some(project_dir.join(".jcode").join("swarm-prompt.md")),
+        crate::storage::jcode_dir()
+            .ok()
+            .map(|dir| dir.join("swarm-prompt.md")),
+    ];
+    for path in candidates.into_iter().flatten() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    DEFAULT_SWARM_PROMPT.trim().to_string()
+}
+
 /// Reasoning-effort sentinel that means "use the strongest reasoning the model
 /// supports, AND actively orchestrate the work with the swarm tool". Providers
 /// translate this to their strongest real effort when building API requests,
@@ -29,7 +88,7 @@ pub const SWARM_EFFORT_DIRECTIVE: &str = "# Swarm Effort\n\nYou are running at t
 /// System-prompt directive injected when the active reasoning effort is
 /// [`SWARM_DEEP_EFFORT`]. Instructs the agent to run the comprehensive DAG-first
 /// task-graph workflow.
-pub const SWARM_DEEP_EFFORT_DIRECTIVE: &str = "# Deep Task Graph\n\nYou are running at maximum reasoning effort with the deep task-graph swarm workflow. Treat the task DAG as the primary object, not ad hoc agent chat. Workflow:\n\n1. Seed a graph with `swarm task_graph` using `mode: \"deep\"`: lay out nodes (kind explore|implement|verify|fix|synthesize) and `depends_on` edges instead of answering directly.\n2. For any node that is too big, `swarm expand_node` to decompose it into a child sub-DAG (you become its planner/integrator). In deep mode a critique/verify gate is auto-inserted before a composite node can close.\n3. Finish each node with `swarm complete_node` and a typed artifact: `findings`, `evidence` (file:line / commit refs), `validation`, `open_questions`, and an honest `what_i_did_not_check`. Downstream nodes are hydrated with these artifacts automatically.\n4. When a critique/verify gate finds gaps or failures, use `swarm inject_gap` to add new nodes; the parent cannot close until they drain.\n5. Use `swarm run_plan` to drive the graph to completion.\n\nComprehensiveness is structural: prefer decomposition + gates over a single thorough answer, so it is very unlikely any nook or cranny is missed.";
+pub const SWARM_DEEP_EFFORT_DIRECTIVE: &str = "# Deep Task Graph\n\nYou are running at maximum reasoning effort with the deep task-graph swarm workflow. Treat the task DAG as the primary object, not ad hoc agent chat. Workflow:\n\n1. Seed a graph with `swarm task_graph` using `mode: \"deep\"`: lay out nodes (kind explore|implement|verify|fix|synthesize) and `depends_on` edges instead of answering directly. (At this effort the server already defaults the plan to deep, but pass `mode: \"deep\"` explicitly anyway.) The engine auto-inserts a plan-wide root gate over your seed: the plan cannot finish until a final adversarial audit passes, and that audit can inject new top-level work.\n2. For any node that is too big, `swarm expand_node` to decompose it into a child sub-DAG (you become its planner/integrator). In deep mode a critique/verify gate is auto-inserted before a composite node can close. The graph is EXPECTED to outgrow its seed, often by several times: growth (expansions and gate-injected gaps) is the system working, not scope creep. plan_status reports seeded-vs-grown counts.\n3. Finish each node with `swarm complete_node` and a typed artifact: `findings`, `evidence` (file:line / commit refs), `validation`, `open_questions`, a required `confidence` (low|medium|high; report low honestly, it routes follow-up work to shore up that scope), and an honest `what_i_did_not_check`. Downstream nodes are hydrated with these artifacts automatically. There is no other way to close a deep node: a turn ending without expand_node/complete_node re-queues the node to a fresh worker and fails it on repeat.\n4. When a critique/verify gate finds gaps or failures, use `swarm inject_gap` to add new nodes; the parent cannot close until they drain. A passing gate artifact must account for EVERY node it audited by id (the server rejects rubber stamps), and cannot pass over a low-confidence sibling without addressing it explicitly, so treat low-confidence siblings as priority probe targets.\n5. Use `swarm run_plan` to drive the graph to completion. It returns immediately and drives the plan as a background task (progress card + wake on completion), so keep working or answer the user while it runs; check `swarm plan_status` or `bg` for progress. Deep mode fans out wide automatically (many workers run in parallel, bounded only by the swarm member cap), so prefer decomposing into MANY independent sibling nodes rather than a few serial ones: keep the ready set wide so run_plan can dispatch lots of agents at once. Only add `depends_on` edges for real data dependencies.\n\nComprehensiveness is structural: prefer decomposition + gates over a single thorough answer, so it is very unlikely any nook or cranny is missed.";
 
 /// Returns true when `effort` is either swarm sentinel (light or deep),
 /// case-insensitive. Used by providers to map to the strongest real effort.
@@ -177,6 +236,8 @@ pub struct ContextInfo {
     pub prompt_overlay_chars: usize,
     /// Preferred tools section size (chars)
     pub preferred_tools_chars: usize,
+    /// Sponsored discovery section size (chars)
+    pub sponsored_discovery_chars: usize,
 
     // === Dynamic (Conversation) ===
     /// Tool definitions sent to API (chars)
@@ -220,6 +281,7 @@ impl ContextInfo {
             + self.memory_chars
             + self.prompt_overlay_chars
             + self.preferred_tools_chars
+            + self.sponsored_discovery_chars
             + self.tool_defs_chars
     }
 
@@ -257,6 +319,9 @@ impl ContextInfo {
         }
         if self.preferred_tools_chars > 0 {
             parts.push(("tools", self.preferred_tools_chars, "🧰"));
+        }
+        if self.sponsored_discovery_chars > 0 {
+            parts.push(("sponsored", self.sponsored_discovery_chars, "$"));
         }
         parts
     }
@@ -324,9 +389,31 @@ pub fn build_system_prompt_full(
     keyword_prompt: Option<String>,
     notepad_prompt: Option<&str>,
 ) -> (String, ContextInfo) {
-    let mut parts = vec![DEFAULT_SYSTEM_PROMPT.to_string()];
+    build_system_prompt_full_with_capabilities(
+        skill_prompt,
+        available_skills,
+        is_selfdev,
+        memory_prompt,
+        working_dir,
+        keyword_prompt,
+        notepad_prompt,
+        PromptCapabilities::current(),
+    )
+}
+
+pub fn build_system_prompt_full_with_capabilities(
+    skill_prompt: Option<&str>,
+    available_skills: &[SkillInfo],
+    is_selfdev: bool,
+    memory_prompt: Option<&str>,
+    working_dir: Option<&Path>,
+    keyword_prompt: Option<String>,
+    notepad_prompt: Option<&str>,
+    capabilities: PromptCapabilities,
+) -> (String, ContextInfo) {
+    let mut parts = base_system_prompt_parts(capabilities);
     let mut info = ContextInfo {
-        system_prompt_chars: DEFAULT_SYSTEM_PROMPT.len(),
+        system_prompt_chars: parts.join("\n\n").len(),
         ..Default::default()
     };
 
@@ -364,6 +451,12 @@ pub fn build_system_prompt_full(
     if let Some(content) = preferred_tools_content {
         info.preferred_tools_chars = preferred_tools_chars;
         parts.push(content);
+    }
+
+    // Add sponsored discovery categories (on by default, opt-out; see sponsors.rs)
+    if let Some(section) = crate::sponsors::build_discovery_prompt_section() {
+        info.sponsored_discovery_chars = section.len();
+        parts.push(section);
     }
 
     if let Some(memory) = memory_prompt {
@@ -421,10 +514,32 @@ pub fn build_system_prompt_split(
     keyword_prompt: Option<String>,
     notepad_prompt: Option<&str>,
 ) -> (SplitSystemPrompt, ContextInfo) {
-    let mut static_parts = vec![DEFAULT_SYSTEM_PROMPT.to_string()];
+    build_system_prompt_split_with_capabilities(
+        skill_prompt,
+        available_skills,
+        is_selfdev,
+        memory_prompt,
+        working_dir,
+        keyword_prompt,
+        notepad_prompt,
+        PromptCapabilities::current(),
+    )
+}
+
+pub fn build_system_prompt_split_with_capabilities(
+    skill_prompt: Option<&str>,
+    available_skills: &[SkillInfo],
+    is_selfdev: bool,
+    memory_prompt: Option<&str>,
+    working_dir: Option<&Path>,
+    keyword_prompt: Option<String>,
+    notepad_prompt: Option<&str>,
+    capabilities: PromptCapabilities,
+) -> (SplitSystemPrompt, ContextInfo) {
+    let mut static_parts = base_system_prompt_parts(capabilities);
     let mut dynamic_parts = Vec::new();
     let mut info = ContextInfo {
-        system_prompt_chars: DEFAULT_SYSTEM_PROMPT.len(),
+        system_prompt_chars: static_parts.join("\n\n").len(),
         ..Default::default()
     };
 
@@ -463,6 +578,12 @@ pub fn build_system_prompt_split(
     if let Some(content) = preferred_tools_content {
         info.preferred_tools_chars = preferred_tools_chars;
         static_parts.push(content);
+    }
+
+    // Add sponsored discovery categories (static; on by default, opt-out)
+    if let Some(section) = crate::sponsors::build_discovery_prompt_section() {
+        info.sponsored_discovery_chars = section.len();
+        static_parts.push(section);
     }
 
     // Add available skills list (fairly static)
@@ -677,6 +798,16 @@ fn get_git_info(working_dir: Option<&Path>) -> Option<String> {
 }
 
 fn hardware_context() -> Option<String> {
+    // Hardware never changes for the life of the process, but this used to be
+    // rebuilt for every session create/attach, forking `lspci` each time. On a
+    // busy shared server that meant one subprocess per client connection.
+    static HARDWARE_CONTEXT: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    HARDWARE_CONTEXT
+        .get_or_init(hardware_context_uncached)
+        .clone()
+}
+
+fn hardware_context_uncached() -> Option<String> {
     let mut lines = Vec::new();
 
     if let Some(machine) = machine_model() {

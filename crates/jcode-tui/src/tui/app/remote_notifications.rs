@@ -165,7 +165,7 @@ pub(super) fn present_swarm_notification(
 ) -> SwarmNotificationPresentation {
     let trimmed = message.trim();
     match notification_type {
-        NotificationType::Message { scope, channel } => match scope.as_deref() {
+        NotificationType::Message { scope, channel, .. } => match scope.as_deref() {
             Some("dm") => {
                 if let Some(task_body) =
                     strip_message_prefix(trimmed, "Task assigned to you by coordinator: ")
@@ -296,6 +296,7 @@ mod tests {
             &NotificationType::Message {
                 scope: Some("dm".to_string()),
                 channel: None,
+                tldr: None,
             },
             "Task assigned to you by coordinator: Implement compaction asymptotic fixes - You own the compaction task.",
             false,
@@ -316,6 +317,7 @@ mod tests {
             &NotificationType::Message {
                 scope: Some("background_task".to_string()),
                 channel: None,
+                tldr: None,
             },
             "Background task failed · selfdev-build · exit 101",
             false,
@@ -336,6 +338,7 @@ mod tests {
             &NotificationType::Message {
                 scope: Some("background_task".to_string()),
                 channel: None,
+                tldr: None,
             },
             "**Background task progress** `bg123` · `bash`\n\n[#####-------] 42% · Running tests (reported)",
             false,
@@ -355,6 +358,7 @@ mod tests {
             &NotificationType::Message {
                 scope: Some("dm".to_string()),
                 channel: None,
+                tldr: None,
             },
             "DM from sheep: I can see your worktree diff.",
             false,
@@ -372,6 +376,7 @@ mod tests {
             &NotificationType::Message {
                 scope: Some("plan".to_string()),
                 channel: None,
+                tldr: None,
             },
             "Plan updated by sheep (4 items, v1)",
             false,

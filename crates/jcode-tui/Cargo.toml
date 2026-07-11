@@ -58,6 +58,7 @@ sha2 = "0.10"
 rand = "0.9.3"
 hex = "0.4"
 url = "2"
+urlencoding = "2"
 
 # TUI
 ratatui = "0.30"
@@ -71,6 +72,7 @@ jcode-build-meta = { path = "../jcode-build-meta" }
 jcode-logging = { path = "../jcode-logging" }
 jcode-core = { path = "../jcode-core" }
 jcode-protocol = { path = "../jcode-protocol" }
+jcode-fuzzy = { path = "../jcode-fuzzy" }
 jcode-selfdev-types = { path = "../jcode-selfdev-types" }
 jcode-session-types = { path = "../jcode-session-types" }
 jcode-provider-core = { path = "../jcode-provider-core" }
@@ -84,6 +86,7 @@ jcode-tui-render = { path = "../jcode-tui-render" }
 jcode-tui-visual-debug = { path = "../jcode-tui-visual-debug" }
 jcode-tui-session-picker = { path = "../jcode-tui-session-picker", features = ["serde"] }
 jcode-tui-style = { path = "../jcode-tui-style" }
+terminal-colorsaurus = "1.0"
 jcode-tui-permissions = { path = "../jcode-tui-permissions" }
 jcode-tui-tool-display = { path = "../jcode-tui-tool-display" }
 jcode-redact = { path = "../jcode-redact" }

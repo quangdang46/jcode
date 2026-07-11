@@ -36,6 +36,7 @@ pub mod screenshot;
 pub mod session_picker;
 mod stream_buffer;
 pub mod test_harness;
+pub mod theme_detect;
 mod ui;
 mod ui_diff;
 mod ui_running_items;
@@ -50,6 +51,7 @@ pub use crate::generated_image::{
     write_generated_image_side_panel_page,
 };
 pub use app::{App, CopyBadgeUiState, ProcessingStatus, RunResult};
+pub(crate) use ui::selection_highlight;
 
 use crate::message::ToolCall;
 use ratatui::prelude::Frame;
@@ -78,6 +80,13 @@ pub use jcode_tui_core::{
     CopySelectionPane, CopySelectionPoint, CopySelectionRange, CopySelectionStatus,
 };
 pub use jcode_tui_messages::DisplayMessage;
+
+/// Actions that can be triggered via the swarm panel's keyboard shortcuts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SwarmPanelAction {
+    /// Toggle swarm panel keyboard focus.
+    ToggleFocus,
+}
 
 fn keyboard_enhancement_flags() -> crossterm::event::KeyboardEnhancementFlags {
     use crossterm::event::KeyboardEnhancementFlags;
@@ -300,11 +309,18 @@ pub trait TuiState {
     /// Running items state (tools, subagents, background tasks) for the interactive list.
     fn running_items(&self) -> RunningItemsState;
     fn time_since_activity(&self) -> Option<Duration>;
-    /// Whether the client terminal currently has focus. Decorative animations and
-    /// periodic idle redraws pause while unfocused so backgrounded windows/tabs do
-    /// not burn CPU. Defaults to true for state impls that do not track focus.
+    /// Whether the terminal is currently focused (receiving key events).
+    /// Always true in this fork — upstream's FocusLost handling is not ported.
     fn client_focused(&self) -> bool {
         true
+    }
+    /// Transient hotkey-feedback text shown briefly after a (Alt+?) chord fires.
+    fn hotkey_feedback(&self) -> Option<String> {
+        None
+    }
+    /// Learn-hint text shown briefly on first skill usage.
+    fn learn_hint(&self) -> Option<String> {
+        None
     }
     /// Whether the provider/server has ended the visible assistant message while turn cleanup
     /// still finishes in the background.
@@ -635,7 +651,7 @@ pub trait TuiState {
                 return true;
             }
             if let Some(cache_info) = self.cache_ttl_status()
-                && (cache_info.is_cold || cache_info.remaining_secs <= 60)
+                && (cache_info.is_cold || cache_info.expiring_soon())
             {
                 return true;
             }
@@ -706,8 +722,56 @@ pub struct CacheTtlInfo {
     pub ttl_secs: u64,
     /// Whether the cache is expired (cold)
     pub is_cold: bool,
+    /// How long ago the cache went cold, in seconds (0 while warm)
+    pub cold_for_secs: u64,
     /// Estimated cached tokens (from last response's input tokens)
     pub cached_tokens: Option<u64>,
+}
+
+/// Compact human age like `30s`, `5m`, `1h 1m`, `2d 3h` for "went cold N ago"
+/// annotations. Keeps at most two units so it stays glanceable.
+pub(crate) fn format_compact_age(secs: u64) -> String {
+    if secs < 60 {
+        return format!("{}s", secs);
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{}m", mins);
+    }
+    let hours = mins / 60;
+    let rem_mins = mins % 60;
+    if hours < 24 {
+        return if rem_mins == 0 {
+            format!("{}h", hours)
+        } else {
+            format!("{}h {}m", hours, rem_mins)
+        };
+    }
+    let days = hours / 24;
+    let rem_hours = hours % 24;
+    if rem_hours == 0 {
+        format!("{}d", days)
+    } else {
+        format!("{}d {}h", days, rem_hours)
+    }
+}
+
+impl CacheTtlInfo {
+    /// How long before expiry the `⏳ cache ...` countdown should appear.
+    ///
+    /// A fixed 60s window is fine for a 5-minute TTL but far too easy to miss
+    /// on a 1-hour (or 24-hour) TTL where stepping away is exactly the failure
+    /// mode. Scale with the TTL (10%) but keep it within 60s..10min so short
+    /// TTLs keep their old behavior and long TTLs don't nag for hours.
+    pub fn warn_window_secs(&self) -> u64 {
+        (self.ttl_secs / 10).clamp(60, 600)
+    }
+
+    /// Whether the cache is warm but close enough to expiry that the
+    /// countdown should be shown (and idle redraws kept alive).
+    pub fn expiring_soon(&self) -> bool {
+        !self.is_cold && self.remaining_secs <= self.warn_window_secs()
+    }
 }
 
 /// Prompt cache TTL helpers now live in `crate::provider` (provider
@@ -910,10 +974,14 @@ pub struct LoginImportPrompt {
     pub rows: Vec<LoginImportRow>,
     /// Index of the row the cursor is currently on.
     pub cursor: usize,
-    /// When `true`, the navigable "Continue" pill (above and below the list) is
-    /// focused instead of a login row, so it renders highlighted and Enter
-    /// commits the import.
+    /// When `true`, the navigable "Continue" pill is focused. On the summary
+    /// screen this is the preselected default; in choose mode it means focus is
+    /// on the pill rather than a login row, so Enter commits the import.
     pub continue_focused: bool,
+    /// `None` = the default summary screen (detected logins listed read-only,
+    /// with Continue / Choose pills). `Some(label)` = the per-login checkbox list
+    /// with the label describing the action (e.g. "import").
+    pub choosing: Option<String>,
     /// How many rows are currently checked for import.
     pub checked_count: usize,
     /// Seconds left before the screen auto-imports all checked logins.
@@ -1585,19 +1653,15 @@ pub(crate) const REDRAW_DEEP_IDLE: Duration = Duration::from_millis(5000);
 pub(crate) const REDRAW_REMOTE_STARTUP: Duration = Duration::from_millis(1000);
 pub(crate) const REDRAW_PASSIVE_LIVENESS: Duration = Duration::from_millis(1000);
 pub(crate) const REDRAW_DEEP_IDLE_AFTER: Duration = Duration::from_secs(30);
+/// Cadence for swarm strip/dock status spinners while agents stay active.
+pub(crate) const REDRAW_SWARM_SPINNER: Duration =
+    Duration::from_millis(jcode_tui_render::swarm_gallery::STRIP_SPINNER_FRAME_MS);
 
 fn idle_donut_active_with_policy(
     state: &dyn TuiState,
     policy: &crate::perf::TuiPerfPolicy,
 ) -> bool {
     if state.remote_startup_phase_active() {
-        return false;
-    }
-
-    // Decorative animations are purely visual; never spin them while the terminal
-    // window/tab is backgrounded. A swarm of unfocused sessions would otherwise
-    // each render a full-screen 3D scene at animation FPS, saturating every core.
-    if !state.client_focused() {
         return false;
     }
 
@@ -1668,7 +1732,7 @@ fn cache_cold_countdown_redraw_active(state: &dyn TuiState) -> bool {
     }
     state
         .cache_ttl_status()
-        .map(|info| info.is_cold || info.remaining_secs <= 60)
+        .map(|info| info.is_cold || info.expiring_soon())
         .unwrap_or(false)
 }
 
@@ -1738,23 +1802,6 @@ pub(crate) fn redraw_interval_with_policy(
             crate::perf::PerformanceTier::Minimal => fast_interval,
             _ => animation_interval,
         };
-    }
-
-    // While the terminal is backgrounded (FocusLost), an idle session has nothing
-    // worth a fast tick: decorative animations are paused and the run loop only
-    // repaints throttled idle frames. Use the slow deep-idle interval so the
-    // event loop sleeps instead of spinning on shared-server bus chatter. Sessions
-    // with live output keep a responsive cadence below.
-    if !state.client_focused()
-        && !state.is_processing()
-        && state.streaming_text().is_empty()
-        && !state.has_pending_mouse_scroll_animation()
-        && !state.copy_selection_edge_autoscroll_active()
-        && !state.remote_startup_phase_active()
-        && !rate_limit_countdown_redraw_active(state)
-        && crate::build::read_build_progress().is_none()
-    {
-        return REDRAW_DEEP_IDLE;
     }
 
     let deep_idle = state
@@ -1882,13 +1929,29 @@ pub(crate) fn periodic_redraw_required(state: &dyn TuiState) -> bool {
     false
 }
 
-pub(crate) fn subscribe_metadata() -> (Option<String>, Option<bool>) {
+pub(crate) fn subscribe_metadata(
+    remote_working_dir: Option<&str>,
+) -> (Option<String>, Option<bool>) {
     let working_dir = std::env::current_dir().ok();
-    let working_dir_str = working_dir.as_ref().map(|p| p.display().to_string());
+    resolve_subscribe_metadata(
+        working_dir.as_deref(),
+        remote_working_dir,
+        jcode_selfdev_types::client_selfdev_requested(),
+    )
+}
 
-    let mut selfdev = jcode_selfdev_types::client_selfdev_requested();
-    if !selfdev && let Some(ref dir) = working_dir {
-        let mut current = Some(dir.as_path());
+pub(crate) fn resolve_subscribe_metadata(
+    client_working_dir: Option<&std::path::Path>,
+    remote_working_dir: Option<&str>,
+    client_selfdev_requested: bool,
+) -> (Option<String>, Option<bool>) {
+    let working_dir_str = remote_working_dir
+        .map(str::to_string)
+        .or_else(|| client_working_dir.map(|p| p.display().to_string()));
+
+    let mut selfdev = client_selfdev_requested;
+    if !selfdev && let Some(dir) = client_working_dir {
+        let mut current = Some(dir);
         while let Some(path) = current {
             if crate::build::is_jcode_repo(path) {
                 selfdev = true;
@@ -1988,7 +2051,7 @@ pub fn prewarm_focused_side_panel(
 mod tests {
     use super::{
         CacheTtlInfo, KvCacheProblemKind, connection_type_icon, detect_kv_cache_problem,
-        keyboard_enhancement_flags, scheduled_notification_text,
+        keyboard_enhancement_flags, resolve_subscribe_metadata, scheduled_notification_text,
     };
     use crate::ambient::AmbientStatus;
     use crate::tui::info_widget::AmbientWidgetData;
@@ -1999,6 +2062,7 @@ mod tests {
             remaining_secs: 240,
             ttl_secs: 300,
             is_cold: false,
+            cold_for_secs: 0,
             cached_tokens: Some(12_000),
         }
     }
@@ -2008,8 +2072,39 @@ mod tests {
             remaining_secs: 0,
             ttl_secs: 300,
             is_cold: true,
+            cold_for_secs: 90,
             cached_tokens: Some(12_000),
         }
+    }
+
+    #[test]
+    fn subscribe_metadata_prefers_remote_working_dir_override() {
+        let local_dir = std::path::Path::new("/client/project");
+        let (working_dir, selfdev) =
+            resolve_subscribe_metadata(Some(local_dir), Some("/server/project"), false);
+
+        assert_eq!(working_dir.as_deref(), Some("/server/project"));
+        assert_eq!(selfdev, None);
+    }
+
+    #[test]
+    fn subscribe_metadata_uses_client_cwd_without_override() {
+        let local_dir = std::path::Path::new("/client/project");
+        let (working_dir, _selfdev) = resolve_subscribe_metadata(Some(local_dir), None, false);
+
+        assert_eq!(working_dir.as_deref(), Some("/client/project"));
+    }
+
+    #[test]
+    fn format_compact_age_is_glanceable() {
+        use super::format_compact_age;
+        assert_eq!(format_compact_age(0), "0s");
+        assert_eq!(format_compact_age(45), "45s");
+        assert_eq!(format_compact_age(60), "1m");
+        assert_eq!(format_compact_age(3_660), "1h 1m");
+        assert_eq!(format_compact_age(7_200), "2h");
+        assert_eq!(format_compact_age(90_000), "1d 1h");
+        assert_eq!(format_compact_age(172_800), "2d");
     }
 
     #[test]

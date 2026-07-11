@@ -18,6 +18,12 @@ thread_local! {
     /// Whether Mermaid cache misses should be rendered in the background and
     /// replaced on a later redraw instead of blocking the current frame.
     static DEFER_MERMAID_RENDER_CONTEXT: Cell<bool> = const { Cell::new(false) };
+    /// Scoped diagram display mode (thread-local, set via `with_diagram_mode_scope`).
+    static DIAGRAM_MODE_SCOPE: Cell<Option<DiagramDisplayMode>> = const { Cell::new(None) };
+    /// Optional test/debug override for whether mermaid rendering is enabled.
+    /// Thread-local (not process-global) so tests that disable mermaid cannot
+    /// race other test threads that rely on the process-env default.
+    static MERMAID_RENDERING_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
 }
 
 struct ScopedReset<'a, T: Copy> {
@@ -35,6 +41,15 @@ fn with_scoped_cell_value<T: Copy, R>(cell: &Cell<T>, value: T, f: impl FnOnce()
     let prev = cell.replace(value);
     let _guard = ScopedReset { cell, prev };
     f()
+}
+
+fn set_diagram_mode_raw(mode: Option<DiagramDisplayMode>) -> Option<DiagramDisplayMode> {
+    if let Ok(mut override_mode) = DIAGRAM_MODE_OVERRIDE.lock() {
+        let prev = *override_mode;
+        *override_mode = mode;
+        return prev;
+    }
+    None
 }
 
 pub fn set_diagram_mode_override(mode: Option<DiagramDisplayMode>) {
@@ -63,6 +78,25 @@ pub(super) fn effective_markdown_spacing_mode() -> MarkdownSpacingMode {
     })
 }
 
+/// Whether mermaid diagram rendering is enabled.
+///
+/// The application supplies the effective config value, including environment
+/// overrides, through [`crate::MarkdownConfigSnapshot`]. Tests should use
+/// [`with_mermaid_rendering_override`] rather than mutating global config.
+pub fn mermaid_rendering_enabled() -> bool {
+    if let Some(enabled) = MERMAID_RENDERING_OVERRIDE.with(|ctx| ctx.get()) {
+        return enabled;
+    }
+    crate::config_snapshot().mermaid_enabled
+}
+
+/// Run `f` with mermaid rendering forced on/off (or `None` to restore the
+/// config-based default) on the current thread. Thread-local and scoped, so
+/// parallel tests cannot observe each other's override.
+pub fn with_mermaid_rendering_override<T>(enabled: Option<bool>, f: impl FnOnce() -> T) -> T {
+    MERMAID_RENDERING_OVERRIDE.with(|ctx| with_scoped_cell_value(ctx, enabled, f))
+}
+
 #[cfg(test)]
 pub(crate) fn with_markdown_spacing_mode_override<T>(
     mode: Option<MarkdownSpacingMode>,
@@ -85,6 +119,12 @@ pub fn with_deferred_mermaid_render_context<T>(f: impl FnOnce() -> T) -> T {
 
 pub(super) fn deferred_mermaid_render_context_enabled() -> bool {
     DEFER_MERMAID_RENDER_CONTEXT.with(|ctx| ctx.get())
+}
+
+/// Run `f` with `mode` as the diagram display mode for the current thread only.
+/// Unlike `set_diagram_mode_override`, this never mutates process-global state.
+pub fn with_diagram_mode_scope<T>(mode: DiagramDisplayMode, f: impl FnOnce() -> T) -> T {
+    DIAGRAM_MODE_SCOPE.with(|ctx| with_scoped_cell_value(ctx, Some(mode), f))
 }
 
 pub fn set_center_code_blocks(centered: bool) {

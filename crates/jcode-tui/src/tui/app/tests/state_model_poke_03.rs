@@ -37,8 +37,8 @@ fn test_model_picker_preview_arrow_keys_navigate() {
     assert!(picker.preview, "should remain in preview mode");
     assert_eq!(picker.selected, initial_selected);
 
-    // Input should be preserved
-    assert_eq!(app.input(), "/model");
+    // Opening the preview should place the cursor in the model filter argument.
+    assert_eq!(app.input(), "/model ");
 }
 
 #[test]
@@ -1107,12 +1107,14 @@ fn test_model_picker_state_space_preserves_provider_labels_after_route_hydration
         );
     }
 
+    // Models with reasoning-effort support expand into effort rows (issue
+    // #458); the hydrated route must be preserved on each variant.
     assert_eq!(
-        routes_by_model.get("gpt-5.5"),
+        routes_by_model.get("gpt-5.5 (high)"),
         Some(&("OpenAI".to_string(), "openai-oauth".to_string()))
     );
     assert_eq!(
-        routes_by_model.get("claude-opus-4-6"),
+        routes_by_model.get("claude-opus-4-6 (high)"),
         Some(&("Anthropic".to_string(), "claude-oauth".to_string()))
     );
     assert_eq!(
@@ -1120,7 +1122,7 @@ fn test_model_picker_state_space_preserves_provider_labels_after_route_hydration
         Some(&("Chutes".to_string(), "openai-compatible:chutes".to_string()))
     );
     assert_eq!(
-        routes_by_model.get("deepseek/deepseek-v4-pro"),
+        routes_by_model.get("deepseek/deepseek-v4-pro (high)"),
         Some(&("auto".to_string(), "openrouter".to_string()))
     );
 
@@ -1243,6 +1245,83 @@ fn test_login_completed_spawns_auth_refresh_when_runtime_is_available() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn test_model_picker_waits_for_async_post_login_catalog_activation() {
+    ensure_test_jcode_home_if_unset();
+    clear_persisted_test_ui_state();
+    crate::tui::ui::clear_test_render_state_for_tests();
+
+    let logged_in = StdArc::new(StdMutex::new(false));
+    let provider: Arc<dyn Provider> = Arc::new(AuthRefreshingMockProvider {
+        logged_in: StdArc::clone(&logged_in),
+    });
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let registry = rt.block_on(crate::tool::Registry::new(provider.clone()));
+    let mut app = App::new_for_test_harness(provider, registry);
+    let mut bus_rx = crate::bus::Bus::global().subscribe();
+
+    {
+        let _guard = rt.enter();
+        app.handle_login_completed(crate::bus::LoginCompleted {
+            provider: "auto-import".to_string(),
+            success: true,
+            message: "Imported existing logins".to_string(),
+        });
+        app.open_model_picker();
+    }
+
+    let picker = app
+        .inline_interactive_state
+        .as_ref()
+        .expect("loading model picker should be open");
+    assert_eq!(picker.entries.len(), 1);
+    assert!(
+        picker.entries[0].options[0]
+            .detail
+            .contains("updating model list")
+    );
+    assert!(
+        !picker.entries.iter().any(|entry| entry.name == "gpt-5.4"),
+        "the stale pre-import catalog must not be presented as ready"
+    );
+
+    let ready = rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let event = bus_rx.recv().await.expect("auth catalog event");
+                if matches!(event, crate::bus::BusEvent::AuthCatalogRefreshReady) {
+                    break event;
+                }
+            }
+        })
+        .await
+        .expect("post-login activation should finish")
+    });
+    assert!(crate::tui::app::local::handle_bus_event(
+        &mut app,
+        Ok(ready)
+    ));
+    assert!(*logged_in.lock().unwrap());
+    wait_for_model_picker_load(&mut app);
+
+    let picker = app
+        .inline_interactive_state
+        .as_ref()
+        .expect("model picker should refresh in place");
+    assert!(
+        picker
+            .entries
+            .iter()
+            .any(|entry| entry.name == "claude-opus-4.6")
+    );
+    assert!(
+        picker
+            .entries
+            .iter()
+            .any(|entry| entry.name == "grok-code-fast-1")
+    );
 }
 
 #[test]
@@ -1783,6 +1862,93 @@ fn test_login_picker_preview_enter_starts_login_flow() {
 }
 
 #[test]
+fn test_typing_login_auto_inserts_filter_space() {
+    let mut app = create_test_app();
+
+    for c in "/login".chars() {
+        app.handle_key(KeyCode::Char(c), KeyModifiers::empty())
+            .unwrap();
+    }
+
+    // The trailing space arms provider filtering immediately, so the next
+    // keystrokes filter the login picker instead of extending the command.
+    assert_eq!(app.input(), "/login ");
+    let picker = app
+        .inline_interactive_state
+        .as_ref()
+        .expect("login picker preview should be open");
+    assert!(picker.preview);
+    assert_eq!(picker.kind, crate::tui::PickerKind::Login);
+    assert_eq!(picker.filter, "");
+
+    // A habitual manually-typed space is swallowed instead of doubling up.
+    app.handle_key(KeyCode::Char(' '), KeyModifiers::empty())
+        .unwrap();
+    assert_eq!(app.input(), "/login ");
+
+    for c in "za".chars() {
+        app.handle_key(KeyCode::Char(c), KeyModifiers::empty())
+            .unwrap();
+    }
+    assert_eq!(app.input(), "/login za");
+    let picker = app
+        .inline_interactive_state
+        .as_ref()
+        .expect("login picker preview should stay open");
+    assert_eq!(picker.filter, "za");
+}
+
+#[test]
+fn test_login_preview_enter_without_selection_focuses_picker_instead_of_logging_in() {
+    let mut app = create_test_app();
+
+    for c in "/login".chars() {
+        app.handle_key(KeyCode::Char(c), KeyModifiers::empty())
+            .unwrap();
+    }
+    app.handle_key(KeyCode::Enter, KeyModifiers::empty())
+        .unwrap();
+
+    // No filter and no explicit selection: Enter must not launch the first
+    // provider's login flow. It focuses the picker for a deliberate choice.
+    let picker = app
+        .inline_interactive_state
+        .as_ref()
+        .expect("login picker should stay open after bare Enter");
+    assert!(!picker.preview, "picker should be focused (not preview)");
+    assert_eq!(picker.kind, crate::tui::PickerKind::Login);
+    assert!(app.pending_login.is_none());
+    assert_eq!(app.input(), "");
+}
+
+#[test]
+fn test_login_preview_enter_after_navigation_starts_selected_login() {
+    let mut app = create_test_app();
+
+    for c in "/login".chars() {
+        app.handle_key(KeyCode::Char(c), KeyModifiers::empty())
+            .unwrap();
+    }
+    // Explicit navigation makes the selection deliberate, so Enter activates.
+    // Navigate to the Anthropic API key row (an offline api-key prompt flow).
+    app.handle_key(KeyCode::Down, KeyModifiers::empty())
+        .unwrap();
+    app.handle_key(KeyCode::Down, KeyModifiers::empty())
+        .unwrap();
+    app.handle_key(KeyCode::Enter, KeyModifiers::empty())
+        .unwrap();
+
+    assert!(
+        app.inline_interactive_state.is_none(),
+        "picker should close after selecting a provider"
+    );
+    assert!(
+        app.pending_login.is_some(),
+        "selected provider login flow should start"
+    );
+}
+
+#[test]
 fn test_subagent_model_command_sets_and_resets_session_preference() {
     let mut app = create_test_app();
 
@@ -1862,6 +2028,7 @@ fn test_poke_arms_auto_poke_until_todos_are_done() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Finish the remaining task".to_string(),
@@ -1871,6 +2038,7 @@ fn test_poke_arms_auto_poke_until_todos_are_done() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -1893,6 +2061,7 @@ fn test_poke_status_reports_current_state() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Finish the remaining task".to_string(),
@@ -1902,6 +2071,7 @@ fn test_poke_status_reports_current_state() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -1946,6 +2116,7 @@ fn test_poke_off_disarms_and_clears_queued_followup() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Keep going".to_string(),
@@ -1955,6 +2126,7 @@ fn test_poke_off_disarms_and_clears_queued_followup() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -1994,6 +2166,7 @@ fn test_poke_queues_when_turn_is_in_progress() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Finish the remaining task".to_string(),
@@ -2003,6 +2176,7 @@ fn test_poke_queues_when_turn_is_in_progress() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -2029,6 +2203,7 @@ fn test_poke_queues_when_turn_is_in_progress() {
             &app.session.id,
             &[
                 crate::todo::TodoItem {
+                    active_form: None,
                     group: None,
                     id: "todo-1".to_string(),
                     content: "Finish the remaining task".to_string(),
@@ -2038,8 +2213,10 @@ fn test_poke_queues_when_turn_is_in_progress() {
                     assigned_to: None,
                     confidence: None,
                     completion_confidence: None,
+                    confidence_history: Vec::new(),
                 },
                 crate::todo::TodoItem {
+                    active_form: None,
                     group: None,
                     id: "todo-2".to_string(),
                     content: "Pick up the newly discovered task".to_string(),
@@ -2049,6 +2226,7 @@ fn test_poke_queues_when_turn_is_in_progress() {
                     assigned_to: None,
                     confidence: None,
                     completion_confidence: None,
+                    confidence_history: Vec::new(),
                 },
             ],
         )
@@ -2098,6 +2276,7 @@ fn test_finish_turn_auto_pokes_again_when_todos_remain() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Keep going".to_string(),
@@ -2107,6 +2286,7 @@ fn test_finish_turn_auto_pokes_again_when_todos_remain() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -2129,6 +2309,7 @@ fn test_finish_turn_auto_poke_queues_confidence_summary_when_todos_done() {
             &app.session.id,
             &[
                 crate::todo::TodoItem {
+                    active_form: None,
                     group: None,
                     id: "todo-1".to_string(),
                     content: "Finish risky provider path".to_string(),
@@ -2138,8 +2319,10 @@ fn test_finish_turn_auto_poke_queues_confidence_summary_when_todos_done() {
                     assigned_to: None,
                     confidence: Some(70),
                     completion_confidence: Some(80),
+                    confidence_history: Vec::new(),
                 },
                 crate::todo::TodoItem {
+                    active_form: None,
                     group: None,
                     id: "todo-2".to_string(),
                     content: "Document straightforward behavior".to_string(),
@@ -2149,6 +2332,7 @@ fn test_finish_turn_auto_poke_queues_confidence_summary_when_todos_done() {
                     assigned_to: None,
                     confidence: Some(90),
                     completion_confidence: Some(95),
+                    confidence_history: Vec::new(),
                 },
             ],
         )
@@ -2174,11 +2358,18 @@ fn test_finish_turn_auto_poke_queues_confidence_summary_when_todos_done() {
         assert!(!summary.contains("Finish risky provider path"));
         assert!(!summary.contains("Confidence meets the threshold"));
         assert!(summary.contains("1 completed todo is below the 90% confidence threshold"));
-        assert!(summary.contains("\n- Suggested action: validate or test before finalizing."));
+        // Reference the shared prompt constant so this test cannot drift when
+        // the guidance wording changes.
+        assert!(summary.contains(&format!(
+            "\n- {}",
+            crate::prompt::TODO_CONFIDENCE_NEEDS_VALIDATION_PROMPT.trim()
+        )));
         assert!(
             app.display_messages()
                 .iter()
-                .any(|msg| msg.content.contains("queued hidden confidence reminder"))
+                .any(|msg| msg
+                    .content
+                    .contains("Todos complete. Completion confidence: 86%."))
         );
     });
 }
@@ -2204,6 +2395,7 @@ fn test_finish_turn_without_auto_poke_does_not_queue_confidence_summary() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Done without poke".to_string(),
@@ -2213,6 +2405,7 @@ fn test_finish_turn_without_auto_poke_does_not_queue_confidence_summary() {
                 assigned_to: None,
                 confidence: Some(90),
                 completion_confidence: Some(90),
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -2238,6 +2431,7 @@ fn test_finish_turn_auto_poke_preserves_visible_turn_started() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Keep going".to_string(),
@@ -2247,6 +2441,7 @@ fn test_finish_turn_auto_poke_preserves_visible_turn_started() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");

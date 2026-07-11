@@ -16,6 +16,7 @@ fn test_finish_turn_does_not_duplicate_existing_poke_followup() {
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Keep going".to_string(),
@@ -25,6 +26,7 @@ fn test_finish_turn_does_not_duplicate_existing_poke_followup() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -716,6 +718,71 @@ fn test_available_models_updated_event_surfaces_authed_provider_in_remote_model_
     );
     assert!(copilot_entry.options.iter().any(|route| {
         route.provider == "Copilot" && route.api_method == "copilot" && route.available
+    }));
+}
+
+#[test]
+fn test_remote_model_picker_replaces_post_login_loading_state_in_place() {
+    let mut app = create_test_app();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let mut remote = crate::tui::backend::RemoteConnection::dummy();
+
+    app.is_remote = true;
+    app.remote_provider_model = Some("gpt-5.4".to_string());
+    app.remote_available_entries = vec!["gpt-5.4".to_string()];
+    app.remote_model_options = vec![crate::provider::ModelRoute {
+        model: "gpt-5.4".to_string(),
+        provider: "OpenAI".to_string(),
+        api_method: "openai-oauth".to_string(),
+        available: true,
+        detail: String::new(),
+        cheapness: None,
+    }];
+    app.auth_catalog_refresh_pending = true;
+    app.open_model_picker();
+
+    let picker = app.inline_interactive_state.as_ref().unwrap();
+    assert!(
+        picker.entries[0].options[0]
+            .detail
+            .contains("updating model list")
+    );
+
+    app.handle_server_event(
+        crate::protocol::ServerEvent::AvailableModelsUpdated {
+            provider_name: Some("Anthropic".to_string()),
+            provider_model: Some("claude-opus-4.6".to_string()),
+            available_models: vec!["claude-opus-4.6".to_string()],
+            available_model_routes: vec![crate::provider::ModelRoute {
+                model: "claude-opus-4.6".to_string(),
+                provider: "Anthropic".to_string(),
+                api_method: "anthropic-oauth".to_string(),
+                available: true,
+                detail: String::new(),
+                cheapness: None,
+            }],
+        },
+        &mut remote,
+    );
+
+    assert!(!app.auth_catalog_refresh_pending);
+    let picker = app
+        .inline_interactive_state
+        .as_ref()
+        .expect("server catalog should replace loading picker");
+    assert!(
+        picker
+            .entries
+            .iter()
+            .any(|entry| entry.name.starts_with("claude-opus-4.6")),
+        "fresh Anthropic model should replace the loading state"
+    );
+    assert!(!picker.entries.iter().any(|entry| {
+        entry
+            .options
+            .iter()
+            .any(|option| option.detail.contains("updating model list"))
     }));
 }
 

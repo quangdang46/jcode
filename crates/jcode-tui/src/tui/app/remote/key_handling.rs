@@ -391,6 +391,10 @@ async fn handle_remote_key_internal(
         app.toggle_typing_scroll_lock();
         return Ok(());
     }
+    if app.toggle_keys.todo_card.matches(code, modifiers) {
+        app.toggle_todo_card();
+        return Ok(());
+    }
     if app.centered_toggle_keys.matches(code, modifiers) {
         app.toggle_centered_mode();
         return Ok(());
@@ -881,6 +885,10 @@ async fn handle_remote_key_internal(
         KeyCode::Left => {
             if app.cursor_pos > 0 {
                 app.cursor_pos = core::prev_char_boundary(&app.input, app.cursor_pos);
+            } else {
+                // Opt-in: Left on an empty input opens the active sessions
+                // manager (no-op unless display.active_sessions_manager).
+                app.maybe_open_active_sessions_on_left();
             }
         }
         KeyCode::Right => {
@@ -1717,7 +1725,10 @@ async fn handle_remote_key_internal(
                     || trimmed == "/observe on"
                     || trimmed == "/observe off"
                     || trimmed == "/observe status"
+                    || trimmed == "/todo"
                     || trimmed == "/todos"
+                    || trimmed == "/todos card"
+                    || trimmed == "/todos panel"
                     || trimmed == "/todos on"
                     || trimmed == "/todos off"
                     || trimmed == "/todos status"
@@ -1798,6 +1809,11 @@ async fn handle_remote_key_internal(
                 if trimmed == "/resume" || trimmed == "/sessions" || trimmed == "/session" {
                     app.open_session_picker();
                     app.hint_resume_shortcut();
+                    return Ok(());
+                }
+
+                if trimmed == "/active" {
+                    app.open_active_sessions_picker();
                     return Ok(());
                 }
 

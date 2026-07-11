@@ -852,6 +852,7 @@ fn test_create_transfer_session_from_parent_copies_todos_and_uses_compacted_cont
         crate::todo::save_todos(
             &app.session.id,
             &[crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "Carry this forward".to_string(),
@@ -861,6 +862,7 @@ fn test_create_transfer_session_from_parent_copies_todos_and_uses_compacted_cont
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             }],
         )
         .expect("save todos");
@@ -1016,6 +1018,7 @@ fn test_escape_interrupt_disables_auto_poke_while_processing() {
     app.queued_messages
         .push(super::commands::build_poke_message(&[
             crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 id: "todo-1".to_string(),
                 content: "keep going".to_string(),
@@ -1025,6 +1028,7 @@ fn test_escape_interrupt_disables_auto_poke_while_processing() {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             },
         ]));
 

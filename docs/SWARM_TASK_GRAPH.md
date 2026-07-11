@@ -1,6 +1,9 @@
 # Swarm as a Task DAG (Design)
 
-Status: Proposed (supersedes the agent-first framing in `SWARM_ARCHITECTURE.md`)
+Status: Being implemented (supersedes the agent-first framing in
+`SWARM_ARCHITECTURE.md`). The DAG engine, deep/light modes, gates, growth
+mechanics, and comm migration steps 1-2 (artifact dataflow, subtree-scoped
+broadcast) are live; channel/shared-context deprecation (steps 3-4) is pending.
 
 This document captures the planned reframe of the swarm module from an
 agent-centric model into a **task DAG (directed acyclic graph)**. The DAG becomes
@@ -267,6 +270,36 @@ So comprehensiveness now means two things, both enforced as gates: did we cover
 the surface (critique), and does it actually work (verify). Both convert
 gaps/failures into new nodes.
 
+### 6.4 Implemented enforcement (2026-07: growth mechanics)
+
+The pressures above are implemented as hard engine rules in `jcode-plan`'s
+`dag` module, not prompt requests:
+
+- **Root gate (plan-wide audit).** Every deep-mode `seed` auto-inserts a
+  parent-less gate (`plan::gate`) depending on every root-level node. A flat
+  seed whose nodes all execute atomically still cannot reach a terminal state
+  without a final adversarial pass, and that pass can `inject_gap` new
+  top-level nodes (growth at the top of the tree). Re-seeding widens the root
+  gate's scope and re-opens it if it had already passed.
+- **Enumerated gate coverage.** A passing deep gate artifact must address
+  EVERY done node in its audit scope by id (scope = the gate's non-gate
+  `depends_on`, one rule for composite and root gates), up to an enumeration
+  cap of 20. Above the cap, enumeration relaxes only for HIGH-confidence
+  nodes; every medium/low/unparseable-confidence node must still be addressed
+  by id. "All good,
+  no gaps" is structurally rejected (`UncoveredSiblings`). A stale-scope rule
+  (`StaleGateScope`) rejects a pass when nodes entered the scope after the
+  gate was dispatched.
+- **Artifact-or-nothing turn ends.** Deep mode has no auto-complete: a worker
+  turn that ends with its node still running gets the node re-queued once to a
+  fresh worker (`no_artifact_requeues`) and failed on repeat. The only ways a
+  deep node closes are `expand_node` (decompose) or `complete_node` (validated
+  artifact).
+- **Growth accounting.** Every node records an origin (`seed`/`expand`/`gap`/
+  `gate`); `PlanGraphStatus` carries `seeded_count`/`grown_count` and
+  `plan_status`/`run_plan` print a growth line, so a deep plan that never
+  outgrew its seed is visibly under-explored.
+
 ---
 
 ## 7. Bias budget: what is fixed vs emergent
@@ -389,10 +422,11 @@ much and the wrong shape. The rework is **by subtraction, not addition**.
    already auto-routes among three of them. The codebase already carries an
    action-synonym normalization layer because models keep inventing verbs; that is
    a smell that the surface is too large. More actions means more model error.
-3. **Broadcasts do not scale to the member cap.** `handle_comm_share` and
-   broadcast fan out to *every* session in the swarm. At the 1000-member cap
-   (section 10), one broadcast is a 1000-way notification storm. The human-chat
-   model assumes a small room; the DAG model assumes a large pool.
+3. **Broadcasts must not scale to the member cap.** Whole-swarm fanout at the
+   1000-member cap (section 10) would be a 1000-way notification storm per send.
+   This is why broadcast-style sends are subtree-scoped (migration step 2,
+   implemented in `handle_comm_message`/`handle_comm_share`): a sender reaches
+   only its spawned subtree, and only the coordinator retains whole-swarm reach.
 
 ### The two-tier target model
 Keep two tiers and drop the middle:
@@ -428,11 +462,13 @@ member cap, and shrinks the error-prone tool surface.
 ### Staged migration (do not rip out up front)
 Cutting channels/shared-context is a real behavior change for existing swarm flows.
 Stage it:
-1. Add artifact dataflow first (additive, low risk): completion artifacts flow to
-   dependents and hydrate their input.
-2. Scope broadcast to the subtree; keep whole-swarm broadcast only as a
-   coordinator escape hatch.
-3. Migrate existing flows off channels/shared-context.
+1. **Done.** Artifact dataflow: completion artifacts flow to dependents and
+   hydrate their input.
+2. **Done.** Broadcast scoped to the sender's spawned subtree (including the
+   no-subscriber channel fallback and shared-context notifications); whole-swarm
+   broadcast remains only as a coordinator escape hatch.
+3. Migrate existing flows off channels/shared-context (tool schema now
+   discourages them).
 4. Deprecate, then remove, the redundant chat primitives once flows have migrated.
 
 ---

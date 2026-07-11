@@ -11,6 +11,37 @@ fn test_code_block() {
 }
 
 #[test]
+fn test_common_latex_containers_render_as_terminal_math() {
+    let cases = [
+        r"Inline \(\alpha_2 + x^2\).",
+        r"\[\frac{x+1}{y}\]",
+        "```math\n\\frac{x+1}{y}\n```",
+        "```latex\n\\begin{bmatrix}a & b \\\\ c & d\\end{bmatrix}\n```",
+        r"\begin{align*}x &= 1 \\ y &= 2\end{align*}",
+    ];
+
+    for markdown in cases {
+        let full = lines_to_string(&render_markdown_with_width(markdown, Some(80)));
+        let lazy = lines_to_string(&render_markdown_lazy(markdown, Some(80), 0..100));
+        assert_eq!(lazy, full, "{markdown}");
+        assert!(!full.contains("\\frac"), "{markdown}: {full}");
+        assert!(!full.contains("\\begin"), "{markdown}: {full}");
+        if !markdown.starts_with("Inline") {
+            assert!(full.contains("┌─ math"), "{markdown}: {full}");
+        }
+    }
+}
+
+#[test]
+fn test_latex_syntax_inside_generic_code_remains_literal() {
+    let markdown = "Inline `\\(x^2\\)`\n\n```rust\nlet formula = r\"\\[x^2\\]\";\n```";
+    let rendered = lines_to_string(&render_markdown(markdown));
+    assert!(rendered.contains("\\(x^2\\)"), "{rendered}");
+    assert!(rendered.contains("\\[x^2\\]"), "{rendered}");
+    assert!(!rendered.contains("┌─ math"), "{rendered}");
+}
+
+#[test]
 fn test_extract_copy_targets_from_rendered_lines_for_code_block() {
     let lines = render_markdown("before\n\n```rust\nfn main() {}\nprintln!(\"hi\");\n```\n\nafter");
     let targets = extract_copy_targets_from_rendered_lines(&lines);
@@ -26,6 +57,56 @@ fn test_extract_copy_targets_from_rendered_lines_for_code_block() {
     assert_eq!(target.content, "fn main() {}\nprintln!(\"hi\");");
     assert_eq!(target.start_raw_line, target.badge_raw_line);
     assert!(target.end_raw_line > target.start_raw_line);
+}
+
+#[test]
+fn test_extract_copy_targets_from_rendered_lines_for_blockquote() {
+    let lines = render_markdown("before\n\n> quoted line\n> second line\n\nafter");
+    let targets = extract_copy_targets_from_rendered_lines(&lines);
+
+    assert_eq!(targets.len(), 1);
+    let target = &targets[0];
+    assert_eq!(target.kind, CopyTargetKind::Blockquote);
+    assert_eq!(target.content, "quoted line\nsecond line");
+    assert_eq!(target.start_raw_line, target.badge_raw_line);
+    assert!(target.end_raw_line > target.start_raw_line);
+}
+
+#[test]
+fn test_extract_copy_targets_nested_blockquote_strips_all_gutters() {
+    let lines = render_markdown("> outer\n>> inner");
+    let targets = extract_copy_targets_from_rendered_lines(&lines);
+
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].kind, CopyTargetKind::Blockquote);
+    assert_eq!(targets[0].content, "outer\n\ninner");
+}
+
+#[test]
+fn test_extract_copy_targets_blockquote_and_code_block_are_separate() {
+    let lines = render_markdown("> quoted\n\n```rust\nfn main() {}\n```");
+    let targets = extract_copy_targets_from_rendered_lines(&lines);
+
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[0].kind, CopyTargetKind::Blockquote);
+    assert_eq!(targets[0].content, "quoted");
+    assert_eq!(
+        targets[1].kind,
+        CopyTargetKind::CodeBlock {
+            language: Some("rust".to_string())
+        }
+    );
+}
+
+#[test]
+fn test_extract_copy_targets_table_rows_are_not_blockquotes() {
+    let lines = render_markdown("| A | B |\n| - | - |\n| 1 | 2 |");
+    let targets = extract_copy_targets_from_rendered_lines(&lines);
+
+    assert!(
+        targets.iter().all(|t| t.kind != CopyTargetKind::Blockquote),
+        "table separators must not be detected as blockquotes: {targets:?}"
+    );
 }
 
 #[test]
@@ -178,11 +259,31 @@ fn test_mixed_code_and_mermaid() {
     );
 }
 
+#[cfg(feature = "mermaid-renderer")]
+#[test]
+fn test_mermaid_renders_inline_even_in_pinned_diagram_mode() {
+    // Regression: pinned/margin diagram modes must not replace the inline
+    // diagram with a "see sidebar" text stub. The transcript always renders
+    // the diagram (or its placeholder) inline; pinned mode only *adds* the
+    // dedicated pane.
+    let md = "```mermaid\nflowchart LR\n    A --> B\n```";
+    set_diagram_mode_override(Some(DiagramDisplayMode::Pinned));
+    let lines = render_markdown(md);
+    set_diagram_mode_override(None);
+    let text = lines_to_string(&lines);
+
+    assert!(
+        !text.contains("sidebar"),
+        "Pinned mode must not emit a sidebar-only stub in the transcript: {text}"
+    );
+}
+
 #[test]
 fn test_inline_math_render() {
-    let lines = render_markdown("Area is $a^2$.");
+    let lines = render_markdown(r"Area is $\pi a^2$.");
     let rendered = lines_to_string(&lines);
-    assert!(rendered.contains("$a^2$"));
+    assert!(rendered.contains("πa²"), "{rendered}");
+    assert!(!rendered.contains(r"\pi"), "{rendered}");
 }
 
 #[test]
@@ -190,8 +291,40 @@ fn test_display_math_render() {
     let lines = render_markdown("$$\nE = mc^2\n$$");
     let rendered = lines_to_string(&lines);
     assert!(rendered.contains("┌─ math"));
-    assert!(rendered.contains("E = mc^2"));
+    assert!(rendered.contains("E = mc²"), "{rendered}");
     assert!(rendered.contains("└─"));
+}
+
+#[test]
+fn test_display_math_renders_fraction_and_matrix_layouts() {
+    let fraction = lines_to_string(&render_markdown(r"$$\frac{x+1}{y}$$"));
+    assert!(fraction.contains("x+1"), "{fraction}");
+    assert!(fraction.contains("─────"), "{fraction}");
+    assert!(fraction.contains(" y "), "{fraction}");
+
+    let matrix = lines_to_string(&render_markdown(
+        r"$$\begin{bmatrix}a & b \\ c & d\end{bmatrix}$$",
+    ));
+    assert!(matrix.contains("⎡ a  b ⎤"), "{matrix}");
+    assert!(matrix.contains("⎣ c  d ⎦"), "{matrix}");
+}
+
+#[test]
+fn test_unknown_latex_command_remains_visible() {
+    let rendered = lines_to_string(&render_markdown(r"Value: $\custom{x}$"));
+    assert!(rendered.contains(r"\customx"), "{rendered}");
+}
+
+#[test]
+fn test_inline_math_renders_inside_table_cells() {
+    let rendered = lines_to_string(&render_markdown(
+        "| Formula | Value |\n| - | - |\n| `$x$` | $\\alpha_2$ |",
+    ));
+    assert!(
+        rendered.contains("$x$"),
+        "code span must remain literal: {rendered}"
+    );
+    assert!(rendered.contains("α₂"), "math cell must render: {rendered}");
 }
 
 #[test]
@@ -267,7 +400,7 @@ fn test_structured_markdown_lines_force_left_alignment() {
         "─┼─",
         "1 │ 2",
         "┌─ math",
-        "│ E = mc^2",
+        "│ E = mc²",
         "└─",
         "────",
         "<div>html</div>",
@@ -782,7 +915,10 @@ fn test_reasoning_summary_line_markup_folds_to_single_dim_italic_trace() {
         "expected bare summary markup, got: {one:?}"
     );
     let none = crate::reasoning_summary_line_markup(0);
-    assert!(none.contains(&format!("*{0}▸ thought{0}*", sentinel)), "{none:?}");
+    assert!(
+        none.contains(&format!("*{0}▸ thought{0}*", sentinel)),
+        "{none:?}"
+    );
 
     // The summary line renders dim + italic with no sentinel leaking into text.
     let lines = render_markdown(&many);
@@ -801,7 +937,12 @@ fn test_reasoning_summary_line_markup_folds_to_single_dim_italic_trace() {
             if span.content.contains('▸') {
                 saw_marker = true;
             }
-            assert_eq!(span.style.fg, Some(dim), "summary span not dim: {:?}", span.content);
+            assert_eq!(
+                span.style.fg,
+                Some(dim),
+                "summary span not dim: {:?}",
+                span.content
+            );
             assert!(
                 span.style.add_modifier.contains(Modifier::ITALIC),
                 "summary span not italic: {:?}",

@@ -109,6 +109,7 @@ mod tests {
 
     fn item(content: &str, status: &str) -> TodoItem {
         TodoItem {
+            active_form: None,
             content: content.into(),
             status: status.into(),
             ..Default::default()

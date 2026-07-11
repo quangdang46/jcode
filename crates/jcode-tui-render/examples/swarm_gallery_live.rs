@@ -12,8 +12,8 @@
 //! Controls:
 //!   q / Esc      quit
 //!   + / -        more / fewer agents
-//!   [ / ]        shrink / grow the gallery band (the max_pct knob)
-//!   space        pause / resume the animation
+//!     [ / ]        shrink / grow the gallery band (the max_pct knob)
+//!     space        pause / resume the animation
 
 use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
@@ -98,7 +98,9 @@ fn workers_to_members(workers: &[MockWorker]) -> Vec<GalleryMember> {
             body.push(format!("· {} ago", humanize_age(w.age_secs())));
             GalleryMember {
                 label: w.name.clone(),
+                icon: None,
                 status: w.status.clone(),
+                task: None,
                 role: w.role.map(str::to_string),
                 body,
                 sort_key: w.name.clone(),
@@ -174,7 +176,7 @@ fn make_workers(n: usize) -> Vec<MockWorker> {
         ),
         (
             "packager",
-            Some("worktree_manager"),
+            None,
             vec![
                 "Preparing the release worktree.",
                 "Bumping version.",

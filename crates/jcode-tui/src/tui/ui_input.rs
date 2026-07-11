@@ -1,5 +1,5 @@
 use super::inline_interactive_ui::format_elapsed;
-use super::tools_ui::{get_tool_summary, summarize_batch_running_tools_compact};
+use super::tools_ui::{get_tool_activity_detail, summarize_batch_running_tools_compact};
 use super::visual_debug::{self, FrameCaptureBuilder};
 use super::{ProcessingStatus, TuiState};
 use crate::message::ConnectionPhase;
@@ -8,7 +8,9 @@ use crate::tui::color_support::rgb;
 use crate::tui::detect_kv_cache_problem;
 use crate::tui::info_widget::occasional_status_tip;
 use crate::tui::layout_utils;
+use crate::tui::selection_highlight::highlight_line_selection;
 use crate::tui::session_facts;
+use jcode_keywords::visual::{KeywordHighlight, compute_highlights};
 use jcode_tui_style::theme::animated_tool_color as theme_animated_tool_color;
 use jcode_tui_style::theme::{
     accent_color, ai_color, asap_color, dim_color, pending_color, queued_color,
@@ -660,6 +662,41 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
 
     // Idle session facts (context bar + provider) are pinned to the right edge
     // so they read like a status readout rather than left-flush body text.
+    /// Always-visible permission-mode pill for the Claude Code-style status line.
+    fn status_line_mode_spans() -> Vec<Span<'static>> {
+        let mode_str = crate::dcg_bridge::mode_to_str(crate::dcg_bridge::current_mode());
+        let perm_label = match mode_str {
+            "bypass-permissions" => "bypass permissions on",
+            "default" => "default",
+            "accept-edits" => "accept edits on",
+            "plan" => "plan on",
+            "auto" => "auto",
+            "dont-ask" => "don't ask on",
+            _ => "default",
+        };
+        let mode_icon = match mode_str {
+            "bypass-permissions" | "accept-edits" | "auto" => "⏵⏵",
+            "default" | "dont-ask" => "🔒",
+            "plan" => "⏸",
+            _ => "🔒",
+        };
+        let color = rgb(200, 200, 210);
+        let dimmed = rgb(100, 100, 110);
+        let mut spans = vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(mode_icon, Style::default().fg(color)),
+            Span::styled(" ", Style::default()),
+            Span::styled(perm_label, Style::default().fg(color)),
+        ];
+        if mode_str != "default" {
+            spans.push(Span::styled(
+                " (shift+tab to cycle)",
+                Style::default().fg(dimmed),
+            ));
+        }
+        spans
+    }
+
     let mut right_align_facts = false;
     let line = if let Some(build_progress) = crate::build::read_build_progress() {
         let spinner = super::activity_indicator(elapsed, 12.5);
@@ -699,7 +736,7 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
 
         match app.status() {
             ProcessingStatus::Idle => {
-                // Show permission mode pill when not in default/auto mode
+                // Show permission mode pill when not in default/auto mode (dev redesign)
                 let perm_mode = crate::dcg_bridge::mode_to_str(crate::dcg_bridge::current_mode());
                 let mode = composer_mode(app.input(), app.is_remote_mode());
                 if !perm_mode.is_empty() && !mode.is_shell()
@@ -710,17 +747,17 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                         Style::default().fg(rgb(120, 200, 255)),
                     ))
                 } else {
-                    Line::from("")
+                    Line::from(status_line_mode_spans())
                 }
             }
             ProcessingStatus::Sending => {
-                let mut spans = vec![
-                    Span::styled(spinner, Style::default().fg(ai_color())),
-                    Span::styled(
-                        format!(" sending… {}", format_elapsed(elapsed)),
-                        Style::default().fg(dim_color()),
-                    ),
-                ];
+                let mut spans = status_line_mode_spans();
+                spans.push(Span::styled(" · ", Style::default().fg(dim_color())));
+                spans.push(Span::styled(spinner, Style::default().fg(ai_color())));
+                spans.push(Span::styled(
+                    format!(" sending… {}", format_elapsed(elapsed)),
+                    Style::default().fg(dim_color()),
+                ));
                 push_queued_suffix(&mut spans, &queued_suffix);
                 Line::from(spans)
             }
@@ -747,20 +784,20 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                     }
                     _ => dim_color(),
                 };
-                let mut spans = vec![
-                    Span::styled(spinner, Style::default().fg(ai_color())),
-                    Span::styled(label, Style::default().fg(label_color)),
-                ];
+                let mut spans = status_line_mode_spans();
+                spans.push(Span::styled(" · ", Style::default().fg(dim_color())));
+                spans.push(Span::styled(spinner, Style::default().fg(ai_color())));
+                spans.push(Span::styled(label, Style::default().fg(label_color)));
                 push_queued_suffix(&mut spans, &queued_suffix);
                 Line::from(spans)
             }
             ProcessingStatus::Thinking(_start) => {
                 let mut label = format!(" thinking… {}", format_elapsed(elapsed));
                 append_transport_context(&mut label, app);
-                let mut spans = vec![
-                    Span::styled(spinner, Style::default().fg(ai_color())),
-                    Span::styled(label, Style::default().fg(dim_color())),
-                ];
+                let mut spans = status_line_mode_spans();
+                spans.push(Span::styled(" · ", Style::default().fg(dim_color())));
+                spans.push(Span::styled(spinner, Style::default().fg(ai_color())));
+                spans.push(Span::styled(label, Style::default().fg(dim_color())));
                 push_queued_suffix(&mut spans, &queued_suffix);
                 Line::from(spans)
             }
@@ -793,27 +830,29 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                     };
                     status_text = format!("⚠ {} cache miss · {}", miss_str, status_text);
                 }
-                let spans = streaming_status_spans(
+                let mut spans = status_line_mode_spans();
+                spans.push(Span::styled(" · ", Style::default().fg(dim_color())));
+                spans.extend(streaming_status_spans(
                     spinner,
                     status_text,
                     stream_message_ended,
                     kv_cache_problem.is_some(),
                     &queued_suffix,
-                );
+                ));
                 Line::from(spans)
             }
             ProcessingStatus::WaitingForNetwork { listener } => {
-                let mut spans = vec![
-                    Span::styled("↻ ", Style::default().fg(rgb(255, 193, 7))),
-                    Span::styled(
-                        format!(
-                            "network disconnected, waiting to retry · {} · {}",
-                            listener,
-                            format_elapsed(elapsed)
-                        ),
-                        Style::default().fg(rgb(255, 193, 7)),
+                let mut spans = status_line_mode_spans();
+                spans.push(Span::styled(" · ", Style::default().fg(dim_color())));
+                spans.push(Span::styled("↻ ", Style::default().fg(rgb(255, 193, 7))));
+                spans.push(Span::styled(
+                    format!(
+                        "network disconnected, waiting to retry · {} · {}",
+                        listener,
+                        format_elapsed(elapsed)
                     ),
-                ];
+                    Style::default().fg(rgb(255, 193, 7)),
+                ));
                 push_queued_suffix(&mut spans, &queued_suffix);
                 Line::from(spans)
             }
@@ -864,19 +903,22 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                 } else {
                     app.streaming_tool_calls()
                         .last()
-                        .map(get_tool_summary)
+                        .map(get_tool_activity_detail)
                         .filter(|s| !s.is_empty())
                 };
                 let experimental_notice = app.active_experimental_feature_notice();
                 let subagent = app.subagent_status();
 
-                let mut spans = vec![
-                    Span::styled(left_bar, Style::default().fg(anim_color)),
-                    Span::styled(" ", Style::default()),
-                    Span::styled(name.to_string(), Style::default().fg(anim_color).bold()),
-                    Span::styled(" ", Style::default()),
-                    Span::styled(right_bar, Style::default().fg(anim_color)),
-                ];
+                let mut spans = status_line_mode_spans();
+                spans.push(Span::styled(" · ", Style::default().fg(dim_color())));
+                spans.push(Span::styled(left_bar, Style::default().fg(anim_color)));
+                spans.push(Span::styled(" ", Style::default()));
+                spans.push(Span::styled(
+                    name.to_string(),
+                    Style::default().fg(anim_color).bold(),
+                ));
+                spans.push(Span::styled(" ", Style::default()));
+                spans.push(Span::styled(right_bar, Style::default().fg(anim_color)));
 
                 // For batch tool: show "completed/total · last_tool" progress
                 if is_batch {
@@ -976,16 +1018,8 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
             Line::from("")
         }
     } else {
-        if let Some(tip) =
-            occasional_status_tip(area.width as usize, app.animation_elapsed() as u64)
-        {
-            Line::from(vec![Span::styled(tip, Style::default().fg(dim_color()))])
-        } else if let Some(facts) = idle_status_facts(app) {
-            right_align_facts = true;
-            Line::from(facts)
-        } else {
-            Line::from("")
-        }
+        // Always show permission mode pill when idle
+        Line::from(status_line_mode_spans())
     };
 
     crate::memory::check_staleness();
@@ -1550,6 +1584,14 @@ pub(super) fn build_notification_spans(app: &dyn TuiState) -> Vec<Span<'static>>
                     format!("🧊 cache cold{}", tokens_str),
                     Style::default().fg(rgb(140, 180, 255)),
                 ));
+                // Small gray "how long ago it went cold" hint, e.g. `1h 1m`.
+                spans.push(Span::styled(
+                    format!(
+                        " {}",
+                        crate::tui::format_compact_age(cache_info.cold_for_secs)
+                    ),
+                    Style::default().fg(dim_color()),
+                ));
             } else {
                 let remaining_secs = cache_info.remaining_secs;
                 let tokens_str = cache_info
@@ -1565,8 +1607,8 @@ pub(super) fn build_notification_spans(app: &dyn TuiState) -> Vec<Span<'static>>
                     })
                     .unwrap_or_default();
 
+                // Dev redesign: color-tiered remaining time (green / red / flash).
                 let (color, label) = if remaining_secs > 300 {
-                    // Green: >5 min
                     (
                         rgb(100, 200, 100),
                         format!(
@@ -1576,13 +1618,11 @@ pub(super) fn build_notification_spans(app: &dyn TuiState) -> Vec<Span<'static>>
                         ),
                     )
                 } else if remaining_secs > 60 {
-                    // Red: <5 min but >=1 min
                     (
                         rgb(255, 100, 100),
                         format!("⏳ cache {}s{}", remaining_secs, tokens_str),
                     )
                 } else {
-                    // Flashing: <1 min — alternate red / dark using frame-based time
                     let flash_on = (app.animation_elapsed() * 2.0) as u64 % 2 == 0;
                     let color = if flash_on {
                         rgb(255, 100, 100)
@@ -2073,8 +2113,84 @@ pub(super) fn draw_input(
             break;
         }
     }
+    let visible_input_rows = lines.len().saturating_sub(suggestions_offset);
 
     let centered = app.centered_mode();
+
+    // Register the composer's visible rows with the shared copy-selection
+    // machinery so mouse drags can select and copy the text being typed
+    // (issue #430). The prompt prefix / continuation indent is excluded via
+    // per-row left margins, so hit-testing and the copied text only ever
+    // cover the typed text, never the prompt decoration.
+    if visible_input_rows > 0 {
+        let (wrapped_plain, raw_plain, line_map) =
+            input_copy_snapshot_parts(input_text, line_width);
+        let left_margins: Vec<u16> = (0..visible_input_rows)
+            .map(|rel| {
+                let abs = scroll_offset + rel;
+                let text_width = wrapped_plain
+                    .get(abs)
+                    .map(|text| unicode_width::UnicodeWidthStr::width(text.as_str()))
+                    .unwrap_or(0);
+                let mut margin = prompt_len;
+                if centered {
+                    margin += (area.width as usize).saturating_sub(prompt_len + text_width) / 2;
+                }
+                margin.min(area.width as usize) as u16
+            })
+            .collect();
+        let input_rows_area = Rect::new(
+            area.x,
+            area.y.saturating_add(suggestions_offset as u16),
+            area.width,
+            visible_input_rows as u16,
+        );
+        super::record_input_copy_snapshot(
+            wrapped_plain,
+            raw_plain,
+            line_map,
+            scroll_offset,
+            scroll_offset + visible_input_rows,
+            input_rows_area,
+            &left_margins,
+        );
+    }
+
+    // Highlight an active copy selection over the composer text, mirroring the
+    // chat/side-pane selection rendering. Columns are selection-space (typed
+    // text only), so shift them right by the prompt width for display.
+    if let Some(range) = app.copy_selection_range().filter(|range| {
+        range.start.pane == crate::tui::CopySelectionPane::Input
+            && range.end.pane == crate::tui::CopySelectionPane::Input
+    }) {
+        let (start, end) = if (range.start.abs_line, range.start.column)
+            <= (range.end.abs_line, range.end.column)
+        {
+            (range.start, range.end)
+        } else {
+            (range.end, range.start)
+        };
+        for rel in 0..visible_input_rows {
+            let abs = scroll_offset + rel;
+            if abs < start.abs_line || abs > end.abs_line {
+                continue;
+            }
+            if let Some(line) = lines.get_mut(suggestions_offset + rel) {
+                let start_col = if abs == start.abs_line {
+                    prompt_len + start.column
+                } else {
+                    prompt_len
+                };
+                let end_col = if abs == end.abs_line {
+                    prompt_len + end.column
+                } else {
+                    line.width()
+                };
+                *line = highlight_line_selection(line, start_col, end_col);
+            }
+        }
+    }
+
     let paragraph = if centered {
         Paragraph::new(
             lines
@@ -2103,7 +2219,6 @@ pub(super) fn draw_input(
     };
 
     frame.set_cursor_position(Position::new(cursor_x, cursor_y));
-    draw_send_mode_indicator(frame, app, area);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2112,6 +2227,52 @@ struct WrappedInputSegment {
     start_char: usize,
     end_char: usize,
     display_width: usize,
+}
+
+/// Wrapped/raw text plus the wrapped-to-raw line map for the composer's
+/// copy-selection snapshot. Wrapped rows mirror `wrap_input_segments` exactly
+/// (the same function that lays out the rendered rows), while raw lines are
+/// the logical `\n`-separated input lines, so copying a selection that spans
+/// a soft wrap yields the original text without injected line breaks.
+fn input_copy_snapshot_parts(
+    input: &str,
+    line_width: usize,
+) -> (Vec<String>, Vec<String>, Vec<super::WrappedLineMap>) {
+    use unicode_width::UnicodeWidthChar;
+
+    let segments = wrap_input_segments(input, line_width);
+    let raw_lines: Vec<String> = input.split('\n').map(str::to_owned).collect();
+
+    // (raw_line, display_col) at each char boundary of the input.
+    let mut boundaries = Vec::with_capacity(input.chars().count() + 1);
+    let mut raw_line = 0usize;
+    let mut col = 0usize;
+    boundaries.push((raw_line, col));
+    for ch in input.chars() {
+        if ch == '\n' {
+            raw_line += 1;
+            col = 0;
+        } else {
+            col += ch.width().unwrap_or(0);
+        }
+        boundaries.push((raw_line, col));
+    }
+
+    let mut wrapped_plain = Vec::with_capacity(segments.len());
+    let mut line_map = Vec::with_capacity(segments.len());
+    for segment in &segments {
+        let (raw_line, start_col) = boundaries
+            .get(segment.start_char)
+            .copied()
+            .unwrap_or((0, 0));
+        line_map.push(super::WrappedLineMap {
+            raw_line,
+            start_col,
+            end_col: start_col + segment.display_width,
+        });
+        wrapped_plain.push(segment.text.clone());
+    }
+    (wrapped_plain, raw_lines, line_map)
 }
 
 fn wrap_input_segments(input: &str, line_width: usize) -> Vec<WrappedInputSegment> {
@@ -2296,6 +2457,49 @@ pub(crate) fn input_cursor_pos_from_screen(
     ))
 }
 
+/// Build rendered spans for a text segment, applying keyword highlight
+/// colors from the full input's pre-computed highlights.
+fn highlighted_text_spans(
+    text: &str,
+    seg_byte_start: usize,
+    seg_byte_end: usize,
+    highlights: &[KeywordHighlight],
+) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut cursor = 0usize;
+    for hl in highlights {
+        // Skip highlights entirely outside this segment
+        if hl.end <= seg_byte_start || hl.start >= seg_byte_end {
+            continue;
+        }
+        // Map highlight range to segment-local coordinates
+        let local_start = hl.start.saturating_sub(seg_byte_start);
+        let local_end = hl.end.saturating_sub(seg_byte_start).min(text.len());
+
+        // Text before this highlight
+        if local_start > cursor {
+            spans.push(Span::raw(text[cursor..local_start].to_string()));
+        }
+
+        let color = Color::Rgb(hl.color.0, hl.color.1, hl.color.2);
+        spans.push(Span::styled(
+            text[local_start..local_end].to_string(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+        cursor = local_end;
+    }
+    // Remaining text after last highlight
+    if cursor < text.len() {
+        spans.push(Span::raw(text[cursor..].to_string()));
+    }
+
+    if spans.is_empty() {
+        vec![Span::raw(text.to_string())]
+    } else {
+        spans
+    }
+}
+
 pub(crate) fn wrap_input_text<'a>(
     input: &str,
     cursor_pos: usize,
@@ -2312,6 +2516,10 @@ pub(crate) fn wrap_input_text<'a>(
     let mut cursor_col = 0;
     let mut found_cursor = false;
 
+    // Compute keyword highlights once on the full input, then map each
+    // highlight onto the segment(s) it overlaps.
+    let full_highlights = compute_highlights(input);
+
     for (idx, segment) in wrapped_segments.iter().enumerate() {
         if !found_cursor
             && cursor_char_pos >= segment.start_char
@@ -2322,18 +2530,27 @@ pub(crate) fn wrap_input_text<'a>(
             found_cursor = true;
         }
 
+        // Convert segment char range to byte range in the original input.
+        let seg_byte_start = crate::tui::core::char_index_to_byte_offset(input, segment.start_char);
+        let seg_byte_end = crate::tui::core::char_index_to_byte_offset(input, segment.end_char);
+        let text_spans = highlighted_text_spans(
+            &segment.text,
+            seg_byte_start,
+            seg_byte_end,
+            &full_highlights,
+        );
         if idx == 0 {
             let num_color = rainbow_prompt_color(0);
-            lines.push(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(num_str.to_string(), Style::default().fg(num_color)),
                 Span::styled(prompt_char.to_string(), Style::default().fg(caret_color)),
-                Span::raw(segment.text.clone()),
-            ]));
+            ];
+            spans.extend(text_spans);
+            lines.push(Line::from(spans));
         } else {
-            lines.push(Line::from(vec![
-                Span::raw(" ".repeat(prompt_len)),
-                Span::raw(segment.text.clone()),
-            ]));
+            let mut spans = vec![Span::raw(" ".repeat(prompt_len))];
+            spans.extend(text_spans);
+            lines.push(Line::from(spans));
         }
     }
 

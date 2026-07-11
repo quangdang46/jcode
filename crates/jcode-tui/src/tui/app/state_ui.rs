@@ -25,6 +25,19 @@ pub(super) struct RestoredReloadInput {
 }
 
 impl App {
+    pub(super) fn append_live_inline_images(
+        &mut self,
+        images: Vec<crate::session::RenderedImage>,
+    ) -> bool {
+        if images.is_empty() {
+            return false;
+        }
+        self.remote_side_pane_images.extend(images);
+        self.invalidate_side_pane_images_signature();
+        self.update_pinned_images_auto_hide();
+        true
+    }
+
     fn recompute_display_message_stats(&mut self) {
         self.display_user_message_count = self
             .display_messages
@@ -97,57 +110,9 @@ impl App {
     pub(super) fn note_client_interaction(&mut self) {
         // A terminal only delivers key/mouse/paste events to the focused window,
         // so receiving one is proof this window is focused *right now*. Adopt that
-        // focus state directly instead of relying solely on FocusGained reports:
-        // some compositors/multiplexers (Wayland tiling WMs, tmux, certain SSH
-        // setups) can drop a FocusGained after a FocusLost, leaving the window
-        // wrongly stuck as "unfocused idle". In that state the run loop throttles
-        // repaints to ~1 Hz, so scrolling updates state but the screen only
-        // repaints about once a second -- the intermittent "can't scroll" bug.
-        if !self.client_focused {
-            self.set_client_focused(true);
-        }
         if !crate::perf::tui_policy().enable_focus_change {
             self.note_client_focus(false);
         }
-    }
-
-    /// Whether the client terminal currently has focus. Used to pause decorative
-    /// animations and periodic idle redraws for backgrounded windows/tabs.
-    pub(crate) fn client_focused(&self) -> bool {
-        self.client_focused
-    }
-
-    /// Record a terminal focus-state change (from crossterm FocusGained/FocusLost).
-    /// Returns true when a redraw is warranted (focus regained, so we repaint at
-    /// full fidelity immediately).
-    pub(super) fn set_client_focused(&mut self, focused: bool) -> bool {
-        if self.client_focused == focused {
-            return false;
-        }
-        self.client_focused = focused;
-        if focused {
-            // Repaint immediately so a newly-focused window is not stuck on the
-            // last paused frame, and resume animation timing from "now".
-            self.request_full_redraw();
-            self.note_client_focus(true);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Whether a redraw is worth performing while the terminal is unfocused.
-    ///
-    /// In a tiling WM an unfocused window can still be visible, so sessions with
-    /// live output (streaming/processing, scroll/scroll-copy animations, an active
-    /// notification, a rate-limit countdown, or a transient remote startup phase)
-    /// keep painting. A purely idle unfocused session skips redraws triggered by
-    /// shared-server bus chatter from other sessions; it repaints fully on refocus.
-    ///
-    /// Reuses `periodic_redraw_required`, which already enumerates the live-activity
-    /// conditions, minus the purely decorative idle donut (gated off when unfocused).
-    pub(crate) fn unfocused_redraw_warranted(&self) -> bool {
-        crate::tui::periodic_redraw_required(self)
     }
 
     pub fn display_messages(&self) -> &[DisplayMessage] {

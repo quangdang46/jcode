@@ -120,8 +120,33 @@ pub fn deep_artifact(findings: &str) -> HandoffArtifact {
     HandoffArtifact {
         findings: findings.to_string(),
         what_i_did_not_check: vec!["nothing material; covered the stated scope".to_string()],
+        confidence: Some("high".to_string()),
         ..HandoffArtifact::default()
     }
+}
+
+/// Convenience: a passing gate artifact that satisfies the deep-mode coverage
+/// rule by naming every audited node found in the gate's assembled input.
+///
+/// The scheduler hydrates a gate's input with one `## <id> (<kind>)` section per
+/// done dependency, and a gate's dependencies are exactly its audit scope, so
+/// scraping those headers enumerates the scope without needing the graph. This
+/// is what a real gate is instructed to do: account for each id it audited.
+pub fn gate_pass_artifact(input: &str) -> HandoffArtifact {
+    let audited: Vec<&str> = input
+        .lines()
+        .filter_map(|line| line.strip_prefix("## "))
+        .filter_map(|rest| rest.split(" (").next())
+        .collect();
+    let findings = if audited.is_empty() {
+        "gate passed: no audited nodes in scope".to_string()
+    } else {
+        format!(
+            "gate passed; audited each node: {}. No gaps remain.",
+            audited.join(", ")
+        )
+    };
+    HandoffArtifact::brief(findings)
 }
 
 /// Convenience: build a graph in a mode for sims/tests.

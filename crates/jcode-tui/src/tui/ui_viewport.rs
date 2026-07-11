@@ -190,6 +190,69 @@ pub(crate) fn truncate_line_in_place_to_width(line: &mut Line<'static>, max_widt
     line.spans = kept;
 }
 
+pub(crate) fn trim_line_trailing_spaces(line: &mut Line<'static>) {
+    while let Some(last) = line.spans.last_mut() {
+        let trimmed = last.content.trim_end_matches(' ');
+        if trimmed.len() == last.content.len() {
+            break;
+        }
+        if trimmed.is_empty() {
+            line.spans.pop();
+        } else {
+            last.content = std::borrow::Cow::Owned(trimmed.to_string());
+            break;
+        }
+    }
+}
+
+pub(crate) fn truncate_line_for_copy_badge(line: &mut Line<'static>, max_content_width: usize) {
+    if line.width() <= max_content_width {
+        trim_line_trailing_spaces(line);
+        return;
+    }
+    truncate_line_in_place_to_width(line, max_content_width.saturating_sub(1));
+    trim_line_trailing_spaces(line);
+    line.spans.push(Span::styled(
+        "…",
+        Style::default().fg(ratatui::style::Color::DarkGray),
+    ));
+}
+
+/// Choose the wrapped line that hosts an inline copy badge for a copy target
+/// spanning `block_start..block_end`.
+///
+/// Prefers the target's natural badge line (the `┌─ lang` header for code
+/// blocks), but when that line is too wide to fit the badge without cutting
+/// content (e.g. a full-width blockquote line), falls back to the first
+/// visible line of the block with enough free width. Returns the natural line
+/// when nothing fits; the caller then truncates with a visible ellipsis.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pick_copy_badge_line(
+    preferred: usize,
+    block_start: usize,
+    block_end: usize,
+    scroll: usize,
+    visible_end: usize,
+    visible_lines: &[Line<'_>],
+    content_width: usize,
+    reserved: usize,
+) -> usize {
+    let fits = |abs_line: usize| -> bool {
+        if abs_line < scroll || abs_line >= visible_end {
+            return false;
+        }
+        visible_lines
+            .get(abs_line - scroll)
+            .is_some_and(|line| line.width().saturating_add(reserved) <= content_width)
+    };
+    if fits(preferred) {
+        return preferred;
+    }
+    (block_start.max(scroll)..block_end.min(visible_end))
+        .find(|&abs_line| abs_line != preferred && fits(abs_line))
+        .unwrap_or(preferred)
+}
+
 pub(crate) fn copy_badge_reserved_width(
     key: char,
     copy_badge_ui: &crate::tui::app::CopyBadgeUiState,

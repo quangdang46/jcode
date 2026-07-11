@@ -77,6 +77,50 @@ fn file_activity_scope_label_classifies_overlap() {
     assert_eq!(file_activity_scope_label(&previous, &current), "same file");
 }
 
+#[test]
+fn configured_server_name_normalizes_operator_labels() {
+    assert_eq!(
+        super::normalize_configured_server_name(" Mount Cloud/Fabian ").as_deref(),
+        Some("mount-cloud-fabian")
+    );
+    assert_eq!(
+        super::normalize_configured_server_name("john@example.com").as_deref(),
+        Some("john-example.com")
+    );
+    assert_eq!(super::normalize_configured_server_name(" 🫥 "), None);
+}
+
+#[test]
+fn server_identity_uses_configured_name() {
+    let _guard = crate::storage::lock_test_env();
+    let _server_name_guard = ScopedEnvVar::set("JCODE_SERVER_NAME", "env-name");
+    let _server_display_name_guard = ScopedEnvVar::set("JCODE_SERVER_DISPLAY_NAME", "display-name");
+
+    let server = Server::new_with_name(
+        Arc::new(StreamingMockProvider::default()),
+        Some("Mount Cloud/Fabian".to_string()),
+    );
+
+    assert_eq!(server.identity().name, "mount-cloud-fabian");
+    assert!(
+        server
+            .identity()
+            .id
+            .starts_with("server_mount-cloud-fabian_")
+    );
+}
+
+#[test]
+fn server_identity_reads_name_from_env() {
+    let _guard = crate::storage::lock_test_env();
+    let _server_name_guard = ScopedEnvVar::set("JCODE_SERVER_NAME", "mount-cloud/john");
+    let _server_display_name_guard = ScopedEnvVar::set("JCODE_SERVER_DISPLAY_NAME", "ignored");
+
+    let server = Server::new_with_name(Arc::new(StreamingMockProvider::default()), None);
+
+    assert_eq!(server.identity().name, "mount-cloud-john");
+}
+
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         if let Some(value) = &self.prev_home {
@@ -216,6 +260,9 @@ fn attached_swarm_member(
         is_headless: false,
         output_tail: None,
         todo_progress: None,
+        todo_items: Vec::new(),
+        runtime: crate::protocol::SwarmMemberRuntime::default(),
+        task_label: None,
     }
 }
 
@@ -244,6 +291,9 @@ fn persisted_headless_member(
         is_headless: true,
         output_tail: None,
         todo_progress: None,
+        todo_items: Vec::new(),
+        runtime: crate::protocol::SwarmMemberRuntime::default(),
+        task_label: None,
     }
 }
 
@@ -311,7 +361,7 @@ async fn background_task_wake_runs_live_session_immediately_when_idle() {
     .expect("background task notification should arrive promptly");
 
     match notification.0 {
-        NotificationType::Message { scope, channel } => {
+        NotificationType::Message { scope, channel, .. } => {
             assert_eq!(scope.as_deref(), Some("background_task"));
             assert!(channel.is_none());
         }
@@ -555,7 +605,7 @@ async fn background_task_progress_notifies_attached_clients() {
             ..
         } => {
             match notification_type {
-                NotificationType::Message { scope, channel } => {
+                NotificationType::Message { scope, channel, .. } => {
                     assert_eq!(scope.as_deref(), Some("background_task"));
                     assert!(channel.is_none());
                 }
@@ -871,12 +921,19 @@ async fn startup_ready_signal_is_not_blocked_by_headless_recovery_delay() -> Res
         "startup task should still be blocked on delayed recovery even though ready was already signaled"
     );
 
-    let (main_handle, debug_handle) = timeout(Duration::from_secs(2), startup)
+    let (runtime, main_handle, debug_handle) = timeout(Duration::from_secs(2), startup)
         .await
         .expect("startup should finish after delayed recovery")
         .expect("startup task should succeed");
-    main_handle.abort();
-    debug_handle.abort();
+    timeout(Duration::from_secs(1), runtime.shutdown())
+        .await
+        .expect("runtime should shut down");
+    timeout(Duration::from_secs(1), async {
+        main_handle.await.expect("main accept loop");
+        debug_handle.await.expect("debug accept loop");
+    })
+    .await
+    .expect("accept loops should observe runtime cancellation");
 
     Ok(())
 }

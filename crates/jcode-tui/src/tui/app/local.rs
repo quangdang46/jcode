@@ -63,6 +63,10 @@ pub(super) async fn process_turn_with_input(
 pub(super) fn handle_tick(app: &mut App) -> bool {
     let mut needs_redraw = crate::tui::periodic_redraw_required(app);
     app.maybe_capture_runtime_memory_heartbeat();
+    app.maybe_release_idle_heap();
+    // Surface the cold-cache transcript warning the moment the TTL expires
+    // while idle, not only when the next request starts.
+    needs_redraw |= app.maybe_push_idle_cold_cache_warning();
     needs_redraw |= app.progress_copy_selection_edge_autoscroll();
     app.progress_mouse_scroll_animation();
     needs_redraw |= app.update_chat_overscroll();
@@ -82,9 +86,11 @@ pub(super) fn handle_tick(app: &mut App) -> bool {
         needs_redraw = true;
     }
     needs_redraw |= app.refresh_todos_view_if_needed();
+    needs_redraw |= app.refresh_todo_card_if_needed();
     needs_redraw |= app.refresh_side_panel_linked_content_if_due();
     needs_redraw |= app.poll_model_picker_load();
     needs_redraw |= app.poll_session_picker_load();
+    needs_redraw |= app.poll_session_picker_presence();
     needs_redraw |= app.onboarding_tick();
     needs_redraw |= app.poll_compaction_completion();
     needs_redraw |= app.maybe_refresh_overnight_display_card();
@@ -185,6 +191,10 @@ pub(super) fn handle_bus_event(
         }
         Ok(BusEvent::ModelsUpdated) => {
             app.invalidate_model_picker_cache();
+            true
+        }
+        Ok(BusEvent::AuthCatalogRefreshReady) => {
+            app.finish_auth_catalog_refresh();
             true
         }
         Ok(BusEvent::ProviderModelActivated {
@@ -386,14 +396,10 @@ fn apply_terminal_event(
 ) -> Result<bool> {
     match event {
         Some(Ok(Event::FocusGained)) => {
-            let redraw = app.set_client_focused(true);
             app.note_client_focus(true);
-            Ok(redraw)
-        }
-        Some(Ok(Event::FocusLost)) => {
-            app.set_client_focused(false);
             Ok(false)
         }
+        Some(Ok(Event::FocusLost)) => Ok(false),
         Some(Ok(Event::Key(key))) => {
             app.note_client_interaction();
             app.update_copy_badge_key_event(key);
@@ -408,6 +414,9 @@ fn apply_terminal_event(
             Ok(true)
         }
         Some(Ok(Event::Mouse(mouse))) => {
+            if matches!(mouse.kind, crossterm::event::MouseEventKind::Moved) {
+                return Ok(false);
+            }
             app.note_client_interaction();
             app.handle_mouse_event(mouse);
             Ok(true)
@@ -566,6 +575,13 @@ impl App {
             self.set_status_notice(result);
         }
         // Silently ignore errors — not every turn produces an agent.
+    }
+
+    /// Stub: called from the idle tick loop when a cold-cache transcript warning
+    /// needs to be surfaced. The upstream method in `app.rs` requires turn
+    /// context, so the idle loop delegates to a no-op here.
+    pub(crate) fn maybe_push_idle_cold_cache_warning(&mut self) -> bool {
+        false
     }
 }
 

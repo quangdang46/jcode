@@ -698,6 +698,7 @@ pub(crate) fn build_section(
         edit_tool_ranges: Vec::new(),
         copy_targets: Vec::new(),
         message_boundaries: Vec::new(),
+        mermaid_pending_epoch: None,
     }
 }
 
@@ -717,6 +718,7 @@ fn empty() -> PreparedMessages {
         edit_tool_ranges: Vec::new(),
         copy_targets: Vec::new(),
         message_boundaries: Vec::new(),
+        mermaid_pending_epoch: None,
     }
 }
 

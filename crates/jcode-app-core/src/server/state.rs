@@ -204,13 +204,17 @@ pub struct SwarmMember {
     pub status: String,
     /// Optional detail (current task, error, etc.)
     pub detail: Option<String>,
+    /// Stable, human-readable label of the task/role this member was spawned
+    /// or assigned for (compacted from the spawn prompt or plan item). Unlike
+    /// `detail`, this is not overwritten by transient status updates.
+    pub task_label: Option<String>,
     /// Friendly name like "fox"
     pub friendly_name: Option<String>,
     /// Session that should receive direct completion report-back for this member, if any.
     pub report_back_to_session_id: Option<String>,
     /// Latest explicit completion report submitted by this member.
     pub latest_completion_report: Option<String>,
-    /// Role: "agent", "coordinator", "worktree_manager"
+    /// Role: "agent" or "coordinator"
     pub role: String,
     /// When this member joined the swarm
     pub joined_at: Instant,
@@ -227,6 +231,12 @@ pub struct SwarmMember {
     /// updated from `TodoUpdated` bus events. Surfaced on the inline swarm
     /// strip; not persisted.
     pub todo_progress: Option<(u32, u32)>,
+    /// Compact snapshot of this member's todo list (content + status), capped
+    /// at a few entries by the bus monitor. Rendered in the focused inline
+    /// swarm panel; not persisted.
+    pub todo_items: Vec<crate::protocol::SwarmTodoItem>,
+    /// Ephemeral model/timing metadata for the inline swarm card.
+    pub runtime: crate::protocol::SwarmMemberRuntime,
 }
 
 impl SwarmMember {
@@ -238,6 +248,7 @@ impl SwarmMember {
             swarm_enabled: self.swarm_enabled,
             status: SwarmLifecycleStatus::from(self.status.clone()),
             detail: self.detail.clone(),
+            task_label: self.task_label.clone(),
             friendly_name: self.friendly_name.clone(),
             report_back_to_session_id: self.report_back_to_session_id.clone(),
             latest_completion_report: self.latest_completion_report.clone(),
@@ -269,6 +280,7 @@ impl SwarmMember {
             swarm_enabled: record.swarm_enabled,
             status: record.status.as_str().into_owned(),
             detail: record.detail,
+            task_label: record.task_label,
             friendly_name: record.friendly_name,
             report_back_to_session_id: record.report_back_to_session_id,
             latest_completion_report: record.latest_completion_report,
@@ -278,6 +290,8 @@ impl SwarmMember {
             is_headless: record.is_headless,
             output_tail: None,
             todo_progress: None,
+            todo_items: Vec::new(),
+            runtime: crate::protocol::SwarmMemberRuntime::default(),
         }
     }
 }
@@ -555,12 +569,41 @@ impl SessionControlHandle {
         }
     }
 
-    pub fn request_cancel(&self) {
+    /// Fire the stop-current-turn signal. Returns the signal's fire epoch so
+    /// callers that schedule a deferred [`reset_cancel_if_epoch`](Self::reset_cancel_if_epoch)
+    /// can avoid erasing a newer cancel that fired in the meantime (issue #428).
+    ///
+    /// Also fires every cancel signal registered for currently running turns
+    /// of this session. The handle's own signal can be a stale instance that
+    /// the streaming turn never observes (reattach after reload/disconnect,
+    /// server-initiated turns, headless recovery), which used to make Esc show
+    /// "Interrupting..." while the model kept generating for minutes
+    /// (issue #428).
+    pub fn request_cancel(&self) -> u64 {
         crate::logging::info(&format!(
             "SESSION_CANCEL_SIGNAL_FIRE session={}",
             self.session_id
         ));
         self.stop_current_turn_signal.fire();
+        let active_turn_signals =
+            crate::turn_cancel_registry::active_turn_signals(&self.session_id);
+        let mut fired_active = 0usize;
+        for signal in &active_turn_signals {
+            if signal.same_instance(&self.stop_current_turn_signal) {
+                continue;
+            }
+            signal.fire();
+            fired_active += 1;
+        }
+        if fired_active > 0 {
+            crate::logging::info(&format!(
+                "SESSION_CANCEL_ACTIVE_TURN_SIGNALS_FIRED session={} fired={} registered={}",
+                self.session_id,
+                fired_active,
+                active_turn_signals.len()
+            ));
+        }
+        self.stop_current_turn_signal.epoch()
     }
 
     pub fn reset_cancel(&self) {
@@ -569,6 +612,21 @@ impl SessionControlHandle {
             self.session_id
         ));
         self.stop_current_turn_signal.reset();
+    }
+
+    /// Reset the cancel signal only if no newer cancel fired since `epoch`
+    /// was captured from [`request_cancel`](Self::request_cancel). Timed
+    /// resets (used when the running turn is not owned by this connection)
+    /// must use this instead of [`reset_cancel`](Self::reset_cancel):
+    /// an unconditional deferred reset can erase a newer, not-yet-observed
+    /// cancel, making repeated Esc presses appear to be ignored (issue #428).
+    pub fn reset_cancel_if_epoch(&self, epoch: u64) -> bool {
+        let reset = self.stop_current_turn_signal.reset_if_epoch(epoch);
+        crate::logging::info(&format!(
+            "SESSION_CANCEL_SIGNAL_RESET session={} epoch={} applied={}",
+            self.session_id, epoch, reset
+        ));
+        reset
     }
 
     pub fn request_background_current_tool(&self) -> bool {

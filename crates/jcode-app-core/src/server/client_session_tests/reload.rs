@@ -322,6 +322,7 @@ fn handle_reload_queues_signal_for_canary_session() -> Result<()> {
                     swarm_enabled: false,
                     status: "ready".to_string(),
                     detail: None,
+                    task_label: None,
                     friendly_name: Some("trigger".to_string()),
                     report_back_to_session_id: None,
                     latest_completion_report: None,
@@ -331,6 +332,8 @@ fn handle_reload_queues_signal_for_canary_session() -> Result<()> {
                     is_headless: false,
                     output_tail: None,
                     todo_progress: None,
+                    todo_items: Vec::new(),
+                    runtime: crate::protocol::SwarmMemberRuntime::default(),
                 },
             ),
             (
@@ -344,6 +347,7 @@ fn handle_reload_queues_signal_for_canary_session() -> Result<()> {
                     swarm_enabled: false,
                     status: "ready".to_string(),
                     detail: None,
+                    task_label: None,
                     friendly_name: Some("peer".to_string()),
                     report_back_to_session_id: None,
                     latest_completion_report: None,
@@ -353,6 +357,8 @@ fn handle_reload_queues_signal_for_canary_session() -> Result<()> {
                     is_headless: false,
                     output_tail: None,
                     todo_progress: None,
+                    todo_items: Vec::new(),
+                    runtime: crate::protocol::SwarmMemberRuntime::default(),
                 },
             ),
         ])));

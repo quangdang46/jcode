@@ -170,6 +170,6 @@ pub fn format_usage_bar(percent: f32, width: usize) -> String {
     let filled = ((percent / 100.0) * width as f32).round() as usize;
     let filled = filled.min(width);
     let empty = width.saturating_sub(filled);
-    let bar: String = "█".repeat(filled) + &"░".repeat(empty);
+    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
     format!("{} {:.0}%", bar, percent)
 }

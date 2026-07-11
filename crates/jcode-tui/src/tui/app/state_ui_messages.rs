@@ -23,7 +23,15 @@ fn display_message_from_stored_message(
             Some(DisplayMessage::background_task(text))
         }
         None => match message.role {
-            Role::User => Some(DisplayMessage::user(text)),
+            Role::User => {
+                // Synthetic auto-poke continuations are persisted as user
+                // turns for the model but must not display as user prompts.
+                if crate::todo::is_auto_poke_message(&text) {
+                    Some(DisplayMessage::system(text))
+                } else {
+                    Some(DisplayMessage::user(text))
+                }
+            }
             Role::Assistant => Some(DisplayMessage::assistant(text)),
         },
     }
@@ -382,6 +390,7 @@ impl App {
         compact_display_messages_for_storage(&mut messages);
         self.display_messages = messages;
         self.remote_side_pane_images = images;
+        self.invalidate_side_pane_images_signature();
         self.compacted_history_lazy = CompactedHistoryLazyState {
             total_messages,
             visible_messages,

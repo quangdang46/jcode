@@ -96,6 +96,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             temporary_server,
             owner_pid,
             temp_idle_timeout_secs,
+            server_name,
         }) => {
             let serve_start = Instant::now();
             crate::env::set_var("JCODE_NON_INTERACTIVE", "1");
@@ -112,7 +113,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             };
             let provider_ms = provider_start.elapsed().as_millis();
             let server_new_start = Instant::now();
-            let server = server::Server::new(provider);
+            let server = server::Server::new_with_name(provider, server_name);
             let server_new_ms = server_new_start.elapsed().as_millis();
             crate::logging::info(&format!(
                 "[TIMING] serve bootstrap: provider_init={}ms, server_new={}ms, before_run={}ms",
@@ -1121,6 +1122,7 @@ async fn run_default_command(args: Args) -> Result<()> {
         startup_hints,
         !server_running,
         args.fresh_spawn,
+        args.remote_working_dir,
     )
     .await?;
 
@@ -1351,7 +1353,7 @@ async fn detect_bootstrap_credentials() -> BootstrapCredentialState {
     );
     let has_claude = has_claude.unwrap_or(false);
     let has_openai = has_openai.unwrap_or(false);
-    let has_openrouter = provider::openrouter::OpenRouterProvider::has_credentials();
+    let has_openrouter = provider::openrouter::has_credentials();
     let has_copilot = auth::copilot::has_copilot_credentials();
     let has_api_key = std::env::var("ANTHROPIC_API_KEY").is_ok();
 

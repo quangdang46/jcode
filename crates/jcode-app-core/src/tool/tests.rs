@@ -66,6 +66,22 @@ fn test_resolve_skill_aliases_to_skill_manage() {
     assert_eq!(Registry::resolve_tool_name("skill_manage"), "skill_manage");
 }
 
+#[tokio::test]
+async fn test_discover_tools_not_registered_when_sponsors_disabled() {
+    // sponsors.enabled defaults to false; the discovery tool must not exist.
+    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
+    let registry = Registry::new(provider).await;
+    let names = registry.tool_names().await;
+    if crate::config::config().sponsors.enabled {
+        assert!(names.iter().any(|n| n == "discover_tools"));
+    } else {
+        assert!(
+            !names.iter().any(|n| n == "discover_tools"),
+            "discover_tools must not be registered when sponsors are disabled"
+        );
+    }
+}
+
 struct BareSchemaTool;
 
 #[async_trait]
@@ -104,6 +120,7 @@ async fn first_party_tool_definitions_include_optional_intent_explicitly() {
     let provider: Arc<dyn Provider> = Arc::new(MockProvider);
     let registry = Registry::new(provider).await;
     registry.register_ambient_tools().await;
+    registry.register_selfdev_tools().await;
 
     let defs = registry.definitions(None).await;
     assert!(!defs.is_empty());

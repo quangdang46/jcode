@@ -8,6 +8,7 @@ actor FakeTransport: WebSocketTransport {
     enum Behavior {
         case succeed
         case failConnect
+        case unauthorized
     }
 
     let behavior: Behavior
@@ -23,6 +24,9 @@ actor FakeTransport: WebSocketTransport {
     func connect(url: URL, authToken: String) async throws {
         if behavior == .failConnect {
             throw TransportError.notConnected
+        }
+        if behavior == .unauthorized {
+            throw TransportError.unauthorized
         }
     }
 
@@ -171,6 +175,91 @@ private func makeConnection(transport: FakeTransport) -> Connection {
 
     await transport.push(#"{"type":"session","session_id":"sess_42"}"#)
     #expect(await iterator.next() == .event(.sessionID(sessionID: "sess_42")))
+
+    await connection.stop()
+}
+
+@Test func sessionCloseRequestStopsReconnecting() async throws {
+    let transport = FakeTransport()
+    let connection = makeConnection(transport: transport)
+    let stream = await connection.start()
+
+    var iterator = stream.makeAsyncIterator()
+    #expect(await iterator.next() == .phase(.connecting))
+    #expect(await iterator.next() == .phase(.connected))
+
+    await transport.push(#"{"type":"session_close_requested","reason":"taken over"}"#)
+    #expect(
+        await iterator.next()
+            == .event(.sessionCloseRequested(reason: "taken over")))
+
+    // The loop must terminate with a failed phase instead of reconnecting.
+    var sawFailed = false
+    while let output = await iterator.next() {
+        if case .phase(.reconnecting) = output {
+            Issue.record("must not reconnect after session_close_requested")
+            break
+        }
+        if case .phase(.failed(let reason)) = output {
+            #expect(reason == "taken over")
+            sawFailed = true
+            break
+        }
+    }
+    #expect(sawFailed)
+    await connection.stop()
+}
+
+@Test func reloadingTriggersFastReconnect() async throws {
+    let transport = FakeTransport()
+    let connection = makeConnection(transport: transport)
+    let stream = await connection.start()
+
+    var iterator = stream.makeAsyncIterator()
+    #expect(await iterator.next() == .phase(.connecting))
+    #expect(await iterator.next() == .phase(.connected))
+
+    await transport.push(#"{"type":"reloading"}"#)
+    #expect(await iterator.next() == .event(.reloading(newSocket: nil)))
+
+    // Simulate the server dropping the socket for the restart.
+    await transport.close()
+
+    // The connection reconnects (the shared FakeTransport accepts again).
+    var phases: [ConnectionPhase] = []
+    while let output = await iterator.next() {
+        if case let .phase(phase) = output {
+            phases.append(phase)
+            if phase == .connected { break }
+        }
+    }
+    #expect(phases.contains(.reconnecting(attempt: 1)))
+    #expect(phases.last == .connected)
+
+    await connection.stop()
+}
+
+@Test func unauthorizedStopsReconnectingAndAsksForRePair() async throws {
+    let transport = FakeTransport(behavior: .unauthorized)
+    let connection = Connection(
+        configuration: .init(
+            gateway: Gateway(host: "test.local"),
+            authToken: "tok",
+            maxReconnectAttempts: nil,  // would retry forever without the 401 short-circuit
+            baseBackoffSeconds: 0.01
+        ),
+        makeTransport: { transport }
+    )
+    let stream = await connection.start()
+
+    var iterator = stream.makeAsyncIterator()
+    #expect(await iterator.next() == .phase(.connecting))
+    let final = await iterator.next()
+    guard case .phase(.failed(let reason))? = final else {
+        Issue.record("expected .failed phase, got \(String(describing: final))")
+        return
+    }
+    #expect(reason.contains("Re-pair"))
 
     await connection.stop()
 }

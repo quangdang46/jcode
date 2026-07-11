@@ -547,6 +547,7 @@ fn empty_prepared_messages() -> PreparedMessages {
         image_regions: Vec::new(),
         edit_tool_ranges: Vec::new(),
         copy_targets: Vec::new(),
+        mermaid_pending_epoch: None,
     }
 }
 
@@ -668,6 +669,60 @@ fn prepare_active_batch_progress(
     wrap_lines_with_map(lines, &[], &[], &[], &[], &[], width, &[], &[])
 }
 
+
+fn swarm_members_signature(members: &[crate::protocol::SwarmMemberStatus]) -> u64 {
+    serde_json::to_string(members)
+        .map(|snapshot| super::hash_text_for_cache(&snapshot))
+        .unwrap_or_default()
+}
+
+
+
+fn spawned_member_for_tool<'a>(
+    msg: &DisplayMessage,
+    members: &'a [crate::protocol::SwarmMemberStatus],
+) -> Option<&'a crate::protocol::SwarmMemberStatus> {
+    let tool = msg.tool_data.as_ref()?;
+    if tools_ui::canonical_tool_name(&tool.name) != "swarm"
+        || tool.input.get("action").and_then(|value| value.as_str()) != Some("spawn")
+    {
+        return None;
+    }
+
+    let session_id = msg
+        .content
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Spawned new agent: "))?
+        .trim();
+    members
+        .iter()
+        .find(|member| member.session_id == session_id)
+}
+
+
+
+fn push_spawned_swarm_card_lines(
+    out: &mut Vec<Line<'static>>,
+    msg: &DisplayMessage,
+    members: &[crate::protocol::SwarmMemberStatus],
+    app: &dyn TuiState,
+    width: u16,
+) {
+    let Some(member) = spawned_member_for_tool(msg, members) else {
+        return;
+    };
+    let spinner_frame =
+        (app.animation_elapsed() * jcode_tui_render::swarm_gallery::STRIP_SPINNER_FPS) as usize;
+    for line in crate::tui::info_widget::swarm_gallery::render_swarm_chat_card_lines(
+        std::slice::from_ref(member),
+        spinner_frame,
+        width.saturating_sub(1) as usize,
+    ) {
+        out.push(line.alignment(ratatui::layout::Alignment::Left));
+    }
+}
+
+
 pub(super) fn prepare_messages(
     app: &dyn TuiState,
     width: u16,
@@ -691,6 +746,7 @@ pub(super) fn prepare_messages(
         batch_progress_hash: active_batch_progress_hash(app),
         inline_images_signature: app.side_pane_images_signature(),
         inline_images_visible: app.inline_images_visible(),
+    swarm_members_signature: swarm_members_signature(&app.inline_swarm_members()),
     };
 
     super::note_full_prep_request();
@@ -880,6 +936,7 @@ fn prepare_messages_inner(app: &dyn TuiState, width: u16, height: u16) -> Prepar
             image_regions: Vec::new(),
             edit_tool_ranges: Vec::new(),
             copy_targets: Vec::new(),
+            mermaid_pending_epoch: None,
         });
         let frame = PreparedChatFrame::from_single(prepared);
         super::note_full_prep_phase_metrics(super::FullPrepPhaseMetrics {
@@ -929,6 +986,7 @@ fn prepare_body_cached(app: &dyn TuiState, width: u16) -> Arc<PreparedMessages> 
         inline_images_visible: app.inline_images_visible(),
         images_signature: app.side_pane_images_signature(),
         expanded_messages_version: app.expanded_messages_version(),
+    swarm_members_signature: swarm_members_signature(&app.inline_swarm_members()),
     };
     let msg_count = app.display_messages().len();
     let cache_lookup_start = Instant::now();
@@ -1538,6 +1596,7 @@ pub(super) fn prepare_body_incremental(
     // anchored image matching a *new* message must be injected here; its anchor
     // target did not exist when the base was built.
     let anchored_images = super::inline_image_ui::resolve_anchored_items_cached(app);
+    let swarm_members = app.inline_swarm_members();
     let inline_images_visible = app.inline_images_visible();
     // 0-based ordinal of the next rendered user prompt, excluding synthetic
     // attached-image label messages, mirroring the session renderer's count.
@@ -1741,6 +1800,12 @@ pub(super) fn prepare_body_incremental(
                             new_line_raw_overrides.push(None);
                             new_line_copy_offsets.push(0);
                         }
+                        let card_start = new_lines.len();
+                        push_spawned_swarm_card_lines(&mut new_lines, msg, &swarm_members, app, width);
+                        for _ in card_start..new_lines.len() {
+                            new_line_raw_overrides.push(None);
+                            new_line_copy_offsets.push(0);
+                        }
                         if let Some(ref tc) = msg.tool_data {
                             let is_edit_tool = tools_ui::is_edit_tool_name(&tc.name);
                             if is_edit_tool {
@@ -1810,6 +1875,12 @@ pub(super) fn prepare_body_incremental(
                     }
                     for line in cached {
                         new_lines.push(align_if_unset(line, align));
+                        new_line_raw_overrides.push(None);
+                        new_line_copy_offsets.push(0);
+                    }
+                    let card_start = new_lines.len();
+                    push_spawned_swarm_card_lines(&mut new_lines, msg, &swarm_members, app, width);
+                    for _ in card_start..new_lines.len() {
                         new_line_raw_overrides.push(None);
                         new_line_copy_offsets.push(0);
                     }
@@ -2161,6 +2232,7 @@ fn prepare_streaming_cached(
             image_regions: Vec::new(),
             edit_tool_ranges: Vec::new(),
             copy_targets: Vec::new(),
+            mermaid_pending_epoch: None,
         };
     }
 
@@ -2218,6 +2290,7 @@ pub(super) fn prepare_body(
     // Images anchored to transcript messages render inline right after the
     // message that produced them (tool result or user prompt).
     let anchored_images = super::inline_image_ui::resolve_anchored_items_cached(app);
+    let swarm_members = app.inline_swarm_members();
     let inline_images_visible = app.inline_images_visible();
     let mut anchor_prompt_ordinal = 0usize;
 
@@ -2427,6 +2500,12 @@ pub(super) fn prepare_body(
                     }
                     for line in cached {
                         lines.push(align_if_unset(line, align));
+                        line_raw_overrides.push(None);
+                        line_copy_offsets.push(0);
+                    }
+                    let card_start = lines.len();
+                    push_spawned_swarm_card_lines(&mut lines, msg, &swarm_members, app, width);
+                    for _ in card_start..lines.len() {
                         line_raw_overrides.push(None);
                         line_copy_offsets.push(0);
                     }
@@ -2827,6 +2906,7 @@ fn wrap_lines(
         image_regions,
         edit_tool_ranges: Vec::new(),
         copy_targets: Vec::new(),
+        mermaid_pending_epoch: None,
     }
 }
 
@@ -2967,6 +3047,7 @@ fn wrap_lines_with_map(
         image_regions,
         edit_tool_ranges,
         copy_targets,
+        mermaid_pending_epoch: None,
     }
 }
 

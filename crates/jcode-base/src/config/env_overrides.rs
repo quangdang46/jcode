@@ -105,20 +105,6 @@ impl Config {
             self.dictation.timeout_secs = parsed;
         }
 
-        // Permission mode
-        if let Ok(v) = std::env::var("JCODE_PERMISSION_MODE") {
-            self.permission_mode = Some(v);
-        }
-
-        // Dangerous override — non-CLI consumers (desktop, daemon) use this
-        // to disable all permission checks. The CLI flag also sets this by
-        // populating the env var in dispatch.rs.
-        if std::env::var("JCODE_DANGEROUSLY_SKIP_PERMISSIONS").is_ok()
-            && std::env::var("JCODE_DANGEROUSLY_SKIP_PERMISSIONS").unwrap_or_default() == "1"
-        {
-            self.dangerously_skip_permissions = true;
-        }
-
         // Tools
         if let Ok(v) = std::env::var("JCODE_TOOL_PROFILE") {
             self.tools.profile = v;
@@ -238,6 +224,11 @@ impl Config {
         if let Ok(v) = std::env::var("JCODE_DISABLED_ANIMATIONS") {
             self.display.disabled_animations = parse_env_list(&v);
         }
+        if let Ok(v) = std::env::var("JCODE_ACTIVE_SESSIONS_MANAGER") {
+            if let Some(parsed) = parse_env_bool(&v) {
+                self.display.active_sessions_manager = parsed;
+            }
+        }
         if let Ok(v) = std::env::var("JCODE_PERFORMANCE") {
             let trimmed = v.trim().to_lowercase();
             if matches!(trimmed.as_str(), "auto" | "full" | "reduced" | "minimal") {
@@ -289,6 +280,11 @@ impl Config {
                 self.features.swarm = parsed;
             }
         }
+        if let Ok(v) = std::env::var("JCODE_ENABLE_MERMAID") {
+            if let Some(parsed) = parse_env_bool(&v) {
+                self.features.mermaid = parsed;
+            }
+        }
         if let Ok(v) = std::env::var("JCODE_MESSAGE_TIMESTAMPS") {
             if let Some(parsed) = parse_env_bool(&v) {
                 self.features.message_timestamps = parsed;
@@ -322,6 +318,16 @@ impl Config {
         if let Ok(v) = std::env::var("JCODE_SWARM_SPAWN_MODE") {
             if let Some(parsed) = SwarmSpawnMode::parse(&v) {
                 self.agents.swarm_spawn_mode = parsed;
+            }
+        }
+        if let Ok(v) = std::env::var("JCODE_SWARM_STRIP_LAYOUT") {
+            if let Some(parsed) = SwarmStripLayout::parse(&v) {
+                self.agents.swarm_strip_layout = parsed;
+            }
+        }
+        if let Ok(v) = std::env::var("JCODE_SWARM_MAX_CONCURRENT_AGENTS") {
+            if let Ok(parsed) = v.trim().parse::<usize>() {
+                self.agents.swarm_max_concurrent_agents = parsed;
             }
         }
         if let Ok(v) = std::env::var("JCODE_MEMORY_MODEL") {
@@ -628,20 +634,6 @@ impl Config {
             let trimmed = v.trim();
             if !trimmed.is_empty() {
                 self.gateway.bind_addr = trimmed.to_string();
-            }
-        }
-
-        // Best-of-N editing
-        if let Ok(v) = std::env::var("JCODE_BEST_OF_N_MODE")
-            && let Some(mode) = jcode_best_of_n::BestOfNMode::parse(&v)
-        {
-            self.best_of_n.mode = mode;
-        }
-        if let Ok(v) = std::env::var("JCODE_BEST_OF_N_COUNT")
-            && let Ok(count) = v.trim().parse::<usize>()
-        {
-            if count >= 1 {
-                self.best_of_n.count = count;
             }
         }
 

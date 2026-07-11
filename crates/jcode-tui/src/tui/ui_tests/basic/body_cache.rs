@@ -11,6 +11,7 @@ fn test_body_cache_state_keeps_multiple_width_entries() {
         images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
     };
     let key_b = BodyCacheKey {
         width: 41,
@@ -31,6 +32,7 @@ fn test_body_cache_state_keeps_multiple_width_entries() {
         edit_tool_ranges: Vec::new(),
         copy_targets: Vec::new(),
         message_boundaries: Vec::new(),
+        mermaid_pending_epoch: None,
     });
     let prepared_b = Arc::new(PreparedMessages {
         wrapped_lines: vec![Line::from("b")],
@@ -46,6 +48,7 @@ fn test_body_cache_state_keeps_multiple_width_entries() {
         edit_tool_ranges: Vec::new(),
         copy_targets: Vec::new(),
         message_boundaries: Vec::new(),
+        mermaid_pending_epoch: None,
     });
 
     let mut cache = BodyCacheState::default();
@@ -80,6 +83,7 @@ fn test_body_cache_state_evicts_oldest_entries() {
             images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
         };
         let prepared = Arc::new(PreparedMessages {
             wrapped_lines: vec![Line::from(format!("{idx}"))],
@@ -95,6 +99,7 @@ fn test_body_cache_state_evicts_oldest_entries() {
             edit_tool_ranges: Vec::new(),
             copy_targets: Vec::new(),
         message_boundaries: Vec::new(),
+        mermaid_pending_epoch: None,
         });
         cache.insert(key, prepared, idx);
     }
@@ -119,6 +124,7 @@ fn test_body_cache_state_accepts_large_single_entry_within_total_budget() {
         images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
     };
     let prepared = make_prepared_messages_with_content_bytes(3 * 1024 * 1024, "body-large-");
 
@@ -147,6 +153,7 @@ fn test_body_cache_state_retains_oversized_hot_entry() {
         images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
     };
     let prepared = make_oversized_prepared_messages("body-oversized-");
 
@@ -176,6 +183,7 @@ fn test_body_cache_state_keeps_two_oversized_width_entries_hot() {
         images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
     };
     let key_b = BodyCacheKey {
         width: 139,
@@ -212,6 +220,7 @@ fn test_body_cache_state_uses_oversized_hot_entry_as_incremental_base() {
         images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
     };
     let prepared = make_oversized_prepared_messages("body-oversized-base-");
 
@@ -231,6 +240,114 @@ fn test_body_cache_state_uses_oversized_hot_entry_as_incremental_base() {
         .expect("expected oversized hot entry to remain eligible as incremental base");
     assert!(Arc::ptr_eq(&base.0, &prepared));
     assert_eq!(base.1, 120);
+}
+
+/// Regression: a deferred mermaid render completing does not change the
+/// transcript (`messages_version` stays put), so the staleness must be carried
+/// by the prepared body itself. A base whose pending placeholder became stale
+/// (epoch advanced) must be cut at the owning message and re-rendered, not
+/// reused verbatim, or the placeholder sticks on screen forever.
+#[test]
+fn test_build_body_from_base_rerenders_stale_mermaid_pending_tail() {
+    let width = 80;
+    let state = TestState {
+        display_messages: vec![
+            DisplayMessage::user("draw me a diagram"),
+            DisplayMessage::assistant("Sure!"),
+        ],
+        messages_version: 1,
+        ..Default::default()
+    };
+
+    let mut base = super::prepare::prepare_body(&state, width, false);
+    assert!(
+        base.mermaid_pending_epoch.is_none(),
+        "plain text body must not carry a pending stamp"
+    );
+
+    // Simulate a body whose assistant message baked in the deferred
+    // placeholder at epoch E, where the live epoch has since moved past E.
+    let placeholder_line_idx = base.message_boundaries[0].wrapped_len;
+    base.wrapped_lines.insert(
+        placeholder_line_idx,
+        Line::from(markdown::MERMAID_PENDING_PLACEHOLDER_TEXT),
+    );
+    Arc::make_mut(&mut base.wrapped_plain_lines).insert(
+        placeholder_line_idx,
+        markdown::MERMAID_PENDING_PLACEHOLDER_TEXT.to_string(),
+    );
+    Arc::make_mut(&mut base.wrapped_copy_offsets).insert(placeholder_line_idx, 0);
+    Arc::make_mut(&mut base.wrapped_line_map).insert(
+        placeholder_line_idx,
+        WrappedLineMap {
+            raw_line: 0,
+            start_col: 0,
+            end_col: 0,
+        },
+    );
+    for boundary in &mut base.message_boundaries[1..] {
+        boundary.wrapped_len += 1;
+    }
+    let live_epoch = crate::tui::mermaid::deferred_render_epoch();
+    base.mermaid_pending_epoch = Some(live_epoch.wrapping_sub(1));
+
+    let (rebuilt, path) = super::prepare::build_body_from_base(
+        &state,
+        width,
+        Arc::new(base),
+        state.display_messages.len(),
+        0,
+        state.display_messages.len(),
+    );
+
+    assert!(
+        !rebuilt
+            .wrapped_lines
+            .iter()
+            .any(markdown::line_is_mermaid_pending_placeholder),
+        "stale pending placeholder must be re-rendered away (path: {path})"
+    );
+    assert!(
+        rebuilt.mermaid_pending_epoch.is_none()
+            || rebuilt.mermaid_pending_epoch == Some(crate::tui::mermaid::deferred_render_epoch()),
+        "rebuilt body must not keep a stale pending stamp"
+    );
+}
+
+/// A base with a *current* pending stamp (epoch unchanged: the background
+/// render is still running) is still reusable as-is; rebuilding early would
+/// just churn frames without new information.
+#[test]
+fn test_build_body_from_base_keeps_current_mermaid_pending_base() {
+    let width = 80;
+    let state = TestState {
+        display_messages: vec![
+            DisplayMessage::user("draw me a diagram"),
+            DisplayMessage::assistant("Sure!"),
+        ],
+        messages_version: 1,
+        ..Default::default()
+    };
+
+    let mut base = super::prepare::prepare_body(&state, width, false);
+    base.mermaid_pending_epoch = Some(crate::tui::mermaid::deferred_render_epoch());
+    let base = Arc::new(base);
+    let base_ptr = Arc::as_ptr(&base) as usize;
+
+    let (rebuilt, path) = super::prepare::build_body_from_base(
+        &state,
+        width,
+        base,
+        state.display_messages.len(),
+        0,
+        state.display_messages.len(),
+    );
+
+    assert_eq!(
+        Arc::as_ptr(&rebuilt) as usize,
+        base_ptr,
+        "current-epoch pending base should be reused exactly (path: {path})"
+    );
 }
 
 #[test]
@@ -342,6 +459,7 @@ fn test_full_prep_cache_state_keeps_multiple_width_entries() {
     inline_images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
     inline_images_visible: true,
     };
     let key_b = FullPrepCacheKey {
@@ -363,6 +481,7 @@ fn test_full_prep_cache_state_keeps_multiple_width_entries() {
         edit_tool_ranges: Vec::new(),
         copy_targets: Vec::new(),
         message_boundaries: Vec::new(),
+        mermaid_pending_epoch: None,
     }));
     let prepared_b = make_prepared_chat_frame(Arc::new(PreparedMessages {
         wrapped_lines: vec![Line::from("b")],
@@ -378,6 +497,7 @@ fn test_full_prep_cache_state_keeps_multiple_width_entries() {
         edit_tool_ranges: Vec::new(),
         copy_targets: Vec::new(),
         message_boundaries: Vec::new(),
+        mermaid_pending_epoch: None,
     }));
 
     let mut cache = FullPrepCacheState::default();
@@ -415,6 +535,7 @@ fn test_full_prep_cache_state_evicts_oldest_entries() {
         inline_images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
         inline_images_visible: true,
         };
         let prepared = make_prepared_chat_frame(Arc::new(PreparedMessages {
@@ -431,6 +552,7 @@ fn test_full_prep_cache_state_evicts_oldest_entries() {
             edit_tool_ranges: Vec::new(),
             copy_targets: Vec::new(),
         message_boundaries: Vec::new(),
+        mermaid_pending_epoch: None,
         }));
         cache.insert(key, prepared);
     }
@@ -458,6 +580,7 @@ fn test_full_prep_cache_state_accepts_large_single_entry_within_total_budget() {
     inline_images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
     inline_images_visible: true,
     };
     let prepared = make_prepared_chat_frame_with_content_bytes(3 * 1024 * 1024, "full-large-");
@@ -489,6 +612,7 @@ fn test_full_prep_cache_state_retains_oversized_hot_entry() {
     inline_images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
     inline_images_visible: true,
     };
     let prepared = make_oversized_prepared_chat_frame("full-oversized-");
@@ -522,6 +646,7 @@ fn test_full_prep_cache_state_keeps_two_oversized_width_entries_hot() {
     inline_images_signature: (0, 0),
         expanded_images_version: 0,
         expanded_messages_version: 0,
+        swarm_members_signature: 0,
     inline_images_visible: true,
     };
     let key_b = FullPrepCacheKey {

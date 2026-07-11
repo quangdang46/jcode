@@ -306,6 +306,7 @@ mod tests {
 
     fn todo(id: &str, content: &str, status: &str) -> TodoItem {
         TodoItem {
+            active_form: None,
             id: id.to_string(),
             content: content.to_string(),
             status: status.to_string(),
@@ -313,6 +314,7 @@ mod tests {
             group: None,
             confidence: None,
             completion_confidence: None,
+            confidence_history: Vec::new(),
             blocked_by: Vec::new(),
             assigned_to: None,
         }

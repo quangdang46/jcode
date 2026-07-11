@@ -8,10 +8,68 @@ use std::hash::{Hash, Hasher};
 
 pub(super) const TODOS_VIEW_PAGE_ID: &str = "session_todos";
 const TODOS_VIEW_TITLE: &str = "Todos";
+/// Display-message role used by the inline chat todo card.
+const TODO_CARD_ROLE: &str = "todos";
 
 impl App {
     pub(super) fn todos_view_enabled(&self) -> bool {
         self.todos_view_enabled
+    }
+
+    fn latest_todo_card_index(&self) -> Option<usize> {
+        self.display_messages
+            .iter()
+            .rposition(|message| message.role == TODO_CARD_ROLE)
+    }
+
+    /// Show the session todo list as an inline card in the chat transcript, or
+    /// dismiss it when the card is already the trailing message.
+    pub(super) fn toggle_todo_card(&mut self) {
+        if let Some(idx) = self.latest_todo_card_index()
+            && idx + 1 == self.display_messages.len()
+        {
+            self.remove_display_message(idx);
+            self.todo_card_rendered_hash = 0;
+            self.set_status_notice("Todos card dismissed");
+            return;
+        }
+        self.show_todo_card();
+    }
+
+    /// Push (or move to the bottom) the inline todo card with fresh data. The
+    /// transcript keeps at most one card so repeated toggles don't stack.
+    pub(super) fn show_todo_card(&mut self) {
+        let session_id = self.active_client_session_id().map(str::to_string);
+        let todos = load_current_session_todos(session_id.as_deref());
+        let content = serde_json::to_string(&todos).unwrap_or_else(|_| "[]".to_string());
+        self.todo_card_rendered_hash = hash_todos_payload(session_id.as_deref(), &todos, &[]);
+
+        if let Some(idx) = self.latest_todo_card_index() {
+            if idx + 1 == self.display_messages.len() {
+                self.replace_display_message_content(idx, content);
+                return;
+            }
+            self.remove_display_message(idx);
+        }
+        self.push_display_message(crate::tui::DisplayMessage::todos(content));
+        self.set_status_notice("Todos card");
+    }
+
+    /// Live-refresh the inline todo card when the session todo list changed.
+    /// Returns true when the transcript was updated.
+    pub(super) fn refresh_todo_card_if_needed(&mut self) -> bool {
+        let Some(idx) = self.latest_todo_card_index() else {
+            return false;
+        };
+        let session_id = self.active_client_session_id().map(str::to_string);
+        let todos = load_current_session_todos(session_id.as_deref());
+        let next_hash = hash_todos_payload(session_id.as_deref(), &todos, &[]);
+        if next_hash == self.todo_card_rendered_hash {
+            return false;
+        }
+        self.todo_card_rendered_hash = next_hash;
+        let content = serde_json::to_string(&todos).unwrap_or_else(|_| "[]".to_string());
+        self.replace_display_message_content(idx, content)
     }
 
     pub(super) fn set_todos_view_enabled(&mut self, enabled: bool, focus: bool) {
@@ -108,12 +166,13 @@ impl App {
     fn refresh_todos_view_cache(&mut self, force: bool) -> bool {
         let session_id = self.active_client_session_id();
         let todos = load_current_session_todos(session_id);
-        let next_hash = hash_todos_payload(session_id, &todos);
+        let goals = load_current_session_goals(session_id);
+        let next_hash = hash_todos_payload(session_id, &todos, &goals);
         if !force && self.todos_view_rendered_hash == next_hash {
             return false;
         }
 
-        self.todos_view_markdown = build_todos_view_markdown(session_id, &todos);
+        self.todos_view_markdown = build_todos_view_markdown(session_id, &todos, &goals);
         self.todos_view_updated_at_ms = now_ms();
         self.todos_view_rendered_hash = next_hash;
         true
@@ -138,7 +197,8 @@ impl App {
 
 pub(super) fn todos_view_status_message(app: &App) -> String {
     format!(
-        "Todo screen: {}\n\nWhen enabled, the side panel shows a transient Todos page dedicated to the current session's todo list and refreshes as the list changes. It is not persisted to session side-panel storage.",
+        "Todo card: shown inline in the chat with /todos or {}.\n\nTodo side-panel screen: {}\n\nWhen the panel screen is enabled (/todos panel), the side panel shows a transient Todos page dedicated to the current session's todo list and refreshes as the list changes. It is not persisted to session side-panel storage.",
+        crate::tui::keybind::todo_card_key_label(),
         if app.todos_view_enabled() {
             "enabled"
         } else {
@@ -148,39 +208,48 @@ pub(super) fn todos_view_status_message(app: &App) -> String {
 }
 
 pub(super) fn handle_todos_view_command(app: &mut App, trimmed: &str) -> bool {
-    if !trimmed.starts_with("/todos") {
+    let arg = if trimmed == "/todo" {
+        ""
+    } else if let Some(rest) = trimmed.strip_prefix("/todos") {
+        rest.trim()
+    } else {
         return false;
-    }
+    };
 
-    let arg = trimmed.strip_prefix("/todos").unwrap_or_default().trim();
     match arg {
-        "" => {
+        // Default: show the todo list as an inline chat card (toggles off when
+        // the card is already the latest message).
+        "" | "card" => {
+            app.toggle_todo_card();
+        }
+        // Legacy side-panel screen, now behind an explicit subcommand.
+        "panel" => {
             let enabled = !app.todos_view_enabled();
             app.set_todos_view_enabled(enabled, true);
             if enabled {
-                app.set_status_notice("Todos: ON");
+                app.set_status_notice("Todos panel: ON");
                 app.push_display_message(crate::tui::DisplayMessage::system(
                     "Todo screen enabled. The side panel now shows only this session's todo list."
                         .to_string(),
                 ));
             } else {
-                app.set_status_notice("Todos: OFF");
+                app.set_status_notice("Todos panel: OFF");
                 app.push_display_message(crate::tui::DisplayMessage::system(
                     "Todo screen disabled.".to_string(),
                 ));
             }
         }
-        "on" => {
+        "on" | "panel on" => {
             app.set_todos_view_enabled(true, true);
-            app.set_status_notice("Todos: ON");
+            app.set_status_notice("Todos panel: ON");
             app.push_display_message(crate::tui::DisplayMessage::system(
                 "Todo screen enabled. The side panel now shows only this session's todo list."
                     .to_string(),
             ));
         }
-        "off" => {
+        "off" | "panel off" => {
             app.set_todos_view_enabled(false, false);
-            app.set_status_notice("Todos: OFF");
+            app.set_status_notice("Todos panel: OFF");
             app.push_display_message(crate::tui::DisplayMessage::system(
                 "Todo screen disabled.".to_string(),
             ));
@@ -192,7 +261,7 @@ pub(super) fn handle_todos_view_command(app: &mut App, trimmed: &str) -> bool {
         }
         _ => {
             app.push_display_message(crate::tui::DisplayMessage::error(
-                "Usage: /todos [on|off|status]".to_string(),
+                "Usage: /todos [card|panel|on|off|status]".to_string(),
             ));
         }
     }
@@ -207,7 +276,18 @@ fn load_current_session_todos(session_id: Option<&str>) -> Vec<TodoItem> {
     crate::todo::load_todos(session_id).unwrap_or_default()
 }
 
-fn build_todos_view_markdown(session_id: Option<&str>, todos: &[TodoItem]) -> String {
+fn load_current_session_goals(session_id: Option<&str>) -> Vec<crate::todo::TodoGoal> {
+    let Some(session_id) = session_id else {
+        return Vec::new();
+    };
+    crate::todo::load_goals(session_id).unwrap_or_default()
+}
+
+fn build_todos_view_markdown(
+    session_id: Option<&str>,
+    todos: &[TodoItem],
+    goals: &[crate::todo::TodoGoal],
+) -> String {
     let session_label = session_id
         .and_then(crate::id::extract_session_name)
         .map(|name| format!("`{}`", name))
@@ -284,6 +364,7 @@ fn build_todos_view_markdown(session_id: Option<&str>, todos: &[TodoItem]) -> St
                 "\n## {} ({}/{})\n",
                 group_name, group_done, group_total
             ));
+            markdown.push_str(&format_goal_markdown(goals, group.as_deref()));
             for (status, heading) in sections {
                 let status_items = sorted_group_items_for_status(&items, status);
                 if status_items.is_empty() {
@@ -298,6 +379,7 @@ fn build_todos_view_markdown(session_id: Option<&str>, todos: &[TodoItem]) -> St
         return markdown;
     }
 
+    markdown.push_str(&format_goal_markdown(goals, None));
     for (status, heading) in sections {
         let items = sorted_todos_for_status(todos, status);
         if items.is_empty() {
@@ -319,6 +401,34 @@ fn todo_group_key(todo: &TodoItem) -> Option<String> {
         .map(str::trim)
         .filter(|group| !group.is_empty())
         .map(|group| group.to_string())
+}
+
+/// Goal assessment line(s) for a group header (or the ungrouped/flat list
+/// when `group` is `None`). Empty when no goal is recorded for that key.
+fn format_goal_markdown(goals: &[crate::todo::TodoGoal], group: Option<&str>) -> String {
+    let key = group.map(str::trim).filter(|group| !group.is_empty());
+    let Some(goal) = goals.iter().find(|goal| {
+        goal.group
+            .as_deref()
+            .map(str::trim)
+            .filter(|group| !group.is_empty())
+            == key
+    }) else {
+        return String::new();
+    };
+    let mut line = String::new();
+    if let Some(score) = goal.hill_climbability {
+        line.push_str(&format!("\n- Hill-climbability: **{}%**", score));
+        line.push('\n');
+    }
+    if let Some(objective) = goal
+        .objective
+        .as_deref()
+        .filter(|objective| !objective.trim().is_empty())
+    {
+        line.push_str(&format!("- Objective: {}\n", objective.trim()));
+    }
+    line
 }
 
 /// Partition todos into ordered groups (first-seen order, ungrouped last).
@@ -463,7 +573,11 @@ fn priority_rank(priority: &str) -> u8 {
     }
 }
 
-fn hash_todos_payload(session_id: Option<&str>, todos: &[TodoItem]) -> u64 {
+fn hash_todos_payload(
+    session_id: Option<&str>,
+    todos: &[TodoItem],
+    goals: &[crate::todo::TodoGoal],
+) -> u64 {
     let mut hasher = DefaultHasher::new();
     session_id.hash(&mut hasher);
     for todo in todos {
@@ -476,6 +590,11 @@ fn hash_todos_payload(session_id: Option<&str>, todos: &[TodoItem]) -> u64 {
         todo.completion_confidence.hash(&mut hasher);
         todo.blocked_by.hash(&mut hasher);
         todo.assigned_to.hash(&mut hasher);
+    }
+    for goal in goals {
+        goal.group.hash(&mut hasher);
+        goal.hill_climbability.hash(&mut hasher);
+        goal.objective.hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -504,6 +623,7 @@ mod tests {
         completion_confidence: Option<u8>,
     ) -> TodoItem {
         TodoItem {
+            active_form: None,
             id: id.to_string(),
             content: content.to_string(),
             status: status.to_string(),
@@ -511,6 +631,7 @@ mod tests {
             group: None,
             confidence,
             completion_confidence,
+            confidence_history: Vec::new(),
             blocked_by: Vec::new(),
             assigned_to: None,
         }
@@ -537,7 +658,7 @@ mod tests {
             ),
         ];
 
-        let markdown = build_todos_view_markdown(Some("session_test"), &todos);
+        let markdown = build_todos_view_markdown(Some("session_test"), &todos, &[]);
 
         assert!(markdown.contains("- Weighted confidence: **86%**"));
         assert!(markdown.contains("- Lowest completed confidence: **95%**"));
@@ -557,9 +678,9 @@ mod tests {
             Some(80),
             None,
         )];
-        let before = hash_todos_payload(Some("session_test"), &todos);
+        let before = hash_todos_payload(Some("session_test"), &todos, &[]);
         todos[0].confidence = Some(81);
-        let after = hash_todos_payload(Some("session_test"), &todos);
+        let after = hash_todos_payload(Some("session_test"), &todos, &[]);
 
         assert_ne!(before, after);
     }
@@ -591,10 +712,24 @@ mod tests {
         let markdown = build_todos_view_markdown(
             Some("session_test"),
             &[grouped_a, grouped_b, other, ungrouped],
+            &[crate::todo::TodoGoal {
+                group: Some("optimize rendering".to_string()),
+                hill_climbability: Some(90),
+                objective: Some("frame time under 8ms".to_string()),
+                ..Default::default()
+            }],
         );
 
         assert!(
             markdown.contains("## optimize rendering (1/2)"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("- Hill-climbability: **90%**"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("- Objective: frame time under 8ms"),
             "{markdown}"
         );
         assert!(markdown.contains("## scrollback (0/1)"), "{markdown}");
@@ -611,9 +746,21 @@ mod tests {
     #[test]
     fn todos_view_hash_changes_when_group_changes() {
         let mut todos = vec![todo("g", "Group hash", "pending", "high", Some(80), None)];
-        let before = hash_todos_payload(Some("session_test"), &todos);
+        let before = hash_todos_payload(Some("session_test"), &todos, &[]);
         todos[0].group = Some("rendering".to_string());
-        let after = hash_todos_payload(Some("session_test"), &todos);
+        let after = hash_todos_payload(Some("session_test"), &todos, &[]);
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn todos_view_hash_changes_when_goals_change() {
+        let todos = vec![todo("g", "Goal hash", "pending", "high", Some(80), None)];
+        let before = hash_todos_payload(Some("session_test"), &todos, &[]);
+        let goals = vec![crate::todo::TodoGoal {
+            hill_climbability: Some(30),
+            ..Default::default()
+        }];
+        let after = hash_todos_payload(Some("session_test"), &todos, &goals);
         assert_ne!(before, after);
     }
 }

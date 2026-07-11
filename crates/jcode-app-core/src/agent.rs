@@ -2,6 +2,7 @@
 
 mod compaction;
 mod environment;
+mod inline_tail;
 mod interrupts;
 mod messages;
 mod orchestrator;
@@ -95,7 +96,12 @@ fn stable_json_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {
 }
 
 fn message_hashes(messages: &[Message]) -> Vec<u64> {
-    messages.iter().map(stable_hash_json).collect()
+    // Hash the cache-relevant projection, not the raw Message. Raw hashing
+    // keys off non-transmitted metadata (timestamp, tool_duration_ms,
+    // ReasoningTrace blocks, cache_control markers), which triggers spurious
+    // harness:_prefix_changed KV-cache miss reports when the same message is
+    // re-serialized with backfilled metadata on the next turn.
+    crate::message::cache_relevant_message_hashes(messages)
 }
 
 fn kv_cache_request_event(
@@ -112,7 +118,7 @@ fn kv_cache_request_event(
     ServerEvent::KvCacheRequest {
         system_static_hash: stable_hash_str(system_static),
         tools_hash: stable_hash_json(tools),
-        messages_hash: stable_hash_json(messages),
+        messages_hash: stable_hash_json(&crate::message::cache_relevant_messages(messages)),
         message_hashes: message_hashes(messages),
         message_count: messages.len(),
         tool_count: tools.len(),
@@ -225,6 +231,7 @@ pub struct Agent {
     locked_tools: Option<Vec<ToolDefinition>>,
     /// When true, spawned child agents run the todo pipeline after each turn.
     todo_orchestrator_enabled: bool,
+    inline_tail: inline_tail::InlineTailBuffer,
     /// One-shot guard for the async MCP-registration race (#206).
     ///
     /// MCP servers connect on a background task and register `mcp__*` tools
@@ -261,6 +268,49 @@ pub struct Agent {
     /// Best-of-N candidate ID, set when this agent is spawned by the orchestrator
     /// and copied onto every ToolContext so propose_* tools can attribute proposals.
     best_of_n_candidate_id: Option<String>,
+}
+
+/// Apply `config.provider.default_model` (+ `default_provider`) to a freshly
+/// constructed MultiProvider.
+///
+/// Bare `set_model("deepseek-v4-flash")` without the provider key mis-routes
+/// OpenAI-compatible profile models through the generic OpenRouter slot and
+/// fails with `OPENROUTER_API_KEY not found`, undoing the successful apply in
+/// `provider/startup.rs`. Always route through
+/// `model_switch_request_for_session_route` so `default_provider = "opencode-go"`
+/// becomes `opencode-go:deepseek-v4-flash`.
+fn apply_config_default_model(provider: &dyn Provider) {
+    let cfg = crate::config::config();
+    let Some(model) = cfg
+        .provider
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    else {
+        return;
+    };
+    let provider_key = cfg.provider.default_provider.as_deref();
+    let model_request = crate::provider::MultiProvider::model_switch_request_for_session_route(
+        model,
+        provider_key,
+        None,
+    );
+    if let Err(e) = crate::provider::set_model_with_auth_refresh(provider, &model_request) {
+        crate::logging::warn(&format!(
+            "Failed to apply config default_model '{}' (via '{}', provider={:?}): {}; falling back to provider default {}",
+            model,
+            model_request,
+            provider_key,
+            e,
+            provider.model()
+        ));
+    } else {
+        crate::logging::info(&format!(
+            "Applied config default_model '{}' via '{}' (provider={:?})",
+            model, model_request, provider_key
+        ));
+    }
 }
 
 impl Agent {
@@ -313,6 +363,7 @@ impl Agent {
             last_usage: TokenUsage::default(),
             locked_tools: None,
             todo_orchestrator_enabled: false,
+            inline_tail: inline_tail::InlineTailBuffer::default(),
             mcp_late_register_resolved: false,
             system_prompt_override: None,
             memory_enabled: crate::config::config().features.memory,
@@ -344,11 +395,25 @@ impl Agent {
     }
 
     fn current_skills_snapshot(&self) -> Arc<SkillRegistry> {
-        self.registry
+        // Global skills come from the process-wide shared registry; the
+        // project-local overlay is composed fresh from this session's
+        // workspace root so per-repo skills are session-scoped, immediately
+        // visible, and never leak across sessions (issue #457).
+        let global = self
+            .registry
             .skills()
             .try_read()
             .map(|skills| Arc::new(skills.clone()))
-            .unwrap_or_else(|_| self.skills.clone())
+            .unwrap_or_else(|_| self.skills.clone());
+        let working_dir = self
+            .session
+            .working_dir
+            .as_deref()
+            .map(std::path::Path::new);
+        Arc::new(SkillRegistry::effective_for_working_dir(
+            &global,
+            working_dir,
+        ))
     }
 
     pub fn available_skill_names(&self) -> Vec<String> {
@@ -364,24 +429,11 @@ impl Agent {
         // allow-once cache) at the start of each new agent session.
         crate::execution_policy::reset_policy_session();
 
-        // FIX: Apply persisted default_model from config BEFORE build_base moves provider.
-        // Provider constructors only check env vars and hardcoded defaults (e.g.
-        // AnthropicProvider::new reads JCODE_ANTHROPIC_MODEL or "claude-opus-4-6"),
-        // never config.toml. After the user changes model via TUI (which writes
-        // config.toml via set_default_model), a restart loses that selection.
-        // Apply it here so the model survives restarts.
-        let config_model = crate::config::config().provider.default_model.clone();
-        if let Some(ref model) = config_model
-            && !model.trim().is_empty()
-            && let Err(e) = provider.set_model(model.trim())
-        {
-            crate::logging::warn(&format!(
-                "Failed to apply config default_model '{}': {}; falling back to provider default {}",
-                model.trim(),
-                e,
-                provider.model()
-            ));
-        }
+        // Apply persisted default_model + default_provider from config BEFORE
+        // build_base. Bare set_model("deepseek-v4-flash") mis-routes to OpenRouter
+        // when default_provider is opencode-go and fails with OPENROUTER_API_KEY
+        // missing — undoing the successful apply in provider startup.
+        apply_config_default_model(provider.as_ref());
 
         let tool_selection = crate::config::config().tools.selection();
         let mut agent = Self::build_base(
@@ -470,20 +522,11 @@ impl Agent {
         session: Session,
         allowed_tools: Option<HashSet<String>>,
     ) -> Self {
-        // FIX: Same as new() — apply config default_model before build_base.
+        // Same as new() — apply config default_model+provider before build_base.
         // Server restarts (jcode restart) create agents through this path too.
-        let config_model = crate::config::config().provider.default_model.clone();
-        if let Some(ref model) = config_model
-            && !model.trim().is_empty()
-            && let Err(e) = provider.set_model(model.trim())
-        {
-            crate::logging::warn(&format!(
-                "Failed to apply config default_model '{}': {}; falling back to provider default {}",
-                model.trim(),
-                e,
-                provider.model()
-            ));
-        }
+        // If the session already has a model, the block below re-applies it with
+        // the session's provider_key (takes precedence after this).
+        apply_config_default_model(provider.as_ref());
 
         let tool_selection = if let Some(allowed_tools) = allowed_tools {
             crate::config::ToolSelection {
@@ -1091,6 +1134,10 @@ impl Agent {
                 }
             });
         }
+    }
+
+    pub async fn poll_todo_pipeline(&mut self) -> Result<()> {
+        Ok(())
     }
 
     pub fn mark_crashed(&mut self, message: Option<String>) {

@@ -1,14 +1,30 @@
 use super::render_support::highlight_code;
 use super::*;
 
+thread_local! {
+    /// Renders performed by THIS thread. `MarkdownDebugStats::total_renders`
+    /// is process-global, so tests that assert "no extra render happened
+    /// between two calls" race concurrent renders on other test threads;
+    /// they should diff this counter instead (see `thread_render_count`).
+    static THREAD_RENDER_COUNT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Number of full markdown renders performed by the current thread. Unlike
+/// `debug_stats().total_renders`, this is immune to concurrent renders on
+/// other threads, making it suitable for cache-behavior assertions in
+/// parallel test runs.
+pub fn thread_render_count() -> u64 {
+    THREAD_RENDER_COUNT.with(|c| c.get())
+}
+
 pub fn render_markdown_with_width(text: &str, max_width: Option<usize>) -> Vec<Line<'static>> {
     let render_start = Instant::now();
-    let text = escape_currency_dollars(text);
+    let text = jcode_render_core::normalize_latex_math(text);
+    let text = escape_currency_dollars(&text);
     let text = preserve_line_oriented_softbreaks(&text);
     let text = text.as_str();
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut current_spans: Vec<Span<'static>> = Vec::new();
-    let side_only = diagram_side_only();
     let streaming_mode = streaming_render_context_enabled();
     let deferred_mermaid_mode = deferred_mermaid_render_context_enabled();
     let spacing_mode = effective_markdown_spacing_mode();
@@ -438,24 +454,13 @@ pub fn render_markdown_with_width(text: &str, max_width: Option<usize>) -> Vec<L
                                     *hash, *width, *height, None,
                                 );
                             }
-                            match result {
-                                mermaid::RenderResult::Image { .. } if side_only => {
-                                    lines.push(mermaid_sidebar_placeholder(
-                                        "↗ mermaid diagram (sidebar)",
-                                    ));
-                                }
-                                other => {
-                                    let mermaid_lines = mermaid::result_to_lines(other, max_width);
-                                    lines.extend(mermaid_lines);
-                                }
-                            }
+                            let mermaid_lines = mermaid::result_to_lines(result, max_width);
+                            lines.extend(mermaid_lines);
                         }
                         None => {
-                            lines.push(mermaid_sidebar_placeholder(if side_only {
-                                "↻ mermaid diagram rendering in sidebar..."
-                            } else {
-                                "↻ rendering mermaid diagram..."
-                            }));
+                            lines.push(mermaid_sidebar_placeholder(
+                                MERMAID_PENDING_PLACEHOLDER_TEXT,
+                            ));
                         }
                     }
                 } else {
@@ -529,9 +534,7 @@ pub fn render_markdown_with_width(text: &str, max_width: Option<usize>) -> Vec<L
                     continue;
                 }
                 if in_table {
-                    current_cell.push('$');
-                    current_cell.push_str(&math);
-                    current_cell.push('$');
+                    current_cell.push_str(&jcode_render_core::render_inline_latex(&math));
                 } else {
                     ensure_blockquote_prefix(&mut current_spans, blockquote_depth);
                     current_spans.push(math_inline_span(&math));
@@ -556,9 +559,7 @@ pub fn render_markdown_with_width(text: &str, max_width: Option<usize>) -> Vec<L
                     ),
                 );
                 if in_table {
-                    current_cell.push_str("$$");
-                    current_cell.push_str(&math);
-                    current_cell.push_str("$$");
+                    current_cell.push_str(&jcode_render_core::render_inline_latex(&math));
                 } else {
                     let block_start = lines.len();
                     for line in math_display_lines(&math) {
@@ -931,26 +932,20 @@ pub fn render_markdown_with_width(text: &str, max_width: Option<usize>) -> Vec<L
             .unwrap_or(false);
 
         if is_mermaid {
-            if side_only {
-                lines.push(mermaid_sidebar_placeholder(
-                    "↗ mermaid diagram (sidebar, streaming...)",
-                ));
-            } else {
-                // For mermaid, show "rendering..." placeholder while streaming
-                let dim = Style::default().fg(md_dim_color());
-                lines.push(Line::from(Span::styled("┌─ mermaid (streaming...) ", dim)));
-                // Show first few lines of the diagram source
-                for source_line in code_block_content.lines().take(5) {
-                    lines.push(Line::from(vec![
-                        Span::styled("│ ", dim),
-                        Span::styled(source_line.to_string(), Style::default().fg(code_fg())),
-                    ]));
-                }
-                if code_block_content.lines().count() > 5 {
-                    lines.push(Line::from(Span::styled("│ ...", dim)));
-                }
-                lines.push(Line::from(Span::styled("└─", dim)));
+            // For mermaid, show "rendering..." placeholder while streaming
+            let dim = Style::default().fg(md_dim_color());
+            lines.push(Line::from(Span::styled("┌─ mermaid (streaming...) ", dim)));
+            // Show first few lines of the diagram source
+            for source_line in code_block_content.lines().take(5) {
+                lines.push(Line::from(vec![
+                    Span::styled("│ ", dim),
+                    Span::styled(source_line.to_string(), Style::default().fg(code_fg())),
+                ]));
             }
+            if code_block_content.lines().count() > 5 {
+                lines.push(Line::from(Span::styled("│ ...", dim)));
+            }
+            lines.push(Line::from(Span::styled("└─", dim)));
         } else {
             // Regular code block - render what we have
             let lang_str = code_block_lang.as_deref().unwrap_or("");
@@ -1008,6 +1003,7 @@ pub fn render_markdown_with_width(text: &str, max_width: Option<usize>) -> Vec<L
         center_structured_block_ranges(&mut lines, width, &centered_blocks.ranges);
     }
 
+    THREAD_RENDER_COUNT.with(|c| c.set(c.get() + 1));
     if let Ok(mut state) = MARKDOWN_DEBUG.lock() {
         state.stats.total_renders += 1;
         state.stats.last_render_ms = Some(render_start.elapsed().as_secs_f32() * 1000.0);

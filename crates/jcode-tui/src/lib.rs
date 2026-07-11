@@ -22,6 +22,5 @@
 // they did before the split.
 pub use jcode_app_core::*;
 // Presentation layer (kept in this crate).
-pub mod casr_adapter;
 pub mod tui;
 pub mod video_export;

@@ -35,7 +35,7 @@ impl App {
         if !cfg.turn_complete {
             return;
         }
-        if cfg.turn_complete_only_when_unfocused && self.client_focused() {
+        if cfg.turn_complete_only_when_unfocused {
             return;
         }
         let Some(duration) = duration_secs else {
@@ -296,6 +296,7 @@ mod tests {
 
     fn todo_named(content: &str, status: &str, blocked_by: &[&str]) -> TodoItem {
         TodoItem {
+            active_form: None,
             content: content.to_string(),
             status: status.to_string(),
             priority: "medium".to_string(),
@@ -303,6 +304,7 @@ mod tests {
             group: None,
             confidence: None,
             completion_confidence: None,
+            confidence_history: Vec::new(),
             blocked_by: blocked_by.iter().map(|s| s.to_string()).collect(),
             assigned_to: None,
         }

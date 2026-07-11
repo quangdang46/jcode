@@ -216,10 +216,42 @@ pub struct TodoItem {
     /// Confidence, from 0-100, recorded when the todo is marked completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_confidence: Option<u8>,
+    /// Every distinct confidence value this todo has carried, oldest first,
+    /// ending with the current one. Maintained by the todo tool (not the
+    /// model): the first entry is the planning-time confidence, later entries
+    /// record how the assessment evolved while the item was worked on. This
+    /// preserves the planning signal even after the model overwrites
+    /// `confidence` when marking the item done.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub confidence_history: Vec<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_by: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assigned_to: Option<String>,
+}
+
+/// A goal-level assessment attached to a todo group (or, for an ungrouped
+/// flat list, the whole list as one implicit goal with `group: None`).
+///
+/// Hill-climbability is a property of an objective, not of individual steps:
+/// "optimize grep latency" is hill-climbable because progress has a metric,
+/// while "design an onboarding screen" is not because success is a taste
+/// judgment. Items like "read the auth code" have no meaningful score of
+/// their own, so the score lives here instead of on `TodoItem`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TodoGoal {
+    /// Group label this goal describes. `None` covers the ungrouped list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// How hill-climbable this goal is, from 0-100: can progress be measured
+    /// against a quantifiable, verifiable objective and iterated on?
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hill_climbability: Option<u8>,
+    /// The measurable objective progress is climbing toward, when one exists
+    /// (e.g. "p50 grep latency under 50ms on the repo corpus"). A stated
+    /// objective is what makes a high score credible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
 }
 
 use std::collections::HashMap;

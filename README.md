@@ -20,7 +20,7 @@ Built for multi-session workflows, infinite customizability, and performance.
 
 <br>
 
-[Features](#features) · [Install](#installation) · [Quick Start](#quick-start) · [Further Reading](#further-reading) · [Contributing](CONTRIBUTING.md)
+[Website](https://solosystems.dev/jcode) · [Features](#features) · [Install](#installation) · [Quick Start](#quick-start) · [Further Reading](#further-reading) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -854,6 +854,7 @@ mempalace) so the base build stays lean.
 - [Swarm Architecture](docs/SWARM_ARCHITECTURE.md)
 - [Server Architecture](docs/SERVER_ARCHITECTURE.md)
 - [Safety System](docs/SAFETY_SYSTEM.md)
+- [Sponsored Discovery Sponsor Onboarding](docs/SPONSORED_DISCOVERY_SPONSOR_ONBOARDING.md)
 - [Windows Notes](docs/WINDOWS.md)
 - [Wrappers and Shell Integration](docs/WRAPPERS.md)
 - [Refactoring Notes](docs/REFACTORING.md)
@@ -1033,6 +1034,24 @@ Then symlink to your PATH:
 ```bash
 scripts/install_release.sh
 ```
+
+### Uninstall
+
+Removes installed binaries and the launcher but keeps your config, auth, and
+sessions so a clean reinstall picks up where you left off:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1jehuang/jcode/master/scripts/uninstall.sh | bash -s -- --yes
+```
+
+For a full wipe of everything including config, auth, sessions, logs, and
+memory (useful for recovering from a broken install):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/1jehuang/jcode/master/scripts/uninstall.sh | bash -s -- --purge --yes
+```
+
+Add `--dry-run` to preview what would be removed without deleting anything.
 
 ### Platform Support
 

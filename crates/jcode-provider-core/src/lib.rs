@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod attempt_tracker;
 pub mod auth_mode;
 pub mod catalog_refresh;
 pub mod failover;
@@ -8,14 +9,18 @@ pub mod model_id;
 pub mod models;
 pub mod openai_schema;
 pub mod pricing;
+pub mod retry_after;
 pub mod selection;
+pub mod transport;
+
+pub use transport::is_transient_transport_error;
 
 pub use anthropic::{
     ANTHROPIC_OAUTH_BETA_HEADERS, ANTHROPIC_OAUTH_BETA_HEADERS_1M, AnthropicContextMode,
-    anthropic_context_mode, anthropic_effectively_1m, anthropic_is_1m_model,
-    anthropic_map_tool_name_for_oauth, anthropic_map_tool_name_from_oauth,
-    anthropic_oauth_beta_headers, anthropic_stainless_arch, anthropic_stainless_os,
-    anthropic_strip_1m_suffix,
+    AnthropicReasoningCaps, anthropic_context_mode, anthropic_effectively_1m,
+    anthropic_is_1m_model, anthropic_map_tool_name_for_oauth, anthropic_map_tool_name_from_oauth,
+    anthropic_oauth_beta_headers, anthropic_reasoning_caps, anthropic_stainless_arch,
+    anthropic_stainless_os, anthropic_strip_1m_suffix,
 };
 pub use auth_mode::{
     AuthMode, AuthRoute, DualAuthProvider, pinned_mode_for, runtime_env_auth_route,
@@ -26,7 +31,10 @@ pub use failover::{
     FailoverDecision, ProviderFailoverPrompt, classify_failover_error_message,
     parse_failover_prompt_message,
 };
-pub use fallback_pick::pick_next_fallback_route;
+pub use fallback_pick::{
+    FallbackPickOptions, error_looks_like_credential_failure, pick_next_fallback_route,
+    pick_next_fallback_route_with_options,
+};
 pub use fingerprint::{log_provider_canonical_input, stable_hash_json, stable_hash_str};
 pub use models::{
     ALL_CLAUDE_MODELS, ALL_OPENAI_MODELS, DEFAULT_CONTEXT_LIMIT, ModelCapabilities,
@@ -156,18 +164,6 @@ pub trait Provider: Send + Sync {
     fn set_model(&self, _model: &str) -> Result<()> {
         Err(anyhow::anyhow!(
             "This provider does not support model switching"
-        ))
-    }
-
-    /// Override the temperature for this provider instance.
-    ///
-    /// Used by best-of-N strategy generation to give each candidate
-    /// a different temperature. Returns an error if the provider does
-    /// not support runtime temperature changes (the orchestrator logs
-    /// and continues with the default temperature).
-    fn set_temperature(&self, _temperature: f32) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "This provider does not support runtime temperature changes"
         ))
     }
 
@@ -326,6 +322,67 @@ pub trait Provider: Send + Sync {
         PremiumMode::Normal
     }
 
+    /// Current OAuth-vs-API-key credential pin for dual-auth providers.
+    /// Non-dual-auth providers report `Auto`.
+    fn credential_mode(&self) -> CredentialMode {
+        CredentialMode::Auto
+    }
+
+    /// Pin the OAuth-vs-API-key credential route for dual-auth providers.
+    fn set_credential_mode(&self, _mode: CredentialMode) -> Result<()> {
+        Ok(())
+    }
+
+    /// Re-read credentials from disk immediately (e.g. after an OAuth refresh
+    /// by another process). Providers with in-memory credential caches override
+    /// this; the default is a no-op.
+    fn reload_credentials(&self) {}
+
+    /// Human-facing label for the runtime backing this provider instance.
+    /// Unlike `display_name`, this reflects instance state (e.g. which
+    /// OpenAI-compatible profile an aggregator runtime currently serves).
+    fn runtime_display_name(&self) -> String {
+        self.display_name()
+    }
+
+    /// Whether this runtime speaks the real OpenRouter aggregator API with
+    /// provider-routing features (provider pins, per-provider endpoints), as
+    /// opposed to a plain OpenAI-compatible endpoint.
+    fn supports_provider_routing_features(&self) -> bool {
+        false
+    }
+
+    /// For direct OpenAI-compatible endpoints: the (provider label,
+    /// api_method, detail) triple used to build the route entry. `None` for
+    /// everything else (including the real OpenRouter aggregator).
+    fn direct_openai_compatible_route_parts(&self) -> Option<(String, String, String)> {
+        None
+    }
+
+    /// The explicit upstream-provider pin for the current model, when the
+    /// user pinned one on an aggregator runtime.
+    fn explicit_provider_pin_for_current_model(&self) -> Option<String> {
+        None
+    }
+
+    /// Give aggregator runtimes a chance to refresh per-model endpoint data
+    /// used by display surfaces. Returns true when a refresh was scheduled.
+    fn maybe_schedule_endpoint_refresh_for_display(
+        &self,
+        _model: &str,
+        _cache_age_secs: Option<u64>,
+        _context: &'static str,
+    ) -> bool {
+        false
+    }
+
+    /// Human-readable freshness note for this provider's model catalog, shown
+    /// as route detail in the model picker (e.g. "cached live catalog" or
+    /// "catalog still loading"). Empty when the catalog is live/authoritative.
+    fn model_catalog_detail(&self) -> String {
+        String::new()
+    }
+
     /// Returns true if jcode should use its own compaction for this provider.
     fn supports_compaction(&self) -> bool {
         false
@@ -356,6 +413,16 @@ pub trait Provider: Send + Sync {
 
     /// Create a new provider instance with independent mutable state.
     fn fork(&self) -> Arc<dyn Provider>;
+
+    /// Create an independent provider for a brand-new user session.
+    ///
+    /// The default preserves the current runtime selection, matching [`Self::fork`].
+    /// Provider orchestrators backed by reloadable configuration may override this
+    /// to reapply the latest persisted defaults without changing ordinary forks
+    /// used by compaction, resumed sessions, and other in-flight work.
+    fn fork_for_new_session(&self) -> Arc<dyn Provider> {
+        self.fork()
+    }
 
     /// Get a sender for native tool results (if the provider supports it).
     fn native_result_sender(&self) -> Option<NativeToolResultSender> {
@@ -416,6 +483,45 @@ pub enum PremiumMode {
     Zero = 2,
 }
 
+/// Explicit OAuth-vs-API-key credential pin for dual-auth providers
+/// (Anthropic and OpenAI). `Auto` means "prefer OAuth when present, fall back
+/// to an API key"; the explicit variants pin one route for the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CredentialMode {
+    #[default]
+    Auto,
+    OAuth,
+    ApiKey,
+}
+
+impl CredentialMode {
+    /// Resolve the runtime-env pin (JCODE_*_AUTH / route aliases) for a
+    /// dual-auth provider through the canonical auth_mode vocabulary.
+    pub fn from_runtime_env(provider: DualAuthProvider) -> Self {
+        match runtime_env_pinned_mode(provider) {
+            Some(AuthMode::ApiKey) => Self::ApiKey,
+            Some(AuthMode::Oauth) => Self::OAuth,
+            None => Self::Auto,
+        }
+    }
+
+    /// The canonical dual-auth route this explicit mode pins, if any.
+    /// `Auto` has no explicit pin and returns `None`.
+    pub fn auth_route(self, provider: DualAuthProvider) -> Option<AuthRoute> {
+        match (self, provider) {
+            (Self::Auto, _) => None,
+            (Self::OAuth, DualAuthProvider::Anthropic) => {
+                Some(AuthRoute::anthropic(AuthMode::Oauth))
+            }
+            (Self::ApiKey, DualAuthProvider::Anthropic) => {
+                Some(AuthRoute::anthropic(AuthMode::ApiKey))
+            }
+            (Self::OAuth, DualAuthProvider::OpenAI) => Some(AuthRoute::openai(AuthMode::Oauth)),
+            (Self::ApiKey, DualAuthProvider::OpenAI) => Some(AuthRoute::openai(AuthMode::ApiKey)),
+        }
+    }
+}
+
 /// Channel for sending provider-native tool results back to a provider bridge.
 pub type NativeToolResultSender = tokio::sync::mpsc::Sender<NativeToolResult>;
 
@@ -465,6 +571,18 @@ impl NativeToolResult {
 
 /// Canonical User-Agent for generic outbound Jcode HTTP requests.
 pub const JCODE_USER_AGENT: &str = concat!("jcode/", env!("CARGO_PKG_VERSION"));
+
+/// Read an HTTP error body without hiding failures behind an empty string.
+///
+/// This is useful after a non-success status when the response is about to be
+/// converted into an error. If reading the body itself fails, the returned text
+/// preserves that failure so callers can include it in their error message.
+pub async fn http_error_body(response: reqwest::Response, context: &str) -> String {
+    match response.text().await {
+        Ok(body) => body,
+        Err(err) => format!("<failed to read {context} response body: {err}>"),
+    }
+}
 
 /// Shared HTTP client for all generic provider requests. Creating a `reqwest::Client` is expensive
 /// (~10ms due to TLS init, connection pool setup), so we reuse a single instance. Provider-specific
@@ -1003,6 +1121,9 @@ impl ModelCatalogSnapshot {
     }
 
     pub fn from_provider(provider: &dyn Provider) -> Self {
+        // Note: on multi-providers both calls below build the same route
+        // catalog; MultiProvider memoizes it (short TTL) so this stays one
+        // build instead of two.
         Self::new(
             Some(provider.display_name()),
             Some(provider.model()),

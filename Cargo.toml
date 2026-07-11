@@ -29,6 +29,7 @@ members = [
     "crates/jcode-compaction-core",
     "crates/jcode-config-types",
     "crates/jcode-core",
+    "crates/jcode-fuzzy",
     "crates/jcode-memory-types",
     "crates/jcode-message-types",
     "crates/jcode-overnight-core",
@@ -54,6 +55,14 @@ members = [
     "crates/jcode-provider-openai",
     "crates/jcode-provider-gemini",
     "crates/jcode-provider-service",
+    "crates/jcode-provider-claude-cli-runtime",
+    "crates/jcode-provider-anthropic-runtime",
+    "crates/jcode-provider-antigravity-runtime",
+    "crates/jcode-provider-copilot-runtime",
+    "crates/jcode-provider-cursor-runtime",
+    "crates/jcode-provider-gemini-runtime",
+    "crates/jcode-provider-openai-runtime",
+    "crates/jcode-provider-openrouter-runtime",
     "crates/jcode-llm-core",
     "crates/jcode-llm-protocols",
     "crates/jcode-llm-dialects",
@@ -90,6 +99,7 @@ members = [
     "crates/jcode-secrets",
     "crates/jcode-plugin-core",
     "crates/jcode-plugin-runtime",
+    "crates/jcode-provider-doctor",
     "crates/jcode-render-core",
     "evals/jbench",
     "evals/jcode-edit-bench",
@@ -149,14 +159,17 @@ jcode-hooks = { path = "crates/jcode-hooks" }
 jcode-keyring-store = { path = "crates/jcode-keyring-store" }
 jcode-plugin-core = { path = "crates/jcode-plugin-core" }
 jcode-plugin-runtime = { path = "crates/jcode-plugin-runtime" }
+jcode-provider-doctor = { path = "crates/jcode-provider-doctor" }
+jcode-provider-anthropic-runtime = { path = "crates/jcode-provider-anthropic-runtime" }
+jcode-provider-antigravity-runtime = { path = "crates/jcode-provider-antigravity-runtime" }
+jcode-provider-claude-cli-runtime = { path = "crates/jcode-provider-claude-cli-runtime" }
+jcode-provider-copilot-runtime = { path = "crates/jcode-provider-copilot-runtime" }
+jcode-provider-cursor-runtime = { path = "crates/jcode-provider-cursor-runtime" }
+jcode-provider-gemini-runtime = { path = "crates/jcode-provider-gemini-runtime" }
+jcode-provider-openai-runtime = { path = "crates/jcode-provider-openai-runtime" }
+jcode-provider-openrouter-runtime = { path = "crates/jcode-provider-openrouter-runtime" }
 jcode-provider-service = { path = "crates/jcode-provider-service" }
 
-# Cross-provider session conversion engine (resume/import any provider -> jcode).
-# Pinned to a specific commit SHA on the upstream fork so the dependency is
-# reproducible and doesn't accidentally pick up in-flight changes. Bump the
-# `rev` value (or switch to a `tag = "vX.Y.Z"`) when you want to pull a newer
-# CASR snapshot.
-casr = { git = "https://github.com/quangdang46/cross_agent_session_resumer", package = "cross_agent_session_resumer", rev = "bac44dd20a9ccab2ba49e5821d2d5c0b7603f978" }
 
 # TOON format output for the `jcode run --toon` flag — token-efficient JSON
 # alternative. Pinned to a specific commit SHA so the dependency is reproducible.

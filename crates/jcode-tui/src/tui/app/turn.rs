@@ -31,7 +31,7 @@ impl App {
     ) -> Result<()> {
         let eager_stream_redraw = !crate::perf::tui_policy().enable_decorative_animations;
         let mut redraw_period = crate::tui::redraw_interval(self);
-        let mut redraw_interval = interval(redraw_period);
+        let mut redraw_interval = super::run_shell::redraw_timer(redraw_period);
         let mut status_spinner_interval = super::run_shell::status_spinner_interval();
         let mut status_spinner_renderer = super::run_shell::StatusSpinnerRenderer::default();
 
@@ -39,7 +39,7 @@ impl App {
             let desired_redraw = crate::tui::redraw_interval(self);
             if desired_redraw != redraw_period {
                 redraw_period = desired_redraw;
-                redraw_interval = interval(redraw_period);
+                redraw_interval = super::run_shell::redraw_timer(redraw_period);
             }
 
             self.status = ProcessingStatus::Sending;
@@ -119,8 +119,14 @@ impl App {
             ));
 
             let mut stream = loop {
+                // No `biased;` — fair poll so event_stream is not starved
+                // (origin-sync Lesson 2: freeze on alt-tab).
                 tokio::select! {
-                    biased;
+                    // Redraw first — keeps TUI alive when terminal is unfocused
+                    _ = redraw_interval.tick() => {
+                        status_spinner_renderer.draw_full(self, terminal)?;
+                        super::run_shell::reset_status_spinner_interval(&mut status_spinner_interval, self);
+                    }
                     // Handle keyboard input while waiting for API
                     event = event_stream.next() => {
                         match event {
@@ -153,10 +159,12 @@ impl App {
                                 super::run_shell::reset_status_spinner_interval(&mut status_spinner_interval, self);
                             }
                             Some(Ok(Event::Mouse(mouse))) => {
-                                let scroll_only = self.handle_mouse_event(mouse);
-                                if !scroll_only {
-                                    status_spinner_renderer.draw_full(self, terminal)?;
-                                    super::run_shell::reset_status_spinner_interval(&mut status_spinner_interval, self);
+                                if !matches!(mouse.kind, MouseEventKind::Moved) {
+                                    let scroll_only = self.handle_mouse_event(mouse);
+                                    if !scroll_only {
+                                        status_spinner_renderer.draw_full(self, terminal)?;
+                                        super::run_shell::reset_status_spinner_interval(&mut status_spinner_interval, self);
+                                    }
                                 }
                             }
                             Some(Ok(Event::Resize(_, _))) => {
@@ -174,10 +182,6 @@ impl App {
                             status_spinner_renderer.draw_full(self, terminal)?;
                             super::run_shell::reset_status_spinner_interval(&mut status_spinner_interval, self);
                         }
-                    }
-                    _ = redraw_interval.tick() => {
-                        status_spinner_renderer.draw_full(self, terminal)?;
-                        super::run_shell::reset_status_spinner_interval(&mut status_spinner_interval, self);
                     }
                     bus_event = async {
                         match bus_receiver.as_mut() {
@@ -249,8 +253,10 @@ impl App {
                 let desired_redraw = crate::tui::redraw_interval(self);
                 if desired_redraw != redraw_period {
                     redraw_period = desired_redraw;
-                    redraw_interval = interval(redraw_period);
+                    redraw_interval = super::run_shell::redraw_timer(redraw_period);
                 }
+                // No `biased;` — fair poll so event_stream is not starved
+                // (origin-sync Lesson 2: freeze on alt-tab).
                 tokio::select! {
                     // Cheap single-cell spinner refresh between full redraws. This
                     // keeps the thinking/connecting spinner feeling responsive
@@ -447,9 +453,11 @@ impl App {
                                 status_spinner_renderer.draw_full(self, terminal)?;
                             }
                             Some(Ok(Event::Mouse(mouse))) => {
-                                let scroll_only = self.handle_mouse_event(mouse);
-                                if !scroll_only {
-                                    status_spinner_renderer.draw_full(self, terminal)?;
+                                if !matches!(mouse.kind, MouseEventKind::Moved) {
+                                    let scroll_only = self.handle_mouse_event(mouse);
+                                    if !scroll_only {
+                                        status_spinner_renderer.draw_full(self, terminal)?;
+                                    }
                                 }
                             }
                             Some(Ok(Event::Resize(_, _))) => {
@@ -557,6 +565,10 @@ impl App {
                                             if let Some(key) = Self::experimental_feature_key_for_tool(&tool) {
                                                 self.note_experimental_feature_use(key);
                                             }
+                                            if tool.name == "swarm" {
+                                                self.maybe_surface_swarm_config_hint();
+                                            }
+                                            self.maybe_surface_sponsor_disclosure(&tool.name);
                                             if let Some(streaming_tool) = self
                                                 .streaming_tool_calls
                                                 .iter_mut()
@@ -609,25 +621,18 @@ impl App {
                                         cache_read_input_tokens,
                                         cache_creation_input_tokens,
                                     } => {
-                                        let mut usage_changed = false;
-                                        if let Some(input) = input_tokens {
-                                            self.streaming.streaming_input_tokens = input;
-                                            usage_changed = true;
-                                        }
+                                        let mut usage_changed = self
+                                            .apply_stream_usage_input_report(
+                                                input_tokens,
+                                                cache_read_input_tokens,
+                                                cache_creation_input_tokens,
+                                            );
                                         if let Some(output) = output_tokens {
                                             self.streaming.streaming_output_tokens = output;
                                             self.accumulate_streaming_output_tokens(
                                                 output,
                                                 &mut call_output_tokens_seen,
                                             );
-                                        }
-                                        if cache_read_input_tokens.is_some() {
-                                            self.streaming.streaming_cache_read_tokens = cache_read_input_tokens;
-                                            usage_changed = true;
-                                        }
-                                        if cache_creation_input_tokens.is_some() {
-                                            self.streaming.streaming_cache_creation_tokens =
-                                                cache_creation_input_tokens;
                                             usage_changed = true;
                                         }
                                         if usage_changed {
@@ -930,19 +935,12 @@ impl App {
                                             title: Some("Generated image".to_string()),
                                             tool_data: Some(tool_call),
                                         });
-                                        match crate::tui::write_generated_image_side_panel_page(
-                                            &self.session.id,
+                                        if let Some(image) = crate::message::generated_image_rendered_image(
                                             &id,
                                             &path,
-                                            metadata_path.as_deref(),
                                             &output_format,
-                                            revised_prompt.as_deref(),
                                         ) {
-                                            Ok(snapshot) => self.set_side_panel_snapshot(snapshot),
-                                            Err(err) => crate::logging::warn(&format!(
-                                                "Failed to write generated image side panel page: {}",
-                                                err
-                                            )),
+                                            self.append_live_inline_images(vec![image]);
                                         }
                                         if provider.supports_image_input() {
                                             if let Some(blocks) = crate::message::generated_image_visual_context_blocks(
@@ -1215,6 +1213,7 @@ impl App {
                         } else {
                             ToolStatus::Completed
                         },
+                        intent: tc.intent.clone(),
                         title: None,
                     }));
 
@@ -1274,6 +1273,7 @@ impl App {
                     tool_call_id: tc.id.clone(),
                     tool_name: tc.name.clone(),
                     status: ToolStatus::Running,
+                    intent: tc.intent.clone(),
                     title: None,
                 }));
 
@@ -1291,8 +1291,11 @@ impl App {
                 self.batch_progress = None; // Clear previous batch progress
 
                 let result = loop {
+                    // Do NOT add `biased;` here. Upstream still ships it; with
+                    // biased polling a continuously-ready tool future starves
+                    // event_stream and freezes the TUI on alt-tab/unfocus
+                    // (origin-sync Lesson 2). Fair select is intentional.
                     tokio::select! {
-                        biased;
                         // Handle keyboard input while tool executes
                         event = event_stream.next() => {
                             match event {
@@ -1344,9 +1347,11 @@ impl App {
                                     status_spinner_renderer.draw_full(self, terminal)?;
                                 }
                                 Some(Ok(Event::Mouse(mouse))) => {
-                                    let scroll_only = self.handle_mouse_event(mouse);
-                                    if !scroll_only {
-                                        status_spinner_renderer.draw_full(self, terminal)?;
+                                    if !matches!(mouse.kind, MouseEventKind::Moved) {
+                                        let scroll_only = self.handle_mouse_event(mouse);
+                                        if !scroll_only {
+                                            status_spinner_renderer.draw_full(self, terminal)?;
+                                        }
                                     }
                                 }
                                 Some(Ok(Event::Resize(_, _))) => {
@@ -1421,6 +1426,7 @@ impl App {
                             tool_call_id: tc.id.clone(),
                             tool_name: tc.name.clone(),
                             status: ToolStatus::Completed,
+                            intent: tc.intent.clone(),
                             title: o.title.clone(),
                         }));
                         (o.output, false, o.title)
@@ -1432,6 +1438,7 @@ impl App {
                             tool_call_id: tc.id.clone(),
                             tool_name: tc.name.clone(),
                             status: ToolStatus::Error,
+                            intent: tc.intent.clone(),
                             title: None,
                         }));
                         (format!("Error: {}", e), true, None)

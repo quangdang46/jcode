@@ -7,7 +7,6 @@ use crate::provider::Provider;
 use crate::session::Session;
 use anyhow::Result;
 use async_trait::async_trait;
-use jcode_hooks::{HookContext, HookEvent, HookInputBuilder};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -154,34 +153,6 @@ impl Tool for SubagentTool {
 
         session.save()?;
 
-        // Inherit permission mode from parent session for the subagent.
-        // This allows parent-child permission restriction: children can only
-        // do LESS than the parent, never MORE (e.g., a Plan-mode parent spawns
-        // a child that also runs in Plan mode).
-        // SessionModeGuard clears the per-session override on drop, so the
-        // SESSION_MODES map doesn't leak entries for short-lived subagents.
-        //
-        // CRITICAL: We only inherit when the parent has an EXPLICIT session
-        // mode override. If the parent is using the global default (no
-        // override), we do NOT pin the child — the child will fall back to
-        // current_mode() via classify_for_session, which respects global
-        // permission mode changes (e.g., /permissions bypass-permissions).
-        let _session_mode_guard = {
-            let parent_session_override = crate::dcg_bridge::session_mode(&ctx.session_id);
-            if let Some(mode) = parent_session_override {
-                logging::info(&format!(
-                    "[tool:subagent] session={} inherits permission mode {:?} from parent={}",
-                    session.id, mode, ctx.session_id
-                ));
-                Some(crate::dcg_bridge::SessionModeGuard::new(
-                    &session.id,
-                    Some(mode),
-                ))
-            } else {
-                None
-            }
-        };
-
         let mut allowed: HashSet<String> = self.registry.tool_names().await.into_iter().collect();
         for blocked in ["subagent", "task", "todo", "todowrite", "todoread"] {
             allowed.remove(blocked);
@@ -243,28 +214,6 @@ impl Tool for SubagentTool {
             Some(allowed),
         );
 
-        // Dispatch SubagentStart hooks (fire-and-forget, observational only)
-        {
-            let hook_registry = self.registry.hook_registry().clone();
-            let dispatch_config = self.registry.dispatch_config().clone();
-            let sub_session_id = agent.session_id().to_string();
-            let subagent_type = params.subagent_type.clone();
-            let hook_input = HookInputBuilder::new()
-                .session(&sub_session_id, "")
-                .event("SubagentStart")
-                .build();
-            let ctx = HookContext::for_subagent_start(sub_session_id, None, Some(subagent_type));
-            let event = HookEvent::SubagentStart;
-            tokio::spawn(async move {
-                let handlers = hook_registry.read().await;
-                let handlers = handlers.get_matching(&event, &ctx);
-                if !handlers.is_empty() {
-                    jcode_hooks::dispatch_hooks(&event, &hook_input, &handlers, &dispatch_config)
-                        .await;
-                }
-            });
-        }
-
         let start = std::time::Instant::now();
         // Bound the wait so a stuck/hung child turn (e.g. a model that never
         // emits a final answer) cannot block the caller indefinitely. `0`
@@ -324,28 +273,6 @@ impl Tool for SubagentTool {
             params.description,
             start.elapsed().as_secs_f64()
         ));
-
-        // Dispatch SubagentStop hooks (fire-and-forget, observational only)
-        {
-            let hook_registry = self.registry.hook_registry().clone();
-            let dispatch_config = self.registry.dispatch_config().clone();
-            let sub_session_id = sub_session_id.clone();
-            let subagent_type = params.subagent_type.clone();
-            let hook_input = HookInputBuilder::new()
-                .session(&sub_session_id, "")
-                .event("SubagentStop")
-                .build();
-            let ctx = HookContext::for_subagent_stop(sub_session_id, None, Some(subagent_type));
-            let event = HookEvent::SubagentStop;
-            tokio::spawn(async move {
-                let handlers = hook_registry.read().await;
-                let handlers = handlers.get_matching(&event, &ctx);
-                if !handlers.is_empty() {
-                    jcode_hooks::dispatch_hooks(&event, &hook_input, &handlers, &dispatch_config)
-                        .await;
-                }
-            });
-        }
 
         listener.abort();
 

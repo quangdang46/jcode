@@ -20,6 +20,7 @@ fn rich_data() -> InfoWidgetData {
         queue_mode: Some(true),
         todos: vec![
             crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 content: "first task".to_string(),
                 status: "in_progress".to_string(),
@@ -29,8 +30,10 @@ fn rich_data() -> InfoWidgetData {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             },
             crate::todo::TodoItem {
+                active_form: None,
                 group: None,
                 content: "second task".to_string(),
                 status: "pending".to_string(),
@@ -40,6 +43,7 @@ fn rich_data() -> InfoWidgetData {
                 assigned_to: None,
                 confidence: None,
                 completion_confidence: None,
+                confidence_history: Vec::new(),
             },
         ],
         background_info: Some(BackgroundInfo {

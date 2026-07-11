@@ -2,7 +2,6 @@
 
 use super::{Tool, ToolContext, ToolOutput};
 use crate::bus::{Bus, BusEvent, FileOp, FileTouch};
-use crate::tool::hashline_snapshots;
 use anyhow::Result;
 use async_trait::async_trait;
 use jcode_terminal_image::{ImageDisplayParams, ImageProtocol, display_image};
@@ -191,21 +190,15 @@ impl Tool for ReadTool {
         // Read file
         let content = tokio::fs::read_to_string(&path).await?;
 
-        // Record snapshot for hashline verification + recovery.
-        // Compute seen_lines up-front so we can merge it into the snapshot
-        // before line-numbering the output.
-        let end_exclusive = range.offset + range.limit;
-        let total_lines = content.lines().count();
-        let end = end_exclusive.min(total_lines);
-        let seen_lines: Vec<usize> = ((range.offset + 1)..=end).collect();
-        let tag = hashline_snapshots::record(&path, &content, Some(&seen_lines));
-
         // Single-pass: count lines while building output
         let mut output = String::with_capacity(range.limit.min(2000) * 80);
+        let mut total_lines = 0usize;
         let mut truncated_line_count = 0usize;
+        let end_exclusive = range.offset + range.limit;
         {
             use std::fmt::Write;
             for (i, line) in content.lines().enumerate() {
+                total_lines = i + 1;
                 if i < range.offset {
                     continue;
                 }
@@ -228,18 +221,7 @@ impl Tool for ReadTool {
             }
         }
 
-        // Prepend hashline header so the model can quote the tag in edits.
-        output = format!(
-            "{}\n{}",
-            hashline_snapshots::format_header(&path, &tag),
-            output
-        );
-
-        // Prepend hashline header so the model can quote the tag in edits.
-        let header = hashline_snapshots::format_header(&path, &tag);
-        if !output.is_empty() {
-            output = format!("{}\n{}", header, output);
-        }
+        let end = end_exclusive.min(total_lines);
 
         // Publish file touch event for swarm coordination
         Bus::global().publish(BusEvent::FileTouch(FileTouch {

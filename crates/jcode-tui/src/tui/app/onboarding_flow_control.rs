@@ -1,4 +1,3 @@
-#![allow(clippy::collapsible_if, clippy::doc_lazy_continuation)]
 //! Control logic / phase transitions for the first-run onboarding flow.
 //!
 //! See [`super::onboarding_flow`] for the phase definitions. This module hangs
@@ -85,8 +84,10 @@ impl App {
             let role = m.role.as_str();
             let is_system_reminder =
                 role == "user" && m.content.trim_start().starts_with("<system-reminder>");
-            let is_scaffolding =
-                matches!(role, "system" | "usage" | "overnight" | "background_task");
+            let is_scaffolding = matches!(
+                role,
+                "system" | "usage" | "overnight" | "todos" | "background_task"
+            );
             !is_system_reminder && !is_scaffolding
         });
         if has_real_conversation || self.is_processing || !self.input.is_empty() {
@@ -244,7 +245,7 @@ impl App {
     pub(super) fn onboarding_start_default_login(&mut self) {
         crate::telemetry::record_setup_step_once("login_picker_opened");
         self.start_login_provider(crate::provider_catalog::OPENAI_LOGIN_PROVIDER);
-        self.set_status_notice("Login: opening OpenAI sign-in (or type /connect for others)");
+        self.set_status_notice("Login: opening OpenAI sign-in (or type /login for others)");
     }
 
     /// Advance out of a login phase once credentials are available. We no longer
@@ -278,14 +279,28 @@ impl App {
     /// "continue where you left off" question. When both CLIs are present we
     /// show *both* their transcripts together in one combined, recency-sorted
     /// list rather than hiding one behind the other.
+    ///
+    /// The resume picker is a one-time offer: once it has been shown (recorded
+    /// in `setup_hints.json`), later launches land on the normal new-session
+    /// screen. Old transcripts stay reachable via `/resume`.
     pub(super) fn onboarding_after_model_select(&mut self) {
         if !matches!(self.onboarding_phase(), Some(OnboardingPhase::ModelSelect)) {
+            return;
+        }
+        let mut hints = crate::setup_hints::SetupHintsState::load();
+        if hints.onboarding_resume_shown {
+            self.onboarding_show_suggestions();
             return;
         }
         let present = crate::tui::app::onboarding_flow::detect_external_cli_oauths();
         if present.is_empty() {
             self.onboarding_show_suggestions();
         } else {
+            // Persist the guard BEFORE opening the picker so a crash/quit while
+            // it is up still counts as "shown": the user is never trapped in a
+            // resume-screen loop across launches.
+            hints.onboarding_resume_shown = true;
+            let _ = hints.save();
             self.onboarding_open_transcript_picker(&present);
         }
     }
@@ -383,7 +398,10 @@ impl App {
             self.onboarding_import_in_progress = None;
             self.onboarding_import_error = None;
             self.onboarding_finish();
-            self.set_status_notice("Onboarding skipped - run /login when you're ready");
+            let login = Self::onboarding_login_suggestion();
+            self.set_status_notice(format!(
+                "Onboarding skipped - run {login} when you're ready"
+            ));
             return true;
         }
         match self.onboarding_phase() {
@@ -507,39 +525,75 @@ impl App {
     /// Handle a key while the single-screen import list is active.
     /// Returns true if the key was consumed.
     ///
-    /// All detected logins are shown at once, each with a per-row Yes/No choice
-    /// pre-set to "Yes" (import). Keys:
-    ///   - Up / Down / k / j -> move the cursor between logins
-    ///   - Left / h / y -> choose "Yes" (import) for the highlighted login
-    ///   - Right / l / n -> choose "No" (skip) for the highlighted login
-    ///   - Space -> toggle the highlighted login between Yes and No
-    ///   - Enter -> import every "Yes" login and finish
+    /// The screen has two modes:
+    ///   * Summary (default): a read-only list of everything we detected, with
+    ///     two pills below it. "Continue" (preselected) imports everything;
+    ///     "Choose what to import" switches to the checkbox list. Arrows/Tab
+    ///     move between the pills, Enter/Space commit the focused pill.
+    ///   * Choose (checkbox list): per-login Yes/No rows.
+    ///     - Up / Down / k / j -> move the cursor between logins
+    ///     - Left / h / y -> choose "Yes" (import) for the highlighted login
+    ///     - Right / l / n -> choose "No" (skip) for the highlighted login
+    ///     - Space -> toggle the highlighted login between Yes and No
+    ///     - Enter -> import every "Yes" login and finish
     fn handle_onboarding_import_review_key(&mut self, code: KeyCode) -> bool {
-        // The import screen lists each detected login with a per-row Yes/No
-        // choice (Yes = import, pre-selected). Up/Down move between logins,
-        // Left/Right (or h/l, y/n) set the highlighted login's choice, Space
-        // toggles it, and Enter commits ALL logins at once. `finished` means the
-        // user committed (so we kick off the import outside the borrow).
+        // `finished` means the user committed the import (so we kick it off
+        // outside the borrow).
         let mut finished = false;
         {
             let Some(review) = self.onboarding_import_review_mut() else {
                 return false;
             };
-            match code {
-                KeyCode::Up | KeyCode::Char('k') => review.cursor_up(),
-                KeyCode::Down | KeyCode::Char('j') => review.cursor_down(),
-                // Left = Yes (import), Right = No (skip), for the highlighted row.
-                KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    review.set_current(true)
+            if review.choosing.is_none() {
+                // Summary mode: two pills, "Continue" (preselected) and
+                // "Choose what to import". Any directional key moves between
+                // them; Enter/Space commit the focused one.
+                match code {
+                    KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Tab
+                    | KeyCode::BackTab
+                    | KeyCode::Char('k')
+                    | KeyCode::Char('j')
+                    | KeyCode::Char('h')
+                    | KeyCode::Char('l') => {
+                        review.continue_focused = !review.continue_focused;
+                    }
+                    // c is a direct shortcut into choose mode.
+                    KeyCode::Char('c') | KeyCode::Char('C') => review.enter_choose_mode(),
+                    // y = "yes, import everything" regardless of pill focus, so
+                    // the timeout is never a forced wait.
+                    KeyCode::Char('y') | KeyCode::Char('Y') => finished = true,
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if review.continue_focused {
+                            finished = true;
+                        } else {
+                            review.enter_choose_mode();
+                        }
+                    }
+                    _ => return false,
                 }
-                KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('n') | KeyCode::Char('N') => {
-                    review.set_current(false)
+            } else {
+                match code {
+                    KeyCode::Up | KeyCode::Char('k') => review.cursor_up(),
+                    KeyCode::Down | KeyCode::Char('j') => review.cursor_down(),
+                    // Left = Yes (import), Right = No (skip), for the highlighted row.
+                    KeyCode::Left
+                    | KeyCode::Char('h')
+                    | KeyCode::Char('y')
+                    | KeyCode::Char('Y') => review.set_current(true),
+                    KeyCode::Right
+                    | KeyCode::Char('l')
+                    | KeyCode::Char('n')
+                    | KeyCode::Char('N') => review.set_current(false),
+                    // Space toggles the highlighted row between Yes and No.
+                    KeyCode::Char(' ') => review.toggle_current(),
+                    // Enter commits the whole list (import all chosen logins).
+                    KeyCode::Enter => finished = true,
+                    _ => return false,
                 }
-                // Space toggles the highlighted row between Yes and No.
-                KeyCode::Char(' ') => review.toggle_current(),
-                // Enter commits the whole list (import all chosen logins).
-                KeyCode::Enter => finished = true,
-                _ => return false,
             }
         }
         if finished {
@@ -620,12 +674,19 @@ impl App {
             self.onboarding_start_default_login();
         } else {
             self.onboarding_finish();
-            self.push_display_message(DisplayMessage::system(
+            let login = Self::onboarding_login_suggestion();
+            let hint = if login == "/login" {
                 "No problem. When you're ready to log in, run /login to pick a provider \
                  (OpenAI, Anthropic, Gemini, OpenRouter, and more)."
-                    .to_string(),
-            ));
-            self.set_status_notice("Run /login when you're ready to choose a provider");
+                    .to_string()
+            } else {
+                format!(
+                    "No problem. When you're ready, run {login} to reuse the credentials \
+                     already on this machine, or /login to pick another provider."
+                )
+            };
+            self.push_display_message(DisplayMessage::system(hint));
+            self.set_status_notice(format!("Run {login} when you're ready"));
         }
     }
 
@@ -659,10 +720,17 @@ impl App {
             let checked = review.checked_count();
             let total = review.total();
             let secs = review.seconds_remaining();
-            let notice = format!(
-                "Import {checked} of {total} login{} - Space toggles, arrows move, Enter imports (auto in {secs}s)",
-                if total == 1 { "" } else { "s" },
-            );
+            let notice = if review.choosing.is_none() {
+                format!(
+                    "Found {total} login{} - Enter imports all (auto in {secs}s), or pick \"Choose what to import\"",
+                    if total == 1 { "" } else { "s" },
+                )
+            } else {
+                format!(
+                    "Import {checked} of {total} login{} - Space toggles, arrows move, Enter imports (auto in {secs}s)",
+                    if total == 1 { "" } else { "s" },
+                )
+            };
             self.set_status_notice(notice);
         }
     }
@@ -707,7 +775,18 @@ impl App {
         // Kick off the import on the runtime; the LoginCompleted event advances
         // onboarding and activates the provider.
         self.set_status_notice("Login: importing selected logins...");
-        tokio::spawn(async move {
+        // Grab the runtime handle explicitly: this path is reachable straight
+        // from a key handler (Enter/y on the summary screen), and a bare
+        // `tokio::spawn` would panic if no runtime is running (tests, exotic
+        // embeddings). Failing the import gracefully keeps the liveness
+        // guarantee: the user lands on the recovery screen, not a crash.
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            self.onboarding_handle_login_failed(Some(
+                "The import could not start (no async runtime).".to_string(),
+            ));
+            return;
+        };
+        runtime.spawn(async move {
             let outcome = match crate::external_auth::run_external_auth_auto_import_candidates(
                 &candidates,
                 &approved,
@@ -769,6 +848,7 @@ impl App {
                 ExternalCli::ClaudeCode => SessionFilterMode::ClaudeCode,
                 ExternalCli::Pi => SessionFilterMode::Pi,
                 ExternalCli::OpenCode => SessionFilterMode::OpenCode,
+                ExternalCli::Cursor => SessionFilterMode::Cursor,
             }
         };
 
@@ -842,13 +922,11 @@ impl App {
                 Style::default().fg(accent).add_modifier(Modifier::BOLD),
             )]),
             Line::from(vec![Span::styled(
-                format!(
-                    "We found your {found} sessions. Pick one below to pick up right where you left off,"
-                ),
+                format!("We found your {found} sessions."),
                 Style::default().fg(Color::White),
             )]),
             Line::from(vec![Span::styled(
-                "or start fresh with a brand-new session.",
+                "Press Enter to start a new session, or arrow down to resume one below.",
                 Style::default().fg(Color::White),
             )]),
         ]
@@ -1152,6 +1230,53 @@ impl App {
             || lower.contains("expired or invalid")
     }
 
+    /// Suggest a concrete `/login <provider>` command the user can actually
+    /// complete, instead of the generic `/login`. Preference order:
+    /// 1. A jcode login that exists but expired (they clearly use it).
+    /// 2. Credentials detected from another CLI (Codex -> openai, Claude Code
+    ///    -> claude, Cursor -> cursor), since that login will succeed instantly.
+    /// Falls back to plain `/login` when nothing is detected.
+    pub(super) fn onboarding_login_suggestion() -> String {
+        Self::onboarding_login_suggestion_provider()
+            .map(|p| format!("/login {p}"))
+            .unwrap_or_else(|| "/login".to_string())
+    }
+
+    fn onboarding_login_suggestion_provider() -> Option<&'static str> {
+        use crate::auth::AuthState;
+        let status = crate::auth::AuthStatus::check_fast();
+        // An expired login is the strongest signal: the user already picked
+        // this provider once, so re-login is the fastest path back to working.
+        let states = [
+            ("claude", status.anthropic.state),
+            ("openai", status.openai),
+            ("gemini", status.gemini),
+            ("copilot", status.copilot),
+            ("cursor", status.cursor),
+            ("openrouter", status.openrouter),
+        ];
+        for (id, state) in states {
+            if matches!(state, AuthState::Expired) {
+                return Some(id);
+            }
+        }
+        // Otherwise suggest a provider whose credentials another CLI on this
+        // machine already holds, so the import/login completes without any
+        // new sign-up.
+        for cli in super::onboarding_flow::detect_external_cli_oauths() {
+            let id = match cli {
+                ExternalCli::Codex => Some("openai"),
+                ExternalCli::ClaudeCode => Some("claude"),
+                ExternalCli::Cursor => Some("cursor"),
+                ExternalCli::Pi | ExternalCli::OpenCode => None,
+            };
+            if id.is_some() {
+                return id;
+            }
+        }
+        None
+    }
+
     /// Build the "other providers" rows for the onboarding readiness summary.
     ///
     /// We already ran a live ping for the default model; for the remaining
@@ -1245,10 +1370,11 @@ impl App {
             for row in &attention {
                 body.push_str(&format!("- ✕ {row}\n"));
             }
+            let login = Self::onboarding_login_suggestion();
             let fix_hint = if looks_like_auth || !ready.is_empty() {
-                "Run /connect (or /login) to fix a login, or /model to pick another."
+                format!("Run {login} to fix a login, or /model to pick another.")
             } else {
-                "Run /connect (or /login) to add a login, or /model to pick another."
+                format!("Run {login} to add a login, or /model to pick another.")
             };
             body.push_str(&format!("\n{fix_hint}"));
         }
@@ -1274,9 +1400,12 @@ impl App {
             ));
         } else {
             let hint = if looks_like_auth {
-                "/connect (or /login) to fix credentials, or /model"
+                format!(
+                    "{} to fix credentials, or /model",
+                    Self::onboarding_login_suggestion()
+                )
             } else {
-                "type anything to try, or /model"
+                "type anything to try, or /model".to_string()
             };
             self.set_status_notice(format!("{} not validated - {hint}", result.model_label));
         }

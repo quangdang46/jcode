@@ -419,6 +419,31 @@ impl App {
             WidgetProviderKind::Unknown => None,
         }
     }
+
+    pub(super) fn client_focused(&self) -> bool {
+        self.client_focused
+    }
+
+    /// Record a terminal focus-state change (from crossterm FocusGained/FocusLost).
+    /// Returns true when a redraw is warranted (focus regained).
+    pub(super) fn set_client_focused(&mut self, focused: bool) -> bool {
+        if self.client_focused == focused {
+            return false;
+        }
+        self.client_focused = focused;
+        if focused {
+            self.request_full_redraw();
+            self.note_client_focus(true);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Whether a redraw is worth performing while the terminal is unfocused.
+    pub(crate) fn unfocused_redraw_warranted(&self) -> bool {
+        crate::tui::periodic_redraw_required(self)
+    }
 }
 
 impl crate::tui::TuiState for App {
@@ -448,12 +473,9 @@ impl crate::tui::TuiState for App {
 
     fn side_pane_images_signature(&self) -> (usize, u64) {
         // Recomputing the signature walks (and in local mode re-renders) every
-        // image payload, so cache it per display_messages_version: image sets
-        // only change when the transcript does.
-        let version = self.display_messages_version;
-        if let Some((cached_version, signature)) = self.side_pane_images_signature_cache.get()
-            && cached_version == version
-        {
+        // image payload. Cache it until an image mutation explicitly invalidates
+        // it; ordinary text/tool transcript updates do not change the image set.
+        if let Some(signature) = self.side_pane_images_signature_cache.get() {
             return signature;
         }
         use std::hash::{Hash, Hasher};
@@ -471,8 +493,7 @@ impl crate::tui::TuiState for App {
             crate::tui::hash_rendered_image_anchor(image.anchor.as_ref(), &mut hasher);
         }
         let signature = (images.len(), hasher.finish());
-        self.side_pane_images_signature_cache
-            .set(Some((version, signature)));
+        self.side_pane_images_signature_cache.set(Some(signature));
         signature
     }
 
@@ -763,10 +784,6 @@ impl crate::tui::TuiState for App {
         }
 
         Some(self.app_started.elapsed())
-    }
-
-    fn client_focused(&self) -> bool {
-        App::client_focused(self)
     }
 
     fn stream_message_ended(&self) -> bool {
@@ -1229,24 +1246,14 @@ impl crate::tui::TuiState for App {
             Some(self.session.id.as_str())
         };
 
-        let todos = if self.swarm_enabled && !self.swarm_plan_items.is_empty() {
-            self.swarm_plan_items
-                .iter()
-                .map(|item| crate::todo::TodoItem {
-                    content: item.content.clone(),
-                    status: item.status.clone(),
-                    priority: item.priority.clone(),
-                    id: item.id.clone(),
-                    active_form: None,
-                    group: None,
-                    blocked_by: item.blocked_by.clone(),
-                    assigned_to: item.assigned_to.clone(),
-                    confidence: None,
-                    completion_confidence: None,
-                })
-                .collect()
+        let todos_are_swarm_plan = self.swarm_enabled && !self.swarm_plan_items.is_empty();
+        let (todos, todo_goals) = if todos_are_swarm_plan {
+            (
+                crate::tui::info_widget::swarm_plan_todos(&self.swarm_plan_items),
+                Vec::new(),
+            )
         } else {
-            gather_todos_for_session(session_id)
+            gather_todos_and_goals_for_session(session_id)
         };
 
         let context_snapshot = self.context_snapshot();
@@ -1363,6 +1370,9 @@ impl crate::tui::TuiState for App {
                         output_tail: None,
                         report_back_to_session_id: None,
                         todo_progress: None,
+                        task_label: None,
+                        todo_items: Vec::new(),
+                        runtime: crate::protocol::SwarmMemberRuntime::default(),
                     });
                 }
                 (
@@ -1373,14 +1383,52 @@ impl crate::tui::TuiState for App {
                 )
             };
 
+            // Dock data: the agents this session actually manages (spawn
+            // subtree), the shared panel selection/focus, and plan progress.
+            // This is what the SwarmStatus widget renders. Computed outside
+            // the activity gate: managing agents is itself "interesting".
+            let managed_members = self.inline_swarm_members();
+
             // Only show if there's something interesting
-            if has_activity || session_count > 1 || client_count.is_some() {
+            if has_activity
+                || session_count > 1
+                || client_count.is_some()
+                || !managed_members.is_empty()
+            {
+                let plan_progress = if self.swarm_plan_items.is_empty() {
+                    None
+                } else {
+                    let total = self.swarm_plan_items.len() as u32;
+                    let done = self
+                        .swarm_plan_items
+                        .iter()
+                        .filter(|item| matches!(item.status.as_str(), "completed" | "done"))
+                        .count() as u32;
+                    let running = self
+                        .swarm_plan_items
+                        .iter()
+                        .filter(|item| matches!(item.status.as_str(), "running" | "running_stale"))
+                        .count() as u32;
+                    Some((done, running, total))
+                };
                 Some(crate::tui::info_widget::SwarmInfo {
                     session_count,
                     subagent_status,
                     client_count,
                     session_names,
                     members,
+                    selected: if managed_members.is_empty() {
+                        0
+                    } else {
+                        self.swarm_panel_selected
+                            .min(managed_members.len().saturating_sub(1))
+                    },
+                    focused: self.swarm_panel_focused,
+                    plan_progress,
+                    spinner_frame: (self.animation_elapsed()
+                        * jcode_tui_render::swarm_gallery::STRIP_SPINNER_FPS)
+                        as usize,
+                    managed_members,
                 })
             } else {
                 None
@@ -1494,6 +1542,8 @@ impl crate::tui::TuiState for App {
 
         crate::tui::info_widget::InfoWidgetData {
             todos,
+            todo_goals,
+            todos_are_swarm_plan,
             context_info,
             context_info_stale: !context_snapshot.fresh,
             queue_mode: Some(self.queue_mode),
@@ -1875,6 +1925,7 @@ impl crate::tui::TuiState for App {
             remaining_secs: remaining,
             ttl_secs,
             is_cold: remaining == 0,
+            cold_for_secs: elapsed.saturating_sub(ttl_secs),
             cached_tokens: self.last_turn_input_tokens,
         })
     }
@@ -1942,6 +1993,34 @@ impl crate::tui::TuiState for App {
             .display_user_message_count
             .saturating_sub(self.compacted_hidden_user_prompts());
         Some((pos, total.max(1)))
+    }
+
+    fn client_focused(&self) -> bool {
+        App::client_focused(self)
+    }
+
+    fn hotkey_feedback(&self) -> Option<String> {
+        self.hotkey_feedback.as_ref().and_then(|(text, at)| {
+            // Long enough to read the chord and its action, short enough to
+            // stay out of the way during rapid keying.
+            if at.elapsed() <= std::time::Duration::from_secs(5) {
+                Some(text.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn learn_hint(&self) -> Option<String> {
+        self.learn_hint.as_ref().and_then(|(text, at)| {
+            // Learn-hints linger a little longer than status notices so the user
+            // has time to read and register the keybinding.
+            if at.elapsed() <= std::time::Duration::from_secs(8) {
+                Some(text.clone())
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -2056,6 +2135,70 @@ impl App {
             Err(e) => self.set_status_notice(format!("Failed to open {label}: {e}")),
         }
     }
+
+    pub(crate) fn cycle_swarm_panel_selection(&mut self) {
+        let new = self.swarm_panel_selected.saturating_add(1);
+        let max = self.remote_swarm_members.len().max(
+            self.swarm_plan_items
+                .len()
+                .saturating_sub(1)
+                .min(self.swarm_panel_selected),
+        );
+        if new <= max {
+            self.swarm_panel_selected = new;
+            self.swarm_panel_focused = true;
+        }
+    }
+
+    pub(super) fn remote_effort_identity(&self) -> (Option<String>, Option<String>) {
+        let model = self.effective_remote_provider_model();
+        let provider = self.remote_provider_name.clone().or_else(|| {
+            model
+                .as_deref()
+                .and_then(|model| {
+                    crate::provider::provider_for_model_with_hint(model, None).map(str::to_string)
+                })
+                .or_else(|| self.configured_remote_provider_hint())
+        });
+        (provider, model)
+    }
+
+    /// Best-known current reasoning effort for the remote session. Falls back
+    /// to the configured provider-family default when the server has not
+    /// reported one yet, so pre-settle effort cycling starts from the value the
+    /// session will actually use instead of assuming the maximum.
+    pub(super) fn remote_reasoning_effort_hint(&self) -> Option<String> {
+        self.remote_reasoning_effort.clone().or_else(|| {
+            let (provider, model) = self.remote_effort_identity();
+            let provider = provider.unwrap_or_default().to_ascii_lowercase();
+            let model = model.unwrap_or_default().to_ascii_lowercase();
+            let cfg = &crate::config::config().provider;
+            if provider.contains("anthropic")
+                || provider.contains("claude")
+                || model.starts_with("claude-")
+            {
+                cfg.anthropic_reasoning_effort.clone()
+            } else if provider.contains("openai")
+                || provider.contains("codex")
+                || model.starts_with("gpt-")
+            {
+                cfg.openai_reasoning_effort.clone()
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(crate) fn swarm_panel_action_for_key(
+        &self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> Option<crate::tui::SwarmPanelAction> {
+        if self.toggle_keys.swarm_panel_focus.matches(code, modifiers) {
+            return Some(crate::tui::SwarmPanelAction::ToggleFocus);
+        }
+        None
+    }
 }
 
 /// Restrict swarm members to the descendants `self_id` actually spawned: every
@@ -2131,6 +2274,9 @@ mod inline_swarm_subtree_tests {
             output_tail: None,
             report_back_to_session_id: parent.map(str::to_string),
             todo_progress: None,
+            task_label: None,
+            todo_items: Vec::new(),
+            runtime: crate::protocol::SwarmMemberRuntime::default(),
         }
     }
 

@@ -6,12 +6,12 @@
 pub use jcode_config_types::{
     AgentsConfig, AmbientConfig, AuthConfig, AutoJudgeConfig, AutoReviewConfig, CompactionConfig,
     CompactionMode, CrossProviderFailoverMode, DiagramDisplayMode, DiagramPanePosition,
-    DiffDisplayMode, DisplayConfig, FeatureConfig, GatewayConfig, HooksConfig, KeybindingsConfig,
-    LaunchHotkeyEntry, LaunchHotkeysConfig, MarkdownSpacingMode, NamedProviderAuth,
-    NamedProviderConfig, NamedProviderModelConfig, NamedProviderType, NativeScrollbarConfig,
-    NotificationsConfig, PowerConfig, ProviderConfig, ReasoningDisplayMode, SafetyConfig,
-    SessionPickerResumeAction, StatusLineConfig, SwarmSpawnMode, TerminalConfig, UpdateChannel,
-    WebSearchConfig, WebSearchEngine,
+    DiffDisplayMode, DisplayConfig, ExecutionPolicyConfig, FeatureConfig, GatewayConfig,
+    HooksConfig, KeybindingsConfig, LaunchHotkeyEntry, LaunchHotkeysConfig, MarkdownSpacingMode,
+    NamedProviderAuth, NamedProviderConfig, NamedProviderModelConfig, NamedProviderType,
+    NativeScrollbarConfig, NotificationsConfig, PowerConfig, ProviderConfig, ReasoningDisplayMode,
+    SafetyConfig, SessionPickerResumeAction, SponsorsConfig, StatusLineConfig, SwarmSpawnMode,
+    SwarmStripLayout, TerminalConfig, UpdateChannel, WebSearchConfig, WebSearchEngine,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -30,6 +30,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "HOME",
     "JCODE_ACP_PROFILE",
     "JCODE_ACP_TOOL_PROFILE",
+    "JCODE_ACTIVE_SESSIONS_MANAGER",
     "JCODE_AMBIENT_ENABLED",
     "JCODE_AMBIENT_MAX_INTERVAL",
     "JCODE_AMBIENT_MIN_INTERVAL",
@@ -40,8 +41,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_ANIMATION_FPS",
     "JCODE_AUTOJUDGE_ENABLED",
     "JCODE_AUTOJUDGE_MODEL",
-    "JCODE_BEST_OF_N_MODE",
-    "JCODE_BEST_OF_N_COUNT",
     "JCODE_AUTOREVIEW_ENABLED",
     "JCODE_AUTOREVIEW_MODEL",
     "JCODE_AUTO_SERVER_RELOAD",
@@ -107,6 +106,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_MEMORY_EMBEDDING_DIM",
     "JCODE_MEMORY_EMBEDDING_MODEL",
     "JCODE_MEMORY_ENABLED",
+    "JCODE_ENABLE_MERMAID",
     "JCODE_MEMORY_MODEL",
     "JCODE_MEMORY_SIDECAR_ENABLED",
     "JCODE_PERSIST_MEMORY_INJECTIONS",
@@ -115,6 +115,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_MODEL_SWITCH_KEY",
     "JCODE_MODEL_SWITCH_PREV_KEY",
     "JCODE_MOUSE_CAPTURE",
+    "JCODE_NEW_TERMINAL_KEY",
     "JCODE_NTFY_SERVER",
     "JCODE_NTFY_TOPIC",
     "JCODE_OPENAI_NATIVE_COMPACTION_MODE",
@@ -122,8 +123,6 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_OPENAI_REASONING_EFFORT",
     "JCODE_OPENAI_SERVICE_TIER",
     "JCODE_OPENAI_TRANSPORT",
-    "JCODE_PERMISSION_MODE",
-    "JCODE_DANGEROUSLY_SKIP_PERMISSIONS",
     "JCODE_ANTHROPIC_REASONING_EFFORT",
     "JCODE_PRESERVE_REASONING_CONTEXT",
     "JCODE_PERFORMANCE",
@@ -145,6 +144,7 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_SCROLL_UP_FALLBACK_KEY",
     "JCODE_SCROLL_UP_KEY",
     "JCODE_SEARXNG_URL",
+    "JCODE_SHOW_AGENTGREP_OUTPUT",
     "JCODE_SHOW_DIFFS",
     "JCODE_SHOW_THINKING",
     "JCODE_SIDE_PANEL_TOGGLE_KEY",
@@ -154,7 +154,9 @@ const CONFIG_ENV_KEYS: &[&str] = &[
     "JCODE_STREAM_IDLE_TIMEOUT_SECS",
     "JCODE_SWARM_ENABLED",
     "JCODE_SWARM_MODEL",
+    "JCODE_SWARM_MAX_CONCURRENT_AGENTS",
     "JCODE_SWARM_SPAWN_MODE",
+    "JCODE_SWARM_STRIP_LAYOUT",
     "JCODE_TELEGRAM_BOT_TOKEN",
     "JCODE_TELEGRAM_CHAT_ID",
     "JCODE_TELEGRAM_REPLY_ENABLED",
@@ -203,9 +205,19 @@ struct ConfigCache {
 }
 
 static CONFIG_CACHE: LazyLock<RwLock<ConfigCache>> = LazyLock::new(|| {
+    let config = leak_config(Config::load());
+    // Fingerprint after the load: applying env overrides may set env vars
+    // (e.g. copilot_premium -> JCODE_COPILOT_PREMIUM), and fingerprinting
+    // first would guarantee a spurious full reload on the next check.
     let fingerprint = ConfigCacheFingerprint::current();
+    // Seed the global context-limit cache from named provider configs on first
+    // load so every codepath (TUI info widget, compaction budget, model
+    // switching) sees user-configured `context_window` values from the start.
+    // Read from the loaded config directly to avoid recursing into config(),
+    // which would deadlock on the still-initializing CONFIG_CACHE.
+    populate_context_limits_from_config_ref(config);
     RwLock::new(ConfigCache {
-        config: leak_config(Config::load()),
+        config,
         fingerprint,
         last_checked: Instant::now(),
         force_reload: false,
@@ -214,6 +226,15 @@ static CONFIG_CACHE: LazyLock<RwLock<ConfigCache>> = LazyLock::new(|| {
 
 fn leak_config(config: Config) -> &'static Config {
     Box::leak(Box::new(config))
+}
+
+/// Seed the global context-limit cache from a config reference directly.
+///
+/// Used during CONFIG_CACHE initialization (where calling config() would
+/// deadlock) and shares its logic with
+/// `crate::provider::populate_context_limits_from_config`.
+fn populate_context_limits_from_config_ref(cfg: &Config) {
+    crate::provider::populate_context_limits_from_config_value(cfg);
 }
 
 /// Get the global config instance.
@@ -254,7 +275,11 @@ pub fn config() -> &'static Config {
                 &fingerprint,
             ));
             cache.config = leak_config(Config::load());
-            cache.fingerprint = fingerprint;
+            // Loading applies env overrides that can themselves set env vars
+            // (e.g. copilot_premium propagates config -> JCODE_COPILOT_PREMIUM).
+            // Re-fingerprint after the load so those self-inflicted env changes
+            // don't trigger a guaranteed second reload on the next check.
+            cache.fingerprint = ConfigCacheFingerprint::current();
             cache.force_reload = false;
         }
         cache.config
@@ -262,7 +287,16 @@ pub fn config() -> &'static Config {
 
     if let Some(reason) = reload_reason {
         crate::logging::info(&format!("CONFIG_RELOAD {}", reason));
+        // A config reload can change config-derived system prompt sections
+        // (feature toggles, sponsors, ...), which legitimately invalidates the
+        // KV cache prefix of warm sessions. Document it so a subsequent
+        // harness-attributed cache miss is surfaced with this cause instead of
+        // as an unexplained prompt mutation.
+        crate::cache_invalidation::record("config reload", &reason);
         notify_config_reloaded();
+        // Re-seed the global context-limit cache so user edits to named
+        // provider `context_window` values take effect without a restart.
+        crate::provider::populate_context_limits_from_config();
     }
 
     config
@@ -381,8 +415,10 @@ fn notify_config_reloaded() {
 /// subsystems (auth cache, event bus) on reload, those subsystems register a
 /// reaction here at startup. This keeps config free of upward dependencies and
 /// breaks the config -> auth / config -> bus cycle edges.
-#[allow(clippy::type_complexity)]
-static CONFIG_RELOAD_LISTENERS: LazyLock<RwLock<Vec<fn()>>> =
+/// Type of a config reload listener callback.
+type ConfigReloadListener = fn();
+
+static CONFIG_RELOAD_LISTENERS: LazyLock<RwLock<Vec<ConfigReloadListener>>> =
     LazyLock::new(|| RwLock::new(Vec::new()));
 
 /// Register a callback to run after the config cache reloads.
@@ -398,6 +434,22 @@ pub fn on_config_reloaded(listener: fn()) {
 }
 
 /// Main configuration struct
+/// Best-of-N configuration (fork-specific)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct BestOfNConfig {
+    pub enabled: bool,
+    pub candidates: usize,
+    pub score_threshold: f64,
+}
+
+/// Task execution configuration (fork-specific)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct TaskConfig {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
@@ -464,37 +516,50 @@ pub struct Config {
     /// Power-management configuration (prevent sleep while streaming)
     pub power: PowerConfig,
 
-    /// Permission mode for tool execution (default, accept-edits, plan, auto, dont-ask, bypass-permissions)
-    pub permission_mode: Option<String>,
-
-    /// Skip all permission checks (overrides all other mode settings).
-    /// Read from `JCODE_DANGEROUSLY_SKIP_PERMISSIONS` env var or from a
-    /// non-CLI consumer (desktop, daemon, integration tests). The CLI
-    /// `--dangerously-skip-permissions` flag also sets this by populating
-    /// the env var.
-    pub dangerously_skip_permissions: bool,
-
     /// Auto-review configuration
     pub autoreview: AutoReviewConfig,
 
     /// Auto-judge configuration
     pub autojudge: AutoJudgeConfig,
 
-    /// Notepad (3-tier context notes) configuration
-    pub notepad: crate::notepad::NotepadConfig,
-
-    /// Best-of-N parallel editing configuration
-    pub best_of_n: jcode_best_of_n::BestOfNConfig,
-
-    /// Execution policy engine configuration (per-command rules).
-    pub execution_policy: jcode_config_types::ExecutionPolicyConfig,
-    /// Status line display configuration.
-    pub status_line: jcode_config_types::StatusLineConfig,
-    /// Tools that are always allowed without prompting (persisted to config).
-    pub always_allow_tools: Vec<String>,
+    /// Sponsored discovery configuration
+    pub sponsors: SponsorsConfig,
 
     /// Global "launch a new jcode" hotkeys (macOS). Baked once by auto-import.
     pub launch_hotkeys: LaunchHotkeysConfig,
+
+    // === Fork-specific fields (not in upstream) ===
+    /// Tools always allowed without permission prompt
+    #[serde(default)]
+    pub always_allow_tools: Vec<String>,
+
+    /// Permission mode (bypass, plan, etc.)
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+
+    /// Status line configuration
+    #[serde(default)]
+    pub status_line: StatusLineConfig,
+
+    /// Dangerously skip permissions
+    #[serde(default)]
+    pub dangerously_skip_permissions: bool,
+
+    /// Best-of-N configuration
+    #[serde(default)]
+    pub best_of_n: Option<BestOfNConfig>,
+
+    /// Notepad configuration
+    #[serde(default)]
+    pub notepad: crate::notepad::NotepadConfig,
+
+    /// Execution policy configuration
+    #[serde(default)]
+    pub execution_policy: ExecutionPolicyConfig,
+
+    /// Task execution configuration
+    #[serde(default)]
+    pub task: TaskConfig,
 }
 
 /// Agent Client Protocol adapter configuration.
@@ -523,7 +588,7 @@ pub struct ToolConfig {
     /// Tool profile: "full" (default), "acp", "minimal"/"lite", or "none".
     pub profile: String,
     /// Explicit allow-list. When set, only these tools are exposed.
-    /// Use "*" or "all" to expose all tools, including default-disabled tools.
+    /// Use "*" or "all" to expose all tools without an allow-list.
     pub enabled: Vec<String>,
     /// Tools to remove after applying profile/enabled.
     pub disabled: Vec<String>,
@@ -538,24 +603,14 @@ pub struct ToolSelection {
 }
 
 impl ToolConfig {
-    const DEFAULT_DISABLED_TOOLS: &'static [&'static str] = &["gmail", "lsp"];
-
     pub fn selection(&self) -> ToolSelection {
         let mut allowed_tools = self.base_allowed_tools();
-        let (explicit_enabled, enables_all_tools) = self.normalized_enabled_tools();
-        let mut disabled_tools: HashSet<String> = self
+        let disabled_tools: HashSet<String> = self
             .disabled
             .iter()
             .map(|name| normalize_tool_name(name))
             .filter(|name| !name.is_empty())
             .collect();
-
-        for name in Self::DEFAULT_DISABLED_TOOLS {
-            let normalized = normalize_tool_name(name);
-            if !enables_all_tools && !explicit_enabled.contains(&normalized) {
-                disabled_tools.insert(normalized);
-            }
-        }
 
         if let Some(allowed) = allowed_tools.as_mut() {
             for name in &disabled_tools {
@@ -604,10 +659,7 @@ impl ToolConfig {
                     "multiedit",
                     "apply_patch",
                     "patch",
-                    "glob",
-                    "ffs glob",
-                    "grep",
-                    "ffs grep",
+                    "agentgrep",
                     "ls",
                     "batch",
                 ]
@@ -625,10 +677,7 @@ impl ToolConfig {
                     "multiedit",
                     "apply_patch",
                     "patch",
-                    "glob",
-                    "ffs glob",
-                    "grep",
-                    "ffs grep",
+                    "agentgrep",
                     "ls",
                 ]
                 .into_iter()

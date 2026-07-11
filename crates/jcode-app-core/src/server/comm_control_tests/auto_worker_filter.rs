@@ -104,10 +104,19 @@ use super::turn_end_should_auto_complete;
 
 #[test]
 fn atomic_turn_auto_completes() {
-    // A plain running/queued atomic node that the worker just ran should be
-    // auto-marked done.
+    // A plain running atomic node that the worker just ran should be
+    // auto-marked done. `running_stale` (revived after a reload) counts too.
     assert!(turn_end_should_auto_complete("running", false));
-    assert!(turn_end_should_auto_complete("queued", false));
+    assert!(turn_end_should_auto_complete("running_stale", false));
+}
+
+#[test]
+fn requeued_node_does_not_auto_complete() {
+    // A node that is `queued` at turn end was re-queued mid-turn by someone
+    // else: a gate that called inject_gap (re-queued behind its gap nodes), or
+    // a reassign/requeue. Force-closing it would bypass gate artifact
+    // validation and strand the injected gap nodes.
+    assert!(!turn_end_should_auto_complete("queued", false));
 }
 
 #[test]
@@ -126,6 +135,64 @@ fn already_terminal_turn_is_not_reclosed() {
     assert!(!turn_end_should_auto_complete("done", false));
     assert!(!turn_end_should_auto_complete("failed", false));
     assert!(!turn_end_should_auto_complete("stopped", false));
+}
+
+// ----- deep mode: artifact-or-nothing at turn end -----
+
+use super::{TurnEndDisposition, turn_end_disposition};
+
+#[test]
+fn deep_turn_without_artifact_requeues_then_fails() {
+    // Deep mode never auto-completes: the typed-artifact contract is only real
+    // if there is no path to "done" that skips complete_node. First offense is
+    // a requeue to a fresh worker; a repeat fails the node loudly.
+    assert_eq!(
+        turn_end_disposition(true, "running", false, 0),
+        TurnEndDisposition::RequeueNoArtifact
+    );
+    assert_eq!(
+        turn_end_disposition(true, "running_stale", false, 0),
+        TurnEndDisposition::RequeueNoArtifact
+    );
+    assert_eq!(
+        turn_end_disposition(true, "running", false, 1),
+        TurnEndDisposition::FailNoArtifact
+    );
+    // A re-woken composite synthesis that never synthesized is equally guilty.
+    assert_eq!(
+        turn_end_disposition(true, "running", true, 0),
+        TurnEndDisposition::RequeueNoArtifact
+    );
+}
+
+#[test]
+fn deep_turn_leaves_non_running_nodes_alone() {
+    // Terminal states were set by complete_node/fail; queued means the node was
+    // re-queued mid-turn (expand_node or inject_gap). None are this turn's
+    // responsibility.
+    for status in ["queued", "completed", "done", "failed", "stopped"] {
+        assert_eq!(
+            turn_end_disposition(true, status, false, 0),
+            TurnEndDisposition::LeaveAlone,
+            "status {status}"
+        );
+    }
+}
+
+#[test]
+fn light_turn_disposition_matches_legacy_auto_complete() {
+    assert_eq!(
+        turn_end_disposition(false, "running", false, 0),
+        TurnEndDisposition::AutoComplete
+    );
+    assert_eq!(
+        turn_end_disposition(false, "running", true, 0),
+        TurnEndDisposition::LeaveAlone
+    );
+    assert_eq!(
+        turn_end_disposition(false, "queued", false, 0),
+        TurnEndDisposition::LeaveAlone
+    );
 }
 
 // ----- composite synthesis assignment content -----

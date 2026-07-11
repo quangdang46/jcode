@@ -304,6 +304,9 @@ impl Agent {
             // dim/italic styling and live partial-line rendering. We close the region
             // (via `ReasoningDone`) before real output or a tool call begins.
             let mut reasoning_open = false;
+            // Last time hidden (non-displayed) reasoning activity was relayed
+            // to clients as a keepalive; throttles issue #451 keepalives.
+            let mut hidden_activity_last = Instant::now();
             let mut openai_reasoning_items: Vec<ContentBlock> = Vec::new();
             let mut openai_native_compaction: Option<(String, usize)> = None;
             let mut tool_id_to_name: std::collections::HashMap<String, String> =
@@ -431,6 +434,18 @@ impl Agent {
                             let _ = event_tx.send(ServerEvent::ReasoningDelta {
                                 text: thinking_text.clone(),
                             });
+                        } else if hidden_activity_last.elapsed()
+                            >= std::time::Duration::from_secs(5)
+                        {
+                            // Hidden reasoning is real provider activity, but it
+                            // emits nothing over the client socket, so a long
+                            // silent thinking phase looks identical to a dead
+                            // connection and the client stall guard cancels a
+                            // healthy stream (issue #451). Send a throttled
+                            // non-rendered keepalive so clients track provider
+                            // activity, not just displayable events.
+                            hidden_activity_last = Instant::now();
+                            send_stream_keepalive_mpsc(&event_tx);
                         }
                         // Always capture reasoning text so it can be persisted as a
                         // history-only trace, regardless of provider replay support.
@@ -563,15 +578,11 @@ impl Agent {
                         output_format,
                         revised_prompt,
                     } => {
-                        if let Some(snapshot) = self.update_generated_image_side_panel(
+                        let rendered_image = crate::message::generated_image_rendered_image(
                             &id,
                             &path,
-                            metadata_path.as_deref(),
                             &output_format,
-                            revised_prompt.as_deref(),
-                        ) {
-                            let _ = event_tx.send(ServerEvent::SidePanelState { snapshot });
-                        }
+                        );
                         if self.provider.supports_image_input() {
                             if let Some(blocks) =
                                 crate::message::generated_image_visual_context_blocks(
@@ -596,6 +607,12 @@ impl Agent {
                             output_format,
                             revised_prompt,
                         });
+                        if let Some(image) = rendered_image {
+                            let _ = event_tx.send(ServerEvent::SidePaneImages {
+                                session_id: self.session.id.clone(),
+                                images: vec![image],
+                            });
+                        }
                     }
                     StreamEvent::TokenUsage {
                         input_tokens,
@@ -1167,6 +1184,7 @@ impl Agent {
                         message_id: message_id.clone(),
                         tool_call_id: tc.id.clone(),
                         tool_name: tc.name.clone(),
+                        intent: None,
                         status: ToolStatus::Error,
                         title: None,
                     }));

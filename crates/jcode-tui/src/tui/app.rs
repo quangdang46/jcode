@@ -37,7 +37,6 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tokio::time::interval;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppRuntimeMode {
@@ -65,6 +64,8 @@ mod dictation;
 mod event_wrappers;
 mod handterm_native_scroll;
 pub(crate) mod helpers;
+mod hotkey_feedback;
+mod idle_heap_release;
 mod inline_interactive;
 mod input;
 mod input_help;
@@ -85,12 +86,14 @@ pub(crate) mod run_shell;
 mod runtime_memory;
 mod shortcut_hints;
 mod split_view;
+mod sponsor_disclosure;
 mod state_ui;
 pub mod state_ui_input_helpers;
 mod state_ui_maintenance;
 mod state_ui_messages;
 mod state_ui_runtime;
 mod state_ui_storage;
+mod swarm_hint;
 mod todos_view;
 mod tui_lifecycle;
 mod tui_lifecycle_runtime;
@@ -327,6 +330,9 @@ pub(super) enum SessionPickerMode {
     #[default]
     Resume,
     CatchUp,
+    /// Opt-in active sessions manager: the picker scoped to live (open)
+    /// sessions, showing which are still working vs ready for input.
+    ActiveSessions,
     /// First-run onboarding "continue where you left off" single-select picker.
     Onboarding {
         cli: onboarding_flow::ExternalCli,
@@ -372,6 +378,15 @@ pub enum ProcessingStatus {
     WaitingForNetwork { listener: String },
     /// Executing a tool
     RunningTool(String),
+}
+
+/// What triggered the cold cache warning message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ColdCacheWarningTrigger {
+    /// The idle tick detected a cold cache; warn on the next user turn.
+    IdleExpiry,
+    /// A just-completed API turn's usage data shows a cold cache.
+    RequestStart,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -670,6 +685,10 @@ struct StreamingProgress {
     streaming_tps_observed_output_tokens: u64,
     /// Streaming-only elapsed time corresponding to streaming_tps_observed_output_tokens.
     streaming_tps_observed_elapsed: Duration,
+    /// How many ASCII characters have been streamed (used for spinner / progress bar).
+    streaming_context_stale: bool,
+    /// Whether we need to reset the usage bar on the next call.
+    streaming_usage_call_reset_pending: bool,
 }
 
 /// Accumulated session cost and cached per-model pricing.
@@ -1032,10 +1051,9 @@ pub struct App {
     // All sessions on the server (remote mode only)
     remote_sessions: Vec<String>,
     remote_side_pane_images: Vec<crate::session::RenderedImage>,
-    /// Cached `(display_messages_version, signature)` for
-    /// `side_pane_images_signature`, recomputed only when the transcript
-    /// version changes.
-    side_pane_images_signature_cache: std::cell::Cell<Option<(u64, (usize, u64))>>,
+    /// Cached image-set signature. Text-only transcript changes must not
+    /// invalidate this because rebuilding it materializes every image payload.
+    side_pane_images_signature_cache: std::cell::Cell<Option<(usize, u64)>>,
     // Swarm member status snapshots (remote mode only)
     remote_swarm_members: Vec<crate::protocol::SwarmMemberStatus>,
     // Latest swarm plan snapshot (local or remote server event stream)
@@ -1125,6 +1143,9 @@ pub struct App {
     todos_view_markdown: String,
     todos_view_updated_at_ms: u64,
     todos_view_rendered_hash: u64,
+    /// Hash of the todo payload rendered into the inline chat todo card, used
+    /// to keep the card live-updating while it stays in the transcript.
+    todo_card_rendered_hash: u64,
     last_side_panel_refresh: Option<Instant>,
     // Most recently persisted focus target for dictation routing.
     last_client_focus_recorded_at: Option<Instant>,
@@ -1188,6 +1209,10 @@ pub struct App {
     model_picker_catalog_revision: u64,
     // Short-lived provider boost after login so newly authenticated models surface in /models.
     recent_authenticated_provider: Option<(String, Instant)>,
+    /// A successful login/import has invalidated the catalog, but the refreshed
+    /// provider snapshot has not reached this client yet. While set, `/model`
+    /// shows a loading state instead of reusing the pre-login catalog.
+    auth_catalog_refresh_pending: bool,
     pending_model_picker_load: Option<PendingModelPickerLoad>,
     model_picker_load_request_id: u64,
     // Pending model switch from picker (for remote mode async processing)
@@ -1295,12 +1320,6 @@ pub struct App {
     command_suggestion_selected: usize,
     // Time when app started (for startup animations)
     app_started: Instant,
-    // Whether the client terminal currently has focus. When the terminal window
-    // or tab is backgrounded (FocusLost), decorative animations and periodic
-    // idle redraws are paused so a swarm of background sessions does not burn
-    // CPU animating screens nobody is looking at. Defaults to true because not
-    // every terminal reports focus events.
-    client_focused: bool,
     // Optional client runtime memory logger for low-overhead attribution journaling.
     runtime_memory_log: Option<RuntimeMemoryLogController>,
     // Binary modification time when client started (for smart reload detection)
@@ -1407,6 +1426,90 @@ pub struct App {
     pub agent_snapshot_cache: Vec<(String, std::time::SystemTime)>,
     /// Whether initial agent snapshot check has been performed.
     pub agent_snapshot_checked: bool,
+    /// Idle-time retained-heap release tracker.
+    idle_heap_release: idle_heap_release::IdleHeapRelease,
+    /// Whether sponsor disclosure has been shown in this session.
+    sponsor_disclosure_shown_this_session: bool,
+    /// Whether swarm config hint has been shown in this session.
+    swarm_hint_shown_this_session: bool,
+    /// Swarm config hint message with timestamp.
+    learn_hint: Option<(String, std::time::Instant)>,
+    /// Cached baseline completed_at from the last completed turn, so the
+    /// request-start cold-cache warning can reference a concrete age even
+    /// when the server's usage summary does not include one. Cleared after
+    /// the warning fires so a subsequent turn with the same warm baseline
+    /// does not re-warn from the old `completed_at`, which re-arms the
+    /// warning automatically.
+    cold_cache_warned_baseline_completed_at: Option<Instant>,
+    // Per-session count of consecutive credential failures (reset on success).
+    consecutive_credential_failures: u32,
+    /// Forces the next ratatui render pass to draw every cell unconditionally
+    /// (issue #404).
+    force_full_repaint: bool,
+    /// Whether the client terminal currently has focus. Used to pause decorative
+    /// animations and periodic idle redraws for backgrounded windows/tabs.
+    client_focused: bool,
+    // Transient hotkey-feedback text shown briefly after a (Alt+?) chord fires.
+    // Rendered in the same pop-out slot as learn_hint.
+    hotkey_feedback: Option<(String, Instant)>,
+    // Lazily-loaded persisted per-action hotkey usage counters.
+    hotkey_usage: Option<hotkey_feedback::HotkeyUsageState>,
+    // Per-chord counts of unknown-hotkey notices shown this session.
+    unknown_hotkey_seen: std::collections::HashMap<String, u32>,
+    // When the last unknown-hotkey notice was shown, for rate limiting.
+    last_unknown_hotkey_notice: Option<Instant>,
+    // Whether a learned-keybinding nudge has already been surfaced this session.
+    learn_hint_shown_this_session: bool,
+    /// Pending cross-provider resend after a fallback offer is accepted via
+    /// keypress. Carries the original message payload and the recipient route.
+    /// Local sessions resend via `pending_turn` instead.
+    pending_fallback_resend: Option<FallbackResendPayload>,
+    /// Interactive "spawn a jcode agent to merge the diverged update" offer shown
+    /// when the update check finds that the working tree has diverged from HEAD.
+    /// Accepted with the same key as the fallback offer.
+    pending_merge_offer: Option<PendingMergeOffer>,
+    // Pending reasoning effort switch for the remote session, set by the effort
+    // picker and flushed to the server on the next follow-up dispatch (avoids
+    // racing a mid-turn effort switch against the provider round that committed the
+    // last send at the wrong effort, issue #427).
+    pending_reasoning_effort: Option<String>,
+    // Persistent startup notice card (e.g. launch-hotkeys / welcome tip) shown on
+    // the first few fresh-spawn sessions. Stored here rather than pushed through
+    // the normal display-message pipeline so it survives an early `clear_display_messages()`
+    // which otherwise makes the card flash for a moment and disappear.
+    pending_startup_notice: Option<(String, String)>,
+    /// Pending cross-provider resend from a fallback offer on a *remote* (server)
+    /// route. Local sessions resend via `pending_turn` instead.
+    remote_resend: Option<FallbackResendPayload>,
+    /// Repository whose local/upstream branches diverged, if known. Used as the
+    /// spawned agent's working directory and named in its prompt.
+    repo_dir: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct FallbackResendPayload {
+    /// Expanded message content that was sent to the server.
+    content: String,
+    /// Inline image attachments that accompanied the message.
+    images: Vec<(String, String)>,
+    /// Whether the failed send was a system continuation (poke/reminder).
+    is_system: bool,
+    /// Whether the failed send was flagged for automatic retries.
+    auto_retry: bool,
+    /// Hidden system reminder that accompanied the message, if any.
+    system_reminder: Option<String>,
+    /// The raw prompt the user typed, when known. Used to de-duplicate the
+    /// input box (the error path restores the prompt there) on accept.
+    raw_input: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingMergeOffer {
+    /// Repository whose local/upstream branches diverged, if known. Used as the
+    /// spawned agent's working directory and named in its prompt.
+    repo_dir: Option<std::path::PathBuf>,
+    /// The raw update-failure detail, shown to the user and the merge agent.
+    detail: String,
 }
 
 /// Inert provider used by runtime modes whose output is supplied by another source.
@@ -1522,6 +1625,7 @@ impl App {
             turn_number,
             self.kv_cache.kv_cache_turn_call_index,
             baseline.as_ref(),
+            ColdCacheWarningTrigger::RequestStart,
         );
         self.pause_streaming_tps(false);
         self.kv_cache.current_api_usage_recorded = false;
@@ -1568,6 +1672,7 @@ impl App {
             turn_number,
             self.kv_cache.kv_cache_turn_call_index,
             baseline.as_ref(),
+            ColdCacheWarningTrigger::RequestStart,
         );
         self.pause_streaming_tps(false);
         self.kv_cache.current_api_usage_recorded = false;
@@ -1617,21 +1722,22 @@ impl App {
         turn_number: usize,
         call_index: u16,
         baseline: Option<&KvCacheBaseline>,
-    ) {
+        trigger: ColdCacheWarningTrigger,
+    ) -> bool {
         if turn_number <= 1 || call_index != 1 {
-            return;
+            return false;
         }
         let Some(baseline) = baseline else {
-            return;
+            return false;
         };
         let Some(ttl_secs) =
             crate::tui::cache_ttl_for_provider_model(&baseline.provider, Some(&baseline.model))
         else {
-            return;
+            return false;
         };
         let age_secs = baseline.completed_at.elapsed().as_secs();
         if age_secs < ttl_secs {
-            return;
+            return false;
         }
 
         let expired_ago_secs = age_secs.saturating_sub(ttl_secs);
@@ -1643,10 +1749,23 @@ impl App {
         } else {
             tokens.to_string()
         };
-        self.push_display_message(DisplayMessage::system(format!(
-            "🧊 Prompt cache is cold: ~{} input tokens may be resent on this request ({}s TTL expired {}s ago; last cache write was {}s ago). Use /cache to extend the timer before long breaks, or start a fresh/compacted session for very large histories.",
-            token_label, ttl_secs, expired_ago_secs, age_secs
-        )));
+        // Keep this to a single short line. The idle trigger fires the moment
+        // the TTL expires, so an "N ago" detail would always read ~0s there;
+        // the request-start fallback can fire long after expiry (e.g.
+        // suspended TUI), where the age is genuinely informative.
+        let message = match trigger {
+            ColdCacheWarningTrigger::IdleExpiry => format!(
+                "🧊 Prompt cache went cold: ~{} tok resent with your next message (/cache to extend)",
+                token_label
+            ),
+            ColdCacheWarningTrigger::RequestStart => format!(
+                "🧊 Prompt cache went cold {} ago: ~{} tok may be resent on this request",
+                crate::tui::format_compact_age(expired_ago_secs),
+                token_label
+            ),
+        };
+        self.push_display_message(DisplayMessage::system(message));
+        true
     }
 
     pub(super) fn record_completed_stream_cache_usage(&mut self) -> bool {
@@ -1981,7 +2100,12 @@ impl App {
             self.kv_cache.kv_cache_miss_samples.drain(0..overflow);
         }
 
-        self.maybe_push_kv_cache_miss_notice(request.turn_number, reason, missed_tokens);
+        self.maybe_push_kv_cache_miss_notice(
+            request.turn_number,
+            reason,
+            missed_tokens,
+            baseline.completed_at,
+        );
     }
 
     /// Surface a loud in-chat alarm when a request missed the KV cache for a
@@ -1990,30 +2114,26 @@ impl App {
     /// time-driven, not harness bugs. The harness should essentially never
     /// invalidate the prefix cache on its own, so when it does we want it to be
     /// visible immediately rather than buried in logs.
+    ///
+    /// Some harness actions do legitimately change the prompt mid-session
+    /// (config reloads, skill reloads). Those sites document the invalidation
+    /// in `cache_invalidation` when it happens; if a documented cause is found
+    /// between the baseline and this request, the notice attributes the miss
+    /// to it (informational) instead of raising the unexplained-bust alarm.
     fn maybe_push_kv_cache_miss_notice(
         &mut self,
         turn_number: usize,
         reason: KvCacheMissReason,
         missed_tokens: u64,
+        baseline_completed_at: Instant,
     ) {
         if !crate::config::config().features.kv_cache_miss_notices {
             return;
         }
         let detail = match reason {
-            KvCacheMissReason::HarnessSystemChanged => {
-                "the system prompt changed between turns (its hash differs even though the \
-                 conversation only grew). Common causes: nondeterministic ordering in a \
-                 prompt section, or a same-width dynamic value embedded in the static prompt."
-            }
-            KvCacheMissReason::HarnessToolsChanged => {
-                "the tool set changed between turns. Tools should be locked after the first \
-                 turn; an unexpected change here resends the whole tool schema."
-            }
-            KvCacheMissReason::HarnessPrefixChanged => {
-                "an earlier message in the conversation prefix was modified (not just \
-                 appended to). Editing/replacing prior messages busts every cached token \
-                 after the edit point."
-            }
+            KvCacheMissReason::HarnessSystemChanged => "system prompt changed mid-session",
+            KvCacheMissReason::HarnessToolsChanged => "tool set changed mid-session",
+            KvCacheMissReason::HarnessPrefixChanged => "an earlier message was modified",
             // Not harness-caused: provider/model/upstream switch, TTL expiry,
             // and the soft zero/low-read diagnostics. Skip the alarm for these.
             _ => return,
@@ -2027,10 +2147,18 @@ impl App {
             missed_tokens.to_string()
         };
 
+        // Documented invalidation between the baseline and now: expected
+        // resend, attribute instead of alarm.
+        if let Some(cause) = crate::cache_invalidation::most_recent_since(baseline_completed_at) {
+            self.push_display_message(DisplayMessage::system(format!(
+                "ℹ️ KV cache refresh [{}] turn {}: ~{} tokens resent ({}).",
+                cause.source, turn_number, token_label, detail,
+            )));
+            return;
+        }
+
         self.push_display_message(DisplayMessage::system(format!(
-            "⚠️ KV cache miss [{}] on turn {}: ~{} prefix tokens were resent instead of \
-             read from cache. Reason: {} This is a harness-side cache bust and should not \
-             normally happen — see KV_CACHE_USAGE in the logs for the exact hashes.",
+            "⚠️ KV cache miss [{}] turn {}: ~{} tokens resent ({}). See KV_CACHE_USAGE in logs.",
             reason.label(),
             turn_number,
             token_label,
