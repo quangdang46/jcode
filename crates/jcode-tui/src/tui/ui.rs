@@ -130,8 +130,8 @@ use memory_ui::{group_into_tiles, render_memory_tiles, split_by_display_width};
 use messages::get_cached_message_lines;
 #[cfg_attr(test, allow(unused_imports))]
 pub(crate) use messages::{
-    render_assistant_message, render_background_task_message, render_reasoning_message,
-    render_collapsed_reasoning_block, render_collapsed_assistant_block, render_swarm_message,
+    render_assistant_message, render_background_task_message, render_collapsed_assistant_block,
+    render_collapsed_reasoning_block, render_reasoning_message, render_swarm_message,
     render_system_message, render_tool_message, render_usage_message,
 };
 pub use pinned_ui::{
@@ -1344,10 +1344,7 @@ pub(crate) fn last_new_messages_pill_area() -> Option<Rect> {
     }
     #[cfg(not(test))]
     {
-        pill_area_state()
-            .lock()
-            .ok()
-            .and_then(|snapshot| *snapshot)
+        pill_area_state().lock().ok().and_then(|snapshot| *snapshot)
     }
 }
 /// Render a pill reading "Jump to bottom (ctrl+End) ↓" at the bottom-center of
@@ -1398,7 +1395,10 @@ fn render_new_messages_pill_impl(
     let label_width = label.chars().count() as u16;
     let pill_width = label_width.saturating_add(4).min(messages_area.width);
     let pill_x = messages_area.x + (messages_area.width.saturating_sub(pill_width)) / 2;
-    let pill_y = messages_area.y.saturating_add(messages_area.height).saturating_sub(2);
+    let pill_y = messages_area
+        .y
+        .saturating_add(messages_area.height)
+        .saturating_sub(2);
     let pill_area = Rect {
         x: pill_x,
         y: pill_y,
@@ -1414,12 +1414,10 @@ fn render_new_messages_pill_impl(
     let style = Style::default().bg(bg).fg(fg);
     // Render the pill text centered in the pill area.
     let pill_text = format!(" {} ", label);
-    let paragraph = Paragraph::new(Line::from(Span::styled(pill_text, style)))
-        .style(style);
+    let paragraph = Paragraph::new(Line::from(Span::styled(pill_text, style))).style(style);
     frame.render_widget(paragraph, pill_area);
     Some(pill_area)
 }
-
 
 use frame_metrics::{
     ChatLayoutMetrics, FLICKER_NOTICE_COPY_KEY, FullPrepPhaseMetrics, ViewportMetrics,
@@ -2499,10 +2497,7 @@ pub(crate) fn message_hash_from_screen(column: u16, row: u16) -> Option<u64> {
 
 /// If a screen click landed on a collapsed-turn summary line, return the turn
 /// index (the display_message position of the meta footer for that turn).
-pub(crate) fn collapsed_summary_turn_for_line_from_screen(
-    column: u16,
-    row: u16,
-) -> Option<usize> {
+pub(crate) fn collapsed_summary_turn_for_line_from_screen(column: u16, row: u16) -> Option<usize> {
     let point = copy_point_from_screen(column, row)?;
     collapsed_summary_turn_for_line(point.abs_line)
 }
@@ -3007,15 +3002,23 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     // Use packed layout when content fits, scrolling layout otherwise
     let use_packed = content_height + fixed_height <= available_height;
 
-    // Three-level layout (dev redesign): top (messages + queued + swarm) grows,
-    // middle status bar always 1 row, bottom (input + dialogs) capped at 50%.
-    // Keep running-items height from master in the bottom chrome budget.
-    let top_mid_bot = Layout::default()
+    // Two-level layout (master status-bar chrome): top (messages + queued) grows
+    // to fill; bottom is exact height so separators, input, swarm strip, and the
+    // status bar sit together at the bottom of the chat (status always visible).
+    let bottom_fixed = inline_block_height
+        + inline_ui_gap_height
+        + 3 // top sep + input bottom sep + status bar
+        + input_height
+        + swarm_strip_height
+        + notification_height
+        + running_items_height
+        + overscroll_height
+        + donut_height;
+    let top_bottom = Layout::default()
         .direction(Direction::Vertical)
         .constraints(vec![
-            Constraint::Min(1),                          // 0 Messages (fills remaining)
-            Constraint::Length(1),                       // 1 Status bar (always visible)
-            Constraint::Max(chat_area.height / 2),       // 2 Input + dialogs (capped)
+            Constraint::Min(1),               // 0 Messages (fills remaining)
+            Constraint::Length(bottom_fixed), // 1 Fixed chrome (exact)
         ])
         .split(chat_area);
     let top_chunks = Layout::default()
@@ -3024,35 +3027,37 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
             vec![
                 Constraint::Length(content_height.max(1)), // 0 Messages (exact height)
                 Constraint::Length(queued_height),         // 1 Queued messages
-                Constraint::Length(swarm_strip_height),    // 2 Swarm strip
             ]
         } else {
             vec![
-                Constraint::Min(3),                       // 0 Messages (scrollable)
-                Constraint::Length(queued_height),        // 1 Queued messages
-                Constraint::Length(swarm_strip_height),   // 2 Swarm strip
+                Constraint::Min(3),                // 0 Messages (scrollable)
+                Constraint::Length(queued_height), // 1 Queued messages
             ]
         })
-        .split(top_mid_bot[0]);
-    let status_area = top_mid_bot[1];
+        .split(top_bottom[0]);
     let bottom_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(vec![
-            Constraint::Length(notification_height),  // 0 Notification / history sep area
-            Constraint::Length(inline_block_height),  // 1 Inline UI
-            Constraint::Length(inline_ui_gap_height), // 2 Inline UI/input spacing
+            Constraint::Length(inline_block_height),  // 0 Inline UI
+            Constraint::Length(inline_ui_gap_height), // 1 Inline UI/input spacing
+            Constraint::Length(1),                    // 2 Top separator (─── History)
             Constraint::Length(input_height),         // 3 Input
-            Constraint::Length(running_items_height), // 4 Running items (quickbar)
-            Constraint::Length(overscroll_height),    // 5 Overscroll status line
-            Constraint::Length(donut_height),         // 6 Donut animation
+            Constraint::Length(1),                    // 4 Bottom separator (───)
+            Constraint::Length(swarm_strip_height),   // 5 Swarm strip (above status)
+            Constraint::Length(1),                    // 6 Status bar (always)
+            Constraint::Length(notification_height),  // 7 Notification (below status)
+            Constraint::Length(running_items_height), // 8 Running items (quickbar)
+            Constraint::Length(overscroll_height),    // 9 Overscroll status line
+            Constraint::Length(donut_height),         // 10 Donut animation
         ])
-        .split(top_mid_bot[2]);
+        .split(top_bottom[1]);
+    let status_area = bottom_chunks[6];
     record_status_area(status_area);
 
     // Draw the inline swarm strip directly above the status line if present.
     if swarm_strip_height > 0 {
-        clear_area(frame, top_chunks[2]);
-        frame.render_widget(Paragraph::new(swarm_strip_lines.clone()), top_chunks[2]);
+        clear_area(frame, bottom_chunks[5]);
+        frame.render_widget(Paragraph::new(swarm_strip_lines.clone()), bottom_chunks[5]);
     }
 
     // Capture layout info for visual debug
@@ -3063,8 +3068,8 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         if queued_height > 0 {
             capture.layout.queued_area = Some(top_chunks[1].into());
         }
-        capture.layout.status_area = Some(status_area.into());
         capture.layout.input_area = Some(bottom_chunks[3].into());
+        capture.layout.status_area = Some(status_area.into());
         capture.layout.input_lines_raw = app.input().lines().count().max(1);
         capture.layout.input_lines_wrapped = base_input_height as usize;
 
@@ -3141,7 +3146,12 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         capture.layout.messages_area = Some(messages_area.into());
         capture.layout.diagram_area = diagram_area.map(|r| r.into());
     }
-    record_layout_snapshot(messages_area, diagram_area, diff_pane_area, Some(bottom_chunks[3]));
+    record_layout_snapshot(
+        messages_area,
+        diagram_area,
+        diff_pane_area,
+        Some(bottom_chunks[4]), // bottom separator anchors layout snapshot like master
+    );
 
     let margins = if onboarding_welcome {
         onboarding::draw_onboarding_welcome(frame, app, messages_area);
@@ -3251,39 +3261,25 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         }
         input_ui::draw_queued(frame, app, top_chunks[1], user_count + 1);
     }
-    let status_bar_visible = frame.area().height >= 24;
-    if status_bar_visible {
-        if let Some(ref mut capture) = debug_capture {
-            capture.render_order.push("draw_status".to_string());
-        }
-        input_ui::draw_status(frame, app, status_area, pending_count);
-    }
-    if notification_height > 0 {
-        input_ui::draw_notification(frame, app, bottom_chunks[0]);
-    }
     if inline_block_height > 0 {
-        draw_inline_ui(frame, app, bottom_chunks[1]);
+        draw_inline_ui(frame, app, bottom_chunks[0]);
     }
-    // Top separator line above input (with history counter, like Claude Code)
-    // Only when notification slot is free so we do not overwrite notifications.
-    if notification_height == 0 && bottom_chunks[0].height > 0 {
-        let sep_w = bottom_chunks[0].width as usize;
-        if sep_w > 12 {
-            let (nav_pos, nav_total) = app.prompt_history_info().unwrap_or((0, 0));
-            let _next_prompt = user_count + pending_count + 1;
-            let label = if nav_pos > 0 {
-                format!(" History {}/{} ", nav_pos, nav_total)
-            } else {
-                let total = app.display_user_message_count() + pending_count;
-                format!(" History {} ", total + 1)
-            };
-            let label_w = label.chars().count();
-            let left = (sep_w - label_w) / 2;
-            let right = sep_w - label_w - left;
-            let sep_str = format!("{}{}{}", "─".repeat(left), label, "─".repeat(right),);
-            let sep_line = Line::from(Span::styled(sep_str, Style::default().fg(rgb(50, 55, 65))));
-            frame.render_widget(Paragraph::new(sep_line), bottom_chunks[0]);
-        }
+    // Top separator line ─── above input (with history counter)
+    let top_sep_w = bottom_chunks[2].width as usize;
+    if top_sep_w > 12 {
+        let (nav_pos, nav_total) = app.prompt_history_info().unwrap_or((0, 0));
+        let label = if nav_pos > 0 {
+            format!(" History {}/{} ", nav_pos, nav_total)
+        } else {
+            let total = app.display_user_message_count() + pending_count;
+            format!(" History {} ", total + 1)
+        };
+        let label_w = label.chars().count();
+        let left = (top_sep_w - label_w) / 2;
+        let right = top_sep_w - label_w - left;
+        let sep_str = format!("{}{}{}", "─".repeat(left), label, "─".repeat(right),);
+        let sep_line = Line::from(Span::styled(sep_str, Style::default().fg(rgb(50, 55, 65))));
+        frame.render_widget(Paragraph::new(sep_line), bottom_chunks[2]);
     }
     // Input
     input_ui::draw_input(
@@ -3294,8 +3290,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         &mut debug_capture,
     );
 
-    // Command suggestion overlay drawn as an absolute floating rect above the
-    // input area, matching the Claude Code SuggestionsOverlay pattern.
+    // Command suggestion overlay (dev redesign) above the input area.
     if input_ui::has_active_suggestions(app) {
         let input_area = bottom_chunks[3];
         let suggestions = app.command_suggestions();
@@ -3311,15 +3306,32 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         }
     }
 
-    // Running items list (quickbar) under input (master feature, dev layout).
+    // Bottom separator line ─── below input
+    let bot_sep_w = bottom_chunks[4].width as usize;
+    if bot_sep_w > 12 {
+        let sep_line = Line::from(Span::styled(
+            "─".repeat(bot_sep_w),
+            Style::default().fg(rgb(50, 55, 65)),
+        ));
+        frame.render_widget(Paragraph::new(sep_line), bottom_chunks[4]);
+    }
+    // Status bar always drawn (master chrome — no height gate).
+    if let Some(ref mut capture) = debug_capture {
+        capture.render_order.push("draw_status".to_string());
+    }
+    input_ui::draw_status(frame, app, status_area, pending_count);
+    if notification_height > 0 {
+        input_ui::draw_notification(frame, app, bottom_chunks[7]);
+    }
+    // Running items list (quickbar) below status
     if running_items_height > 0 {
-        crate::tui::ui_running_items::draw_running_items(frame, app, bottom_chunks[4]);
+        crate::tui::ui_running_items::draw_running_items(frame, app, bottom_chunks[8]);
     }
     if overscroll_height > 0 {
-        input_ui::draw_overscroll_status(frame, app, bottom_chunks[5]);
+        input_ui::draw_overscroll_status(frame, app, bottom_chunks[9]);
     }
     if donut_height > 0 {
-        animations::draw_idle_animation(frame, app, bottom_chunks[6]);
+        animations::draw_idle_animation(frame, app, bottom_chunks[10]);
     }
 
     // Draw info widget overlays (skip during idle animation - they look out of place)

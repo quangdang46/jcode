@@ -739,8 +739,10 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
                 // Show permission mode pill when not in default/auto mode (dev redesign)
                 let perm_mode = crate::dcg_bridge::mode_to_str(crate::dcg_bridge::current_mode());
                 let mode = composer_mode(app.input(), app.is_remote_mode());
-                if !perm_mode.is_empty() && !mode.is_shell()
-                    && perm_mode != "auto" && app.connection_type().is_none()
+                if !perm_mode.is_empty()
+                    && !mode.is_shell()
+                    && perm_mode != "auto"
+                    && app.connection_type().is_none()
                 {
                     Line::from(Span::styled(
                         format!("» {} on (shift+tab to cycle)", perm_mode.replace('-', " ")),
@@ -1012,10 +1014,14 @@ pub(super) fn draw_status(frame: &mut Frame, app: &dyn TuiState, area: Rect, pen
         {
             Line::from(vec![Span::styled(tip, Style::default().fg(dim_color()))])
         } else if let Some(facts) = idle_status_facts(app) {
-            right_align_facts = true;
-            Line::from(facts)
+            // Mode pill on the left + session facts (context bar) on the right.
+            right_align_facts = false;
+            let mut spans = status_line_mode_spans();
+            spans.push(Span::styled("  ", Style::default()));
+            spans.extend(facts);
+            Line::from(spans)
         } else {
-            Line::from("")
+            Line::from(status_line_mode_spans())
         }
     } else {
         // Always show permission mode pill when idle
@@ -1629,10 +1635,7 @@ pub(super) fn build_notification_spans(app: &dyn TuiState) -> Vec<Span<'static>>
                     } else {
                         rgb(80, 30, 30)
                     };
-                    (
-                        color,
-                        format!("⏳ cache {}s{}", remaining_secs, tokens_str),
-                    )
+                    (color, format!("⏳ cache {}s{}", remaining_secs, tokens_str))
                 };
 
                 push_sep(&mut spans);
