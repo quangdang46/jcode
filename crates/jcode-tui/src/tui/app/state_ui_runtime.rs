@@ -1,5 +1,5 @@
 use super::*;
-use crate::tui::{TurnSummary, TuiState, detect_kv_cache_problem, ui};
+use crate::tui::{TuiState, TurnSummary, detect_kv_cache_problem, ui};
 use std::collections::{HashMap, HashSet};
 
 impl App {
@@ -423,10 +423,10 @@ impl App {
         //   "meta"     → turn footer with duration (marks turn end)
         //   "assistant"→ part of the current turn
         //   "tool"     → tool result, part of the current turn
-        let mut turn_start: Option<usize> = None;       // msg index where current turn began
+        let mut turn_start: Option<usize> = None; // msg index where current turn began
         let mut thinking_secs: u64 = 0;
         let mut tool_counts: HashMap<String, u32> = HashMap::new();
-        let mut turn_label_line: Option<usize> = None;   // msg index of the meta/footer line
+        let mut turn_label_line: Option<usize> = None; // msg index of the meta/footer line
         let mut has_assistant: bool = false;
 
         // Helper: finalize the current turn into the summaries vec.

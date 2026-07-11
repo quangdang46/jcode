@@ -398,9 +398,7 @@ fn push_user_prompt_lines(
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
 
     // Fast byte-length gate, then precise char-count check for Unicode content.
-    if normalized.len() <= TRUNCATE_AT
-        || normalized.chars().count() <= TRUNCATE_AT
-    {
+    if normalized.len() <= TRUNCATE_AT || normalized.chars().count() <= TRUNCATE_AT {
         // ── Not truncated: render all lines normally ──
         for (line_idx, content_line) in normalized.split('\n').enumerate() {
             let raw_line = raw_plain_lines.len();
@@ -499,7 +497,14 @@ fn push_user_prompt_lines(
     // 1. Head portion (first 2500 chars), split by newlines.
     let mut rendered_head = false;
     for (idx, hl) in head.split('\n').enumerate() {
-        render_line(lines, raw_plain_lines, line_raw_overrides, line_copy_offsets, hl, idx == 0);
+        render_line(
+            lines,
+            raw_plain_lines,
+            line_raw_overrides,
+            line_copy_offsets,
+            hl,
+            idx == 0,
+        );
         if !rendered_head {
             user_line_indices.push(lines.len() - 1);
             rendered_head = true;
@@ -528,7 +533,14 @@ fn push_user_prompt_lines(
 
     // 3. Tail portion (last 2500 chars), split by newlines.
     for tl in tail.split('\n') {
-        render_line(lines, raw_plain_lines, line_raw_overrides, line_copy_offsets, tl, false);
+        render_line(
+            lines,
+            raw_plain_lines,
+            line_raw_overrides,
+            line_copy_offsets,
+            tl,
+            false,
+        );
     }
 }
 
@@ -637,7 +649,9 @@ fn prepare_active_batch_progress(
     let mut hidden_completed = 0usize;
     for subcall in &progress.subcalls {
         let (icon, icon_color) = match subcall.state {
-            crate::bus::BatchSubcallState::Running => tools_ui::tool_loader_dot(true, false, frame_visible),
+            crate::bus::BatchSubcallState::Running => {
+                tools_ui::tool_loader_dot(true, false, frame_visible)
+            }
             crate::bus::BatchSubcallState::Succeeded => {
                 hidden_completed += 1;
                 continue;
@@ -669,14 +683,11 @@ fn prepare_active_batch_progress(
     wrap_lines_with_map(lines, &[], &[], &[], &[], &[], width, &[], &[])
 }
 
-
 fn swarm_members_signature(members: &[crate::protocol::SwarmMemberStatus]) -> u64 {
     serde_json::to_string(members)
         .map(|snapshot| super::hash_text_for_cache(&snapshot))
         .unwrap_or_default()
 }
-
-
 
 fn spawned_member_for_tool<'a>(
     msg: &DisplayMessage,
@@ -699,8 +710,6 @@ fn spawned_member_for_tool<'a>(
         .find(|member| member.session_id == session_id)
 }
 
-
-
 fn push_spawned_swarm_card_lines(
     out: &mut Vec<Line<'static>>,
     msg: &DisplayMessage,
@@ -721,7 +730,6 @@ fn push_spawned_swarm_card_lines(
         out.push(line.alignment(ratatui::layout::Alignment::Left));
     }
 }
-
 
 pub(super) fn prepare_messages(
     app: &dyn TuiState,
@@ -746,7 +754,7 @@ pub(super) fn prepare_messages(
         batch_progress_hash: active_batch_progress_hash(app),
         inline_images_signature: app.side_pane_images_signature(),
         inline_images_visible: app.inline_images_visible(),
-    swarm_members_signature: swarm_members_signature(&app.inline_swarm_members()),
+        swarm_members_signature: swarm_members_signature(&app.inline_swarm_members()),
     };
 
     super::note_full_prep_request();
@@ -986,7 +994,7 @@ fn prepare_body_cached(app: &dyn TuiState, width: u16) -> Arc<PreparedMessages> 
         inline_images_visible: app.inline_images_visible(),
         images_signature: app.side_pane_images_signature(),
         expanded_messages_version: app.expanded_messages_version(),
-    swarm_members_signature: swarm_members_signature(&app.inline_swarm_members()),
+        swarm_members_signature: swarm_members_signature(&app.inline_swarm_members()),
     };
     let msg_count = app.display_messages().len();
     let cache_lookup_start = Instant::now();
@@ -1091,10 +1099,7 @@ fn collapsed_ranges<'a>(
 }
 
 /// Format a turn summary line from the given TurnSummary and thinking duration.
-fn format_turn_summary(
-    summary: &TurnSummary,
-    width: u16,
-) -> Vec<Line<'static>> {
+fn format_turn_summary(summary: &TurnSummary, width: u16) -> Vec<Line<'static>> {
     let mut parts: Vec<String> = Vec::new();
 
     let secs = summary.thinking_secs;
@@ -1415,30 +1420,30 @@ fn render_message_into(
             }
         }
         "reasoning" => {
-                let content_width = width.saturating_sub(4);
-                let block_state = app.thinking_block_state(msg.stable_cache_hash());
-                match block_state {
-                    ThinkingBlockState::Hidden => {
-                        // Render nothing.
+            let content_width = width.saturating_sub(4);
+            let block_state = app.thinking_block_state(msg.stable_cache_hash());
+            match block_state {
+                ThinkingBlockState::Hidden => {
+                    // Render nothing.
+                }
+                ThinkingBlockState::Collapsed => {
+                    for line in render_collapsed_reasoning_block(content_width) {
+                        acc.push_auto(align_if_unset(line, align));
                     }
-                    ThinkingBlockState::Collapsed => {
-                        for line in render_collapsed_reasoning_block(content_width) {
-                            acc.push_auto(align_if_unset(line, align));
-                        }
-                    }
-                    ThinkingBlockState::Expanded => {
-                        let cached = get_cached_message_lines(
-                            msg,
-                            content_width,
-                            app.diff_mode(),
-                            render_reasoning_message,
-                        );
-                        for line in cached {
-                            acc.push_auto(align_if_unset(line, align));
-                        }
+                }
+                ThinkingBlockState::Expanded => {
+                    let cached = get_cached_message_lines(
+                        msg,
+                        content_width,
+                        app.diff_mode(),
+                        render_reasoning_message,
+                    );
+                    for line in cached {
+                        acc.push_auto(align_if_unset(line, align));
                     }
                 }
             }
+        }
         "background_task" => {
             let content_width = width.saturating_sub(4);
             let cached = get_cached_message_lines(
@@ -1768,13 +1773,10 @@ pub(super) fn prepare_body_incremental(
                     let group_end = find_tool_group_end(full_messages, full_idx);
                     if group_end > full_idx {
                         // ── grouped rendering ──
-                        let group_msgs: Vec<&DisplayMessage> = (full_idx..=group_end)
-                            .map(|i| &full_messages[i])
-                            .collect();
-                        let group_lines = messages::render_grouped_tool_use(
-                            &group_msgs,
-                            width as usize,
-                        );
+                        let group_msgs: Vec<&DisplayMessage> =
+                            (full_idx..=group_end).map(|i| &full_messages[i]).collect();
+                        let group_lines =
+                            messages::render_grouped_tool_use(&group_msgs, width as usize);
                         for line in group_lines {
                             new_lines.push(align_if_unset(line, align));
                             new_line_raw_overrides.push(None);
@@ -1792,8 +1794,7 @@ pub(super) fn prepare_body_incremental(
                             render_tool_message,
                         );
                         if let Some(target) = tool_message_copy_target(msg, cached.len()) {
-                            new_copy_targets
-                                .push(offset_copy_target(target, tool_start_line));
+                            new_copy_targets.push(offset_copy_target(target, tool_start_line));
                         }
                         for line in cached {
                             new_lines.push(align_if_unset(line, align));
@@ -1801,7 +1802,13 @@ pub(super) fn prepare_body_incremental(
                             new_line_copy_offsets.push(0);
                         }
                         let card_start = new_lines.len();
-                        push_spawned_swarm_card_lines(&mut new_lines, msg, &swarm_members, app, width);
+                        push_spawned_swarm_card_lines(
+                            &mut new_lines,
+                            msg,
+                            &swarm_members,
+                            app,
+                            width,
+                        );
                         for _ in card_start..new_lines.len() {
                             new_line_raw_overrides.push(None);
                             new_line_copy_offsets.push(0);
@@ -1836,7 +1843,9 @@ pub(super) fn prepare_body_incremental(
                                     })
                                     .unwrap_or_else(|| "unknown".to_string());
                                 let expandable = messages::edit_tool_inline_diff_is_expandable(
-                                    tc, &msg.content, width,
+                                    tc,
+                                    &msg.content,
+                                    width,
                                 );
                                 new_edit_tool_line_ranges.push((
                                     full_idx,
@@ -1864,12 +1873,8 @@ pub(super) fn prepare_body_incremental(
                     // Previous message was a groupable tool that was already
                     // rendered individually; render this one individually too.
                     let tool_start_line = new_lines.len();
-                    let cached = get_cached_message_lines(
-                        msg,
-                        width,
-                        app.diff_mode(),
-                        render_tool_message,
-                    );
+                    let cached =
+                        get_cached_message_lines(msg, width, app.diff_mode(), render_tool_message);
                     if let Some(target) = tool_message_copy_target(msg, cached.len()) {
                         new_copy_targets.push(offset_copy_target(target, tool_start_line));
                     }
@@ -1896,25 +1901,27 @@ pub(super) fn prepare_body_incremental(
                                     tc.input
                                         .get("patch_text")
                                         .and_then(|v| v.as_str())
-                                        .and_then(|patch_text| {
-                                            match tools_ui::canonical_tool_name(&tc.name) {
-                                                "apply_patch" => {
-                                                    tools_ui::extract_apply_patch_primary_file(
-                                                        patch_text,
-                                                    )
-                                                }
-                                                "patch" => {
-                                                    tools_ui::extract_unified_patch_primary_file(
-                                                        patch_text,
-                                                    )
-                                                }
-                                                _ => None,
+                                        .and_then(|patch_text| match tools_ui::canonical_tool_name(
+                                            &tc.name,
+                                        ) {
+                                            "apply_patch" => {
+                                                tools_ui::extract_apply_patch_primary_file(
+                                                    patch_text,
+                                                )
                                             }
+                                            "patch" => {
+                                                tools_ui::extract_unified_patch_primary_file(
+                                                    patch_text,
+                                                )
+                                            }
+                                            _ => None,
                                         })
                                 })
                                 .unwrap_or_else(|| "unknown".to_string());
                             let expandable = messages::edit_tool_inline_diff_is_expandable(
-                                tc, &msg.content, width,
+                                tc,
+                                &msg.content,
+                                width,
                             );
                             new_edit_tool_line_ranges.push((
                                 full_idx,
@@ -2404,7 +2411,8 @@ pub(super) fn prepare_body(
                         app.diff_mode(),
                         render_assistant_message,
                     );
-                    let message_copy_targets = assistant_message_copy_targets(&msg.content, &cached);
+                    let message_copy_targets =
+                        assistant_message_copy_targets(&msg.content, &cached);
                     for target in message_copy_targets {
                         copy_targets.push(offset_copy_target(target, lines.len()));
                     }
@@ -2475,9 +2483,8 @@ pub(super) fn prepare_body(
                 let group_end = find_tool_group_end(messages, msg_idx);
                 if group_end > msg_idx {
                     // ── grouped rendering ──
-                    let group_msgs: Vec<&DisplayMessage> = (msg_idx..=group_end)
-                        .map(|i| &messages[i])
-                        .collect();
+                    let group_msgs: Vec<&DisplayMessage> =
+                        (msg_idx..=group_end).map(|i| &messages[i]).collect();
                     let group_lines =
                         messages::render_grouped_tool_use(&group_msgs, width as usize);
                     for line in group_lines {
@@ -2489,12 +2496,8 @@ pub(super) fn prepare_body(
                 } else {
                     // ── individual tool rendering ──
                     let tool_start_line = lines.len();
-                    let cached = get_cached_message_lines(
-                        msg,
-                        width,
-                        app.diff_mode(),
-                        render_tool_message,
-                    );
+                    let cached =
+                        get_cached_message_lines(msg, width, app.diff_mode(), render_tool_message);
                     if let Some(target) = tool_message_copy_target(msg, cached.len()) {
                         copy_targets.push(offset_copy_target(target, tool_start_line));
                     }
@@ -2547,7 +2550,9 @@ pub(super) fn prepare_body(
                                 })
                                 .unwrap_or_else(|| "unknown".to_string());
                             let expandable = messages::edit_tool_inline_diff_is_expandable(
-                                tc, &msg.content, width,
+                                tc,
+                                &msg.content,
+                                width,
                             );
                             edit_tool_line_ranges.push((
                                 msg_idx,

@@ -302,10 +302,10 @@ fn render_question_view(state: &AskUserQuestionState, frame: &mut Frame, area: R
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),   // nav bar
-            Constraint::Length(2),   // spacing
-            Constraint::Min(3),      // question + options
-            Constraint::Length(2),   // bottom spacing
+            Constraint::Length(1), // nav bar
+            Constraint::Length(2), // spacing
+            Constraint::Min(3),    // question + options
+            Constraint::Length(2), // bottom spacing
         ])
         .split(inner);
 
@@ -353,10 +353,7 @@ fn render_question_view(state: &AskUserQuestionState, frame: &mut Frame, area: R
         lines.push(Line::from(vec![
             Span::styled(format!("{} ", marker), Style::default().fg(accent())),
             Span::styled(
-                format!(
-                    " {}. ",
-                    state.question.options.len() + 1
-                ),
+                format!(" {}. ", state.question.options.len() + 1),
                 Style::default().fg(text_muted()),
             ),
             Span::styled("Other (type your answer)", style),
@@ -392,12 +389,10 @@ fn render_question_view(state: &AskUserQuestionState, frame: &mut Frame, area: R
     }
 
     lines.push(Line::raw(""));
-    lines.push(Line::from(vec![
-        Span::styled(
-            "  ↑↓ navigate · Enter select · Other: type to enter answer · Esc cancel",
-            Style::default().fg(dim()),
-        ),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        "  ↑↓ navigate · Enter select · Other: type to enter answer · Esc cancel",
+        Style::default().fg(dim()),
+    )]));
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[2]);
 }
@@ -448,12 +443,10 @@ fn render_submit_view(state: &AskUserQuestionState, frame: &mut Frame, area: Rec
         ]));
     } else {
         // Unanswered warning
-        lines.push(Line::from(vec![
-            Span::styled(
-                " ⚠  No answer selected yet — submit anyway?",
-                Style::default().fg(warning_yellow()),
-            ),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            " ⚠  No answer selected yet — submit anyway?",
+            Style::default().fg(warning_yellow()),
+        )]));
     }
 
     lines.push(Line::raw(""));
@@ -484,12 +477,10 @@ fn render_submit_view(state: &AskUserQuestionState, frame: &mut Frame, area: Rec
     ]));
 
     lines.push(Line::raw(""));
-    lines.push(Line::from(vec![
-        Span::styled(
-            "  ← → navigate · Enter confirm · Esc back to options",
-            Style::default().fg(dim()),
-        ),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        "  ← → navigate · Enter confirm · Esc back to options",
+        Style::default().fg(dim()),
+    )]));
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), chunks[2]);
 }
@@ -531,10 +522,7 @@ fn render_nav_bar(state: &AskUserQuestionState, frame: &mut Frame, area: Rect) {
         spans.push(Span::styled(format!(" {}{} ", tab_name, checked), style));
     }
 
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)),
-        area,
-    );
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 // ---------------------------------------------------------------------------

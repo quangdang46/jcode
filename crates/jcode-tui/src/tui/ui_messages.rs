@@ -96,7 +96,10 @@ pub(crate) fn render_reasoning_message(
 pub(crate) fn render_collapsed_reasoning_block(width: u16) -> Vec<Line<'static>> {
     let centered = markdown::center_code_blocks();
     let text = "  ∴ Thinking  · Ctrl+E to expand";
-    let mut line = Line::from(Span::styled(text.to_string(), Style::default().dim().italic()));
+    let mut line = Line::from(Span::styled(
+        text.to_string(),
+        Style::default().dim().italic(),
+    ));
     if centered {
         let pad = (width as usize).saturating_sub(text.len()) / 2;
         line.spans.insert(0, Span::raw(" ".repeat(pad)));
@@ -2246,13 +2249,16 @@ pub(crate) fn render_turn_footer(content: &str, width: u16) -> Line<'static> {
     let text = content.trim();
     let text_width = unicode_width::UnicodeWidthStr::width(text);
     let inner_pad = 2; // space before and after text
-    let left_prefix = "─── ";  // 4 chars
+    let left_prefix = "─── "; // 4 chars
     let left_prefix_width = unicode_width::UnicodeWidthStr::width(left_prefix);
     let avail = (width as usize).saturating_sub(left_prefix_width + inner_pad);
     let padding = avail.saturating_sub(text_width);
     if text_width > avail {
         // Text too long — just show the text without separators.
-        Line::from(Span::styled(text.to_string(), Style::default().fg(dim_color())))
+        Line::from(Span::styled(
+            text.to_string(),
+            Style::default().fg(dim_color()),
+        ))
     } else {
         Line::from(Span::styled(
             format!("─── {} {}", text, sep.repeat(padding)),
@@ -2346,13 +2352,12 @@ pub(crate) fn render_grouped_tool_use(
             ("✓", rgb(100, 180, 100))
         };
 
-        let sub_summary = if let Some(error_summary) =
-            tools_ui::concise_tool_error_summary(&msg.content)
-        {
-            error_summary
-        } else {
-            tools_ui::get_tool_summary_with_budget(tc, 50, None)
-        };
+        let sub_summary =
+            if let Some(error_summary) = tools_ui::concise_tool_error_summary(&msg.content) {
+                error_summary
+            } else {
+                tools_ui::get_tool_summary_with_budget(tc, 50, None)
+            };
 
         lines.push(Line::from(vec![Span::styled(
             format!(" {} {} ", sub_icon, sub_summary),
@@ -2420,7 +2425,12 @@ pub(crate) fn render_collapsed_read_search_group(
 
     // Summary text: "Read 5 files" or "Grep 2/3 files".
     let summary_text = if all_ok {
-        format!("{} {} file{}", group_label, total, if total == 1 { "" } else { "s" })
+        format!(
+            "{} {} file{}",
+            group_label,
+            total,
+            if total == 1 { "" } else { "s" }
+        )
     } else {
         format!(
             "{} {}/{} file{}",
@@ -2468,7 +2478,10 @@ pub(crate) fn render_collapsed_read_search_group(
 
         let item_line = super::truncate_line_with_ellipsis_to_width(
             &Line::from(vec![
-                Span::styled(format!("    {} ", connector), Style::default().fg(dim_color())),
+                Span::styled(
+                    format!("    {} ", connector),
+                    Style::default().fg(dim_color()),
+                ),
                 Span::styled(item_label, Style::default().fg(dim_color())),
             ]),
             width,

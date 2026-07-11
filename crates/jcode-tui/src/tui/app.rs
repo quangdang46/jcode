@@ -1176,7 +1176,8 @@ pub struct App {
     /// Per-message thinking-block toggle state, keyed by
     /// `DisplayMessage::stable_cache_hash()`. Absent entries default to
     /// `ThinkingBlockState::Collapsed`.
-    thinking_block_states: std::collections::HashMap<crate::tui::ThinkingBlockId, crate::tui::ThinkingBlockState>,
+    thinking_block_states:
+        std::collections::HashMap<crate::tui::ThinkingBlockId, crate::tui::ThinkingBlockState>,
     /// Per-message expanded/verbose toggle state, keyed by
     /// `DisplayMessage::stable_cache_hash()`. When a message hash is present,
     /// the message renders in its verbose (expanded) form. Absent entries render

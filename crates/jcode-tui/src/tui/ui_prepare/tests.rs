@@ -35,15 +35,31 @@ fn push_user_prompt_lines_truncates_long_prompts() {
     let plain: Vec<String> = lines.iter().map(ui::line_plain_text).collect();
 
     // Should have head line + ellipsis + tail line = 3 display lines.
-    assert_eq!(plain.len(), 3, "truncated prompt should render 3 display lines");
+    assert_eq!(
+        plain.len(),
+        3,
+        "truncated prompt should render 3 display lines"
+    );
 
     // 1st line: prompt prefix + head content.
-    assert!(plain[0].starts_with("1› HEADSTART_"), "head line should start with HEADSTART_");
-    assert!(plain[0].contains("HEADSTART_"), "head line should contain HEADSTART_");
+    assert!(
+        plain[0].starts_with("1› HEADSTART_"),
+        "head line should start with HEADSTART_"
+    );
+    assert!(
+        plain[0].contains("HEADSTART_"),
+        "head line should contain HEADSTART_"
+    );
 
     // 2nd line: dimmed ellipsis with line/mid count.
-    assert!(plain[1].contains("… +"), "ellipsis line should contain '… +'");
-    assert!(plain[1].contains("lines …"), "ellipsis line should contain 'lines …'");
+    assert!(
+        plain[1].contains("… +"),
+        "ellipsis line should contain '… +'"
+    );
+    assert!(
+        plain[1].contains("lines …"),
+        "ellipsis line should contain 'lines …'"
+    );
 
     // 3rd line: contnuation prefix + tail content.
     assert!(
@@ -64,7 +80,10 @@ fn push_user_prompt_lines_truncates_long_prompts() {
 
     // user_line_indices should point at the head line.
     assert_eq!(user_line_indices.len(), 1, "one user line index");
-    assert_eq!(user_line_indices[0], 0, "user line index points at head line");
+    assert_eq!(
+        user_line_indices[0], 0,
+        "user line index points at head line"
+    );
 }
 
 #[test]
@@ -91,7 +110,11 @@ fn push_user_prompt_lines_does_not_truncate_short_prompts() {
     let plain: Vec<String> = lines.iter().map(ui::line_plain_text).collect();
     assert_eq!(plain.len(), 1, "short prompt has 1 line");
     assert_eq!(plain[0], "1› short prompt", "short prompt rendered whole");
-    assert_eq!(raw_plain_lines, vec!["short prompt"], "raw preserves full content");
+    assert_eq!(
+        raw_plain_lines,
+        vec!["short prompt"],
+        "raw preserves full content"
+    );
     assert_eq!(user_line_indices, vec![0], "user line index set");
 }
 

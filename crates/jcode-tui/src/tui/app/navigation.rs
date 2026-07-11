@@ -255,7 +255,8 @@ impl App {
     /// collapsed state and return `true`. Returns `false` when no collapsed
     /// summary was hit (the click should fall through to other handlers).
     pub(super) fn try_toggle_collapsed_turn_at(&mut self, column: u16, row: u16) -> bool {
-        let Some(turn_idx) = super::super::ui::collapsed_summary_turn_for_line_from_screen(column, row)
+        let Some(turn_idx) =
+            super::super::ui::collapsed_summary_turn_for_line_from_screen(column, row)
         else {
             return false;
         };
@@ -1563,14 +1564,9 @@ impl App {
         // Click on the "N new message(s)" / "Jump to bottom" pill: follow chat bottom.
         if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
             && self.auto_scroll_paused
-            && super::super::ui::last_new_messages_pill_area()
-                .is_some_and(|area| {
-                    super::super::layout_utils::point_in_rect(
-                        mouse.column,
-                        mouse.row,
-                        area,
-                    )
-                })
+            && super::super::ui::last_new_messages_pill_area().is_some_and(|area| {
+                super::super::layout_utils::point_in_rect(mouse.column, mouse.row, area)
+            })
         {
             self.follow_chat_bottom();
             finish_mouse_event!(false, "new_messages_pill_click");
@@ -1580,14 +1576,9 @@ impl App {
         // offscreen user prompt at the top of the chat viewport): scroll to
         // that prompt's first line.
         if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
-            && super::super::ui::last_sticky_prompt_area()
-                .is_some_and(|area| {
-                    super::super::layout_utils::point_in_rect(
-                        mouse.column,
-                        mouse.row,
-                        area,
-                    )
-                })
+            && super::super::ui::last_sticky_prompt_area().is_some_and(|area| {
+                super::super::layout_utils::point_in_rect(mouse.column, mouse.row, area)
+            })
         {
             self.scroll_to_prev_prompt();
             finish_mouse_event!(false, "sticky_prompt_header_click");
